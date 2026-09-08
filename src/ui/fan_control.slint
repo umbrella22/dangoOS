@@ -519,11 +519,11 @@ export component FanControlUI inherits Window {
         }
         
         // ====================================
-        // 监控面板行
+        // 监控面板行（调整高度避免溢出）
         // ====================================
         HorizontalLayout {
             spacing: 20px;
-            height: 160px;
+            height: 150px;  // 从 160px 减少到 150px
             
             // 温度监控面板
             EvePanel {
@@ -553,10 +553,10 @@ export component FanControlUI inherits Window {
         }
         
         // ====================================
-        // 风扇控制面板
+        // 风扇控制面板（减小高度）
         // ====================================
         EvePanel {
-            height: 120px;
+            height: 100px;  // 从 120px 减少到 100px
             title: "风扇控制";
             power-on: panel-4-on;
             
@@ -564,7 +564,7 @@ export component FanControlUI inherits Window {
             // 六边形档位按钮（6个：0/25/50/75/100/AUTO）
             HorizontalLayout {
                 spacing: 50px;
-                padding-top: 20px;
+                padding-top: 10px;  // 从 20px 减少到 10px
                 alignment: center;
                 
                 // 0% 停止
@@ -627,20 +627,6 @@ export component FanControlUI inherits Window {
                         root.speed-changed(-1);
                     }
                 }
-            }
-            
-            // 档位标签（6 个标签对应 6 个按钮）
-            HorizontalLayout {
-                spacing: 44px;
-                padding-top: 75px;
-                alignment: center;
-                
-                Text { text: "停止"; color: eve-colors.text-secondary; font-size: 8px; }
-                Text { text: "低速"; color: eve-colors.text-secondary; font-size: 8px; }
-                Text { text: "中速"; color: eve-colors.text-secondary; font-size: 8px; }
-                Text { text: "高速"; color: root.target-speed == 75 ? eve-colors.cyan-primary : eve-colors.text-secondary; font-size: 8px; }
-                Text { text: "全速"; color: eve-colors.text-secondary; font-size: 8px; }
-                Text { text: "自动"; color: root.target-speed == -1 ? eve-colors.green-ok : eve-colors.text-secondary; font-size: 8px; }
             }
         }
         
