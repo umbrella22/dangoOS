@@ -519,11 +519,11 @@ export component FanControlUI inherits Window {
         }
         
         // ====================================
-        // 监控面板行（调整高度避免溢出）
+        // 监控面板行（增加高度给文本留空间）
         // ====================================
         HorizontalLayout {
             spacing: 20px;
-            height: 150px;  // 从 160px 减少到 150px
+            height: 180px;  // 从 150px 增加到 180px，给文本留空间
             
             // 温度监控面板
             EvePanel {
