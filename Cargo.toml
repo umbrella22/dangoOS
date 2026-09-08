@@ -4,6 +4,21 @@ version = "0.2.0"
 edition = "2021"
 authors = ["Kiro", "Claude"]
 
+# ============================================
+# 硬件变体选择 (Features)
+# ============================================
+# 使用方法:
+#   桌面开发: cargo run
+#   ESP32-S31 变体A: cargo build --features s31-variant-a
+#   ESP32-S31 变体B: cargo build --features s31-variant-b
+
+[features]
+default = []  # 桌面开发模式（无硬件 feature）
+
+# ESP32-S31 硬件变体
+s31-variant-a = []  # ESP-Mosaico 官方开发板
+s31-variant-b = []  # 自定义 S31 配置
+
 [dependencies]
 slint = "1.3"
 rand = "0.8"
