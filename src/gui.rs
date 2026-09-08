@@ -13,8 +13,9 @@ use core::time::Duration;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
 use slint::platform::{Platform, PlatformError, WindowAdapter};
 use slint::ComponentHandle;
+use log::{error, info, warn};
 
-use crate::{display, AppWindow};
+use crate::{board, display, AppWindow};
 
 /// 灯开关回调(由 main 注册:翻转 GPIO3 状态灯)
 static mut LIGHT_TOGGLED: Option<Box<dyn Fn()>> = None;
@@ -61,7 +62,7 @@ pub fn init_platform() -> Rc<MinimalSoftwareWindow> {
     window
 }
 
-/// 创建 AppWindow、注册回调,并进入主渲染循环。
+/// 创建 AppWindow、注册回调,并进入主渲染循环(带错误恢复)。
 pub async fn run_ui(window: Rc<MinimalSoftwareWindow>) -> ! {
     let ui = AppWindow::new().expect("创建 AppWindow 失败");
 
@@ -75,17 +76,63 @@ pub async fn run_ui(window: Rc<MinimalSoftwareWindow>) -> ! {
 
     ui.show().expect("显示窗口失败");
 
+    info!("进入 UI 主循环(动态帧率)");
+
+    let mut consecutive_errors = 0;
+    const MAX_CONSECUTIVE_ERRORS: u8 = 5;
+
     loop {
+        let frame_start = embassy_time::Instant::now();
+
         // 驱动 Slint 定时器与动画
         slint::platform::update_timers_and_animations();
 
-        window.draw_if_needed(|renderer| {
-            // 渲染进帧缓冲后,整帧经 QSPI 写入 AMOLED GRAM
-            renderer.render(display::frame_buffer(), crate::board::LCD_WIDTH as usize);
-            display::flush();
+        // 渲染并刷新显示(带错误处理)
+        let _rendered = window.draw_if_needed(|renderer| {
+            renderer.render(display::frame_buffer(), board::LCD_WIDTH as usize);
         });
 
-        // ~60fps 的节拍;后续可改为触摸/TE 防撕裂驱动
-        embassy_time::Timer::after(embassy_time::Duration::from_millis(16)).await;
+        // 执行刷新
+        let result = display::flush();
+
+        match result {
+            Ok(_) => {
+                consecutive_errors = 0; // 成功则重置错误计数
+            }
+            Err(e) => {
+                consecutive_errors += 1;
+                error!(
+                    "显示刷新失败({}/{}): {:?}",
+                    consecutive_errors, MAX_CONSECUTIVE_ERRORS, e
+                );
+
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                    warn!("连续失败达阈值,尝试恢复显示驱动");
+                    match display::try_recover() {
+                        Ok(_) => {
+                            info!("显示驱动恢复成功");
+                            consecutive_errors = 0;
+                        }
+                        Err(recover_err) => {
+                            error!("显示驱动恢复失败: {:?}", recover_err);
+                            // 继续运行但降低帧率以减少 SPI 压力
+                            embassy_time::Timer::after(embassy_time::Duration::from_millis(100))
+                                .await;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 动态帧率:补偿渲染耗时以维持目标帧时间
+        let elapsed_ms = frame_start.elapsed().as_millis();
+        let sleep_ms = board::TARGET_FRAME_TIME_MS.saturating_sub(elapsed_ms);
+
+        if elapsed_ms > board::TARGET_FRAME_TIME_MS {
+            warn!("帧时间超标: {}ms > {}ms", elapsed_ms, board::TARGET_FRAME_TIME_MS);
+        }
+
+        embassy_time::Timer::after(embassy_time::Duration::from_millis(sleep_ms)).await;
     }
 }

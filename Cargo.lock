@@ -3519,6 +3519,7 @@ dependencies = [
 name = "my-slint-fan"
 version = "0.2.0"
 dependencies = [
+ "critical-section",
  "embassy-executor",
  "embassy-sync 0.8.0",
  "embassy-time",

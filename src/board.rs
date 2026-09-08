@@ -40,3 +40,43 @@ pub const TOUCH_INT_GPIO: u8 = 6;
 
 /// 风扇 PWM 候选引脚:模块扩展座 H2 的 GPIO12(空闲脚)
 pub const FAN_PWM_GPIO: u8 = 12;
+
+/// 3.3V 电源控制引脚(高电平开启外设电源轨)
+pub const VCC_3V3_CTRL_GPIO: u8 = 60;
+
+// === 性能与时序常量 ===
+
+/// 目标帧时间(毫秒):60fps
+pub const TARGET_FRAME_TIME_MS: u64 = 16;
+
+/// 风扇 PWM 频率(Hz):典型 PC 风扇 25kHz
+pub const FAN_PWM_FREQ_HZ: u32 = 25_000;
+
+/// 风扇 PWM 最大占空比(百分比)
+pub const FAN_PWM_MAX_DUTY: u8 = 100;
+
+/// 看门狗超时时间(毫秒):主循环挂死保护
+pub const WATCHDOG_TIMEOUT_MS: u64 = 3000;
+
+// === CO5300 寄存器地址(补充文档) ===
+
+/// 列地址设置(CASET)
+pub const CO5300_REG_CASET: u8 = 0x2A;
+
+/// 行地址设置(RASET)  
+pub const CO5300_REG_RASET: u8 = 0x2B;
+
+/// 写 GRAM(RAMWR)
+pub const CO5300_REG_RAMWR: u8 = 0x2C;
+
+/// 亮度寄存器(0x00..0xFF)
+pub const CO5300_REG_BRIGHTNESS: u8 = 0x51;
+
+/// 官方默认窗口 X 起始
+pub const CO5300_DEFAULT_WINDOW_X_START: u16 = 0x0006;
+/// 官方默认窗口 X 结束
+pub const CO5300_DEFAULT_WINDOW_X_END: u16 = 0x01DD;
+/// 官方默认窗口 Y 起始
+pub const CO5300_DEFAULT_WINDOW_Y_START: u16 = 0x0000;
+/// 官方默认窗口 Y 结束
+pub const CO5300_DEFAULT_WINDOW_Y_END: u16 = 0x01D1;
