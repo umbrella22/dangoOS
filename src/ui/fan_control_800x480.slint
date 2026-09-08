@@ -1,0 +1,389 @@
+// EVE 风格风扇控制系统 - 800×480 宽屏版本
+// 适配: ESP32-S31-Korvo-1 (4.3寸 RGB LCD)
+// 设计版本: 嵌入式版 (800×480)
+
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+// ============================================
+// 颜色定义（EVE 青金石蓝风格）
+// ============================================
+export global eve-colors {
+    // 主色调
+    out property <color> cyan-primary: #5fd0e0;
+    out property <color> amber-accent: #e8c25a;
+    out property <color> green-ok: #7bc98a;
+    out property <color> red-warn: #e05d5d;
+    
+    // 背景色
+    out property <color> bg-deep: #02060a;
+    out property <color> bg-panel: #0a1821;
+    
+    // 边框和文字
+    out property <color> border-main: #6ebdd266;
+    out property <color> text-primary: #c2dbe4;
+    out property <color> text-secondary: #68838f;
+}
+
+// ============================================
+// 基础组件：EVE 风格面板
+// ============================================
+component EvePanel inherits Rectangle {
+    in property <string> title: "PANEL";
+    
+    background: eve-colors.bg-panel;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: eve-colors.border-main;
+    
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        
+        // 面板标题
+        Text {
+            text: title;
+            color: eve-colors.cyan-primary;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1.2px;
+        }
+        
+        @children
+    }
+}
+
+// ============================================
+// 六边形按钮（档位选择）
+// ============================================
+component HexButton inherits Rectangle {
+    in property <int> value: 0;
+    in property <bool> active: false;
+    in property <bool> is-auto: false;
+    callback clicked();
+    
+    width: 28px;
+    height: 32px;
+    
+    Path {
+        fill: active ? (is-auto ? #7bc98a20 : #5fd0e020) : #0a1821;
+        stroke: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary) : 
+                (is-auto ? #7bc98a66 : eve-colors.border-main);
+        stroke-width: active ? 2px : 1.5px;
+        
+        // 正六边形坐标（放大版）
+        MoveTo { x: 14; y: 0; }
+        LineTo { x: 28; y: 8; }
+        LineTo { x: 28; y: 24; }
+        LineTo { x: 14; y: 32; }
+        LineTo { x: 0; y: 24; }
+        LineTo { x: 0; y: 8; }
+        Close {}
+    }
+    
+    Text {
+        y: 12px;
+        text: value > 0 ? value : (is-auto ? "AUTO" : "0");
+        color: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary) : 
+               eve-colors.text-secondary;
+        font-size: is-auto ? 8px : 12px;
+        font-weight: active ? 700 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// ============================================
+// 主界面（800×480 横屏布局）
+// ============================================
+export component FanControlUI inherits Window {
+    // 数据属性
+    in-out property <float> temperature: 28.5;
+    in-out property <float> temp-trend: 0.0;
+    in-out property <int> fan-rpm: 2450;
+    in-out property <int> fan-percentage: 75;
+    in-out property <float> fan-power: 3.8;
+    in-out property <int> cpu-temp: 45;
+    in-out property <string> uptime: "00:00:00";
+    in-out property <bool> system-online: true;
+    in-out property <int> current-speed: 75;
+    
+    // 回调
+    callback speed-changed(int);
+    
+    width: 800px;
+    height: 480px;
+    background: eve-colors.bg-deep;
+    
+    // 横屏三栏布局：左侧温度、中间风扇、右侧系统
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 16px;
+        
+        // ========== 左侧：温度监控 ==========
+        VerticalLayout {
+            width: 35%;
+            spacing: 12px;
+            
+            // 温度显示面板
+            EvePanel {
+                title: "TEMPERATURE";
+                height: 55%;
+                
+                VerticalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    
+                    // 主温度
+                    HorizontalLayout {
+                        alignment: center;
+                        Text {
+                            text: round(temperature * 10) / 10;
+                            color: temperature > 35 ? eve-colors.red-warn : eve-colors.cyan-primary;
+                            font-size: 56px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: "°C";
+                            color: eve-colors.text-secondary;
+                            font-size: 28px;
+                            vertical-alignment: top;
+                        }
+                    }
+                    
+                    // 趋势指示
+                    Text {
+                        text: temp-trend > 0 ? "↑ RISING" : (temp-trend < 0 ? "↓ FALLING" : "→ STABLE");
+                        color: eve-colors.amber-accent;
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+            
+            // CPU 温度面板
+            EvePanel {
+                title: "CPU TEMP";
+                height: 40%;
+                
+                VerticalLayout {
+                    alignment: center;
+                    HorizontalLayout {
+                        alignment: center;
+                        Text {
+                            text: cpu-temp;
+                            color: eve-colors.text-primary;
+                            font-size: 36px;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "°C";
+                            color: eve-colors.text-secondary;
+                            font-size: 18px;
+                            vertical-alignment: top;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // ========== 中间：风扇控制 ==========
+        VerticalLayout {
+            width: 35%;
+            spacing: 12px;
+            
+            // 转速监控
+            EvePanel {
+                title: "FAN SPEED";
+                height: 55%;
+                
+                HorizontalLayout {
+                    spacing: 16px;
+                    
+                    // 左侧：RPM 数字
+                    VerticalLayout {
+                        width: 50%;
+                        alignment: center;
+                        
+                        Text {
+                            text: fan-rpm;
+                            color: eve-colors.cyan-primary;
+                            font-size: 48px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "RPM";
+                            color: eve-colors.text-secondary;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                        }
+                    }
+                    
+                    // 右侧：百分比环
+                    Rectangle {
+                        width: 50%;
+                        
+                        VerticalLayout {
+                            alignment: center;
+                            HorizontalLayout {
+                                alignment: center;
+                                Text {
+                                    text: fan-percentage;
+                                    color: eve-colors.cyan-primary;
+                                    font-size: 36px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: "%";
+                                    color: eve-colors.text-secondary;
+                                    font-size: 18px;
+                                    vertical-alignment: top;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 档位控制
+            EvePanel {
+                title: "SPEED CONTROL";
+                height: 40%;
+                
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    
+                    HexButton {
+                        value: 0;
+                        active: current-speed == 0;
+                        clicked => { speed-changed(0); }
+                    }
+                    HexButton {
+                        value: 25;
+                        active: current-speed == 25;
+                        clicked => { speed-changed(25); }
+                    }
+                    HexButton {
+                        value: 50;
+                        active: current-speed == 50;
+                        clicked => { speed-changed(50); }
+                    }
+                    HexButton {
+                        value: 75;
+                        active: current-speed == 75;
+                        clicked => { speed-changed(75); }
+                    }
+                    HexButton {
+                        value: 100;
+                        active: current-speed == 100;
+                        clicked => { speed-changed(100); }
+                    }
+                    HexButton {
+                        is-auto: true;
+                        active: current-speed < 0;
+                        clicked => { speed-changed(-1); }
+                    }
+                }
+            }
+        }
+        
+        // ========== 右侧：系统信息 ==========
+        VerticalLayout {
+            width: 28%;
+            spacing: 12px;
+            
+            // 系统状态
+            EvePanel {
+                title: "SYSTEM";
+                height: 48%;
+                
+                VerticalLayout {
+                    spacing: 12px;
+                    
+                    HorizontalLayout {
+                        Text {
+                            text: "STATUS";
+                            color: eve-colors.text-secondary;
+                            font-size: 11px;
+                        }
+                        Text {
+                            text: system-online ? "ONLINE" : "OFFLINE";
+                            color: system-online ? eve-colors.green-ok : eve-colors.red-warn;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: right;
+                        }
+                    }
+                    
+                    HorizontalLayout {
+                        Text {
+                            text: "UPTIME";
+                            color: eve-colors.text-secondary;
+                            font-size: 11px;
+                        }
+                        Text {
+                            text: uptime;
+                            color: eve-colors.text-primary;
+                            font-size: 11px;
+                            horizontal-alignment: right;
+                        }
+                    }
+                    
+                    HorizontalLayout {
+                        Text {
+                            text: "POWER";
+                            color: eve-colors.text-secondary;
+                            font-size: 11px;
+                        }
+                        HorizontalLayout {
+                            alignment: end;
+                            Text {
+                                text: round(fan-power * 10) / 10;
+                                color: eve-colors.amber-accent;
+                                font-size: 11px;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: "W";
+                                color: eve-colors.text-secondary;
+                                font-size: 11px;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 设备信息
+            EvePanel {
+                title: "DEVICE";
+                height: 48%;
+                
+                VerticalLayout {
+                    spacing: 8px;
+                    
+                    Text {
+                        text: "ESP32-S31";
+                        color: eve-colors.text-primary;
+                        font-size: 12px;
+                        font-weight: 600;
+                    }
+                    Text {
+                        text: "Korvo-1";
+                        color: eve-colors.text-secondary;
+                        font-size: 10px;
+                    }
+                    Text {
+                        text: "800×480 LCD";
+                        color: eve-colors.text-secondary;
+                        font-size: 10px;
+                    }
+                }
+            }
+        }
+    }
+}

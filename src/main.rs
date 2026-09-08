@@ -17,6 +17,7 @@ slint::include_modules!();
 
 fn main() -> Result<(), slint::PlatformError> {
     println!("🚀 EVE 风扇控制系统启动中...");
+    println!("📦 硬件变体: {}", ui::VARIANT_NAME);
     
     // 创建 UI 实例
     let ui = FanControlUI::new()?;
