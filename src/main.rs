@@ -85,27 +85,32 @@ fn main() -> Result<(), slint::PlatformError> {
     println!("🎨 UI 渲染中...");
     println!("✨ CRT 上电动画启动...");
     
-    // CRT 上电动画（依次点亮面板）
-    // 必须在 ui.run() 之前启动，让动画在窗口显示时执行
+    // CRT 上电动画（使用 Slint 的定时器在主线程执行）
     let ui_weak_anim = ui.as_weak();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(500));  // 等待窗口完全显示
-        
+    slint::Timer::single_shot(Duration::from_millis(500), move || {
         if let Some(ui) = ui_weak_anim.upgrade() {
-            // 面板 1: 系统状态
             ui.set_panel_1_on(true);
-            std::thread::sleep(Duration::from_millis(200));
             
-            // 面板 2: 温度监控
-            ui.set_panel_2_on(true);
-            std::thread::sleep(Duration::from_millis(200));
-            
-            // 面板 3: 转速监控
-            ui.set_panel_3_on(true);
-            std::thread::sleep(Duration::from_millis(200));
-            
-            // 面板 4: 风扇控制
-            ui.set_panel_4_on(true);
+            let ui_weak2 = ui.as_weak();
+            slint::Timer::single_shot(Duration::from_millis(200), move || {
+                if let Some(ui) = ui_weak2.upgrade() {
+                    ui.set_panel_2_on(true);
+                    
+                    let ui_weak3 = ui.as_weak();
+                    slint::Timer::single_shot(Duration::from_millis(200), move || {
+                        if let Some(ui) = ui_weak3.upgrade() {
+                            ui.set_panel_3_on(true);
+                            
+                            let ui_weak4 = ui.as_weak();
+                            slint::Timer::single_shot(Duration::from_millis(200), move || {
+                                if let Some(ui) = ui_weak4.upgrade() {
+                                    ui.set_panel_4_on(true);
+                                }
+                            });
+                        }
+                    });
+                }
+            });
         }
     });
     
