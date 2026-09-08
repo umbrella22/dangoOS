@@ -1,19 +1,21 @@
 //! ESP32-S31 开发板引脚映射。
 //!
 //! 支持多个硬件变体，通过 Cargo Features 选择：
-//! - `s31-variant-a`: ESP-Mosaico 官方开发板
-//! - `s31-variant-b`: 自定义 S31 配置
+//! - `mosaico`: ESP-Mosaico 官方开发板 (480×480 AMOLED)
+//! - `korvo`: ESP32-S31-Korvo-1 开发板 (800×480 RGB LCD)
 //!
 //! 来源:
-//! - Variant A: https://docs.espressif.com/projects/esp-dev-kits/zh_CN/latest/esp32s31/esp-mosaico/user_guide.html
+//! - Mosaico: https://docs.espressif.com/projects/esp-dev-kits/zh_CN/latest/esp32s31/esp-mosaico/user_guide.html
+//! - Korvo-1: https://github.com/espressif/esp-bsp/tree/master/bsp/esp32_s3_korvo_1
+//! - LCD Sub3: https://github.com/espressif/esp-bsp/tree/master/bsp/esp32_s3_lcd_ev_board
 
 #![allow(dead_code)] // 引脚常量即文档,未全部用于代码是正常的
 
 // ============================================
-// 变体 A: ESP-Mosaico 官方开发板
+// 变体: ESP-Mosaico 官方开发板
 // ============================================
-#[cfg(feature = "s31-variant-a")]
-pub mod variant_a {
+#[cfg(feature = "mosaico")]
+pub mod mosaico {
     /// LCD:2.16 寸 480×480 QSPI AMOLED(CO5300 驱动,GRAM 自刷新)
     pub const LCD_WIDTH: u16 = 480;
     pub const LCD_HEIGHT: u16 = 480;
@@ -60,85 +62,95 @@ pub mod variant_a {
 }
 
 // ============================================
-// 变体 B: ESP32-S31-Korvo-1 开发板
+// 变体: ESP32-S31-Korvo-1 开发板
 // ============================================
-#[cfg(feature = "s31-variant-b")]
-pub mod variant_b {
+#[cfg(feature = "korvo")]
+pub mod korvo {
     /// LCD:4.3 寸 800×480 RGB LCD (ESP32-S3-LCD-EV-Board-SUB3)
     pub const LCD_WIDTH: u16 = 800;
     pub const LCD_HEIGHT: u16 = 480;
     
     /// LCD 类型标识
     pub const LCD_TYPE: &str = "RGB-800x480";
-    pub const LCD_INTERFACE: &str = "RGB";  // RGB 接口，非 QSPI
+    pub const LCD_INTERFACE: &str = "RGB";  // RGB 并口接口
     
-    /// LCD RGB 接口引脚（需要根据原理图确认）
-    /// TODO: 从 Korvo-1 原理图中确认这些引脚
-    pub const LCD_PCLK_GPIO: u8 = 42;   // Pixel Clock
-    pub const LCD_HSYNC_GPIO: u8 = 39;  // H-Sync
-    pub const LCD_VSYNC_GPIO: u8 = 40;  // V-Sync
-    pub const LCD_DE_GPIO: u8 = 41;     // Data Enable
+    /// LCD RGB 接口引脚（来自官方 BSP）
+    pub const LCD_PCLK_GPIO: u8 = 9;    // Pixel Clock
+    pub const LCD_HSYNC_GPIO: u8 = 46;  // H-Sync
+    pub const LCD_VSYNC_GPIO: u8 = 3;   // V-Sync
+    pub const LCD_DE_GPIO: u8 = 17;     // Data Enable
     
-    // RGB 数据线（通常是 16-bit RGB565 或 24-bit RGB888）
-    pub const LCD_R0_GPIO: u8 = 0;   // Red[0]
-    pub const LCD_R1_GPIO: u8 = 1;   // Red[1]
-    pub const LCD_R2_GPIO: u8 = 2;   // Red[2]
-    pub const LCD_R3_GPIO: u8 = 3;   // Red[3]
-    pub const LCD_R4_GPIO: u8 = 4;   // Red[4]
+    /// RGB 数据线（16-bit RGB565）
+    pub const LCD_DATA0_GPIO: u8 = 10;   // Red[0]
+    pub const LCD_DATA1_GPIO: u8 = 11;   // Red[1]
+    pub const LCD_DATA2_GPIO: u8 = 12;   // Red[2]
+    pub const LCD_DATA3_GPIO: u8 = 13;   // Red[3]
+    pub const LCD_DATA4_GPIO: u8 = 14;   // Red[4]
     
-    pub const LCD_G0_GPIO: u8 = 5;   // Green[0]
-    pub const LCD_G1_GPIO: u8 = 6;   // Green[1]
-    pub const LCD_G2_GPIO: u8 = 7;   // Green[2]
-    pub const LCD_G3_GPIO: u8 = 8;   // Green[3]
-    pub const LCD_G4_GPIO: u8 = 9;   // Green[4]
-    pub const LCD_G5_GPIO: u8 = 10;  // Green[5]
+    pub const LCD_DATA5_GPIO: u8 = 21;   // Green[0]
+    pub const LCD_DATA6_GPIO: u8 = 47;   // Green[1]
+    pub const LCD_DATA7_GPIO: u8 = 48;   // Green[2]
+    pub const LCD_DATA8_GPIO: u8 = 45;   // Green[3]
+    pub const LCD_DATA9_GPIO: u8 = 38;   // Green[4]
+    pub const LCD_DATA10_GPIO: u8 = 39;  // Green[5]
     
-    pub const LCD_B0_GPIO: u8 = 11;  // Blue[0]
-    pub const LCD_B1_GPIO: u8 = 12;  // Blue[1]
-    pub const LCD_B2_GPIO: u8 = 13;  // Blue[2]
-    pub const LCD_B3_GPIO: u8 = 14;  // Blue[3]
-    pub const LCD_B4_GPIO: u8 = 15;  // Blue[4]
+    pub const LCD_DATA11_GPIO: u8 = 40;  // Blue[0]
+    pub const LCD_DATA12_GPIO: u8 = 41;  // Blue[1]
+    pub const LCD_DATA13_GPIO: u8 = 42;  // Blue[2]
+    pub const LCD_DATA14_GPIO: u8 = 2;   // Blue[3]
+    pub const LCD_DATA15_GPIO: u8 = 1;   // Blue[4]
     
-    /// 背光控制
-    pub const LCD_BL_GPIO: u8 = 2;
+    /// 背光控制（需要通过 IO Expander）
+    pub const LCD_BL_CTRL_VIA_EXPANDER: bool = true;
     
-    /// 可寻址 RGB LED (WS2812)
-    pub const RGB_LED_GPIO: u8 = 37;
+    /// I2C 引脚（主板配置，用于 IO Expander）
+    pub const I2C_SCL_GPIO: u8 = 2;
+    pub const I2C_SDA_GPIO: u8 = 1;
     
-    /// 风扇 PWM 引脚（使用可用的扩展 GPIO）
-    pub const FAN_PWM_GPIO: u8 = 38;  // 示例引脚，需确认
+    /// 可寻址 RGB LED (WS2812 x12)
+    pub const RGB_LED_GPIO: u8 = 19;     // 官方 BSP 定义
+    pub const RGB_LED_NUM: u8 = 12;
+    
+    /// 按键（所有按键共用一个 GPIO，通过 ADC 区分）
+    pub const BUTTONS_GPIO: u8 = 8;
+    
+    /// 功放电源控制
+    pub const POWER_AMP_GPIO: u8 = 38;
+    
+    /// 风扇 PWM 引脚（使用空闲 GPIO）
+    pub const FAN_PWM_GPIO: u8 = 4;   // GPIO4 空闲可用
     
     /// 硬件特性标识（用于条件编译）
     pub const HAS_RGB_LED: bool = true;
-    pub const HAS_AUDIO: bool = true;  // Korvo-1 有音频硬件
-    pub const HAS_CAMERA: bool = true; // 支持 DVP 摄像头
+    pub const HAS_AUDIO: bool = true;   // I2S 音频
+    pub const HAS_CAMERA: bool = true;  // DVP 摄像头接口
 }
 
 // ============================================
 // 公共接口：根据编译时 feature 导出对应变体
 // ============================================
-#[cfg(feature = "s31-variant-a")]
-pub use variant_a::*;
+#[cfg(feature = "mosaico")]
+pub use mosaico::*;
 
-#[cfg(feature = "s31-variant-b")]
-pub use variant_b::*;
+#[cfg(feature = "korvo")]
+pub use korvo::*;
 
 // 默认配置（桌面开发或未指定变体时）
-#[cfg(not(any(feature = "s31-variant-a", feature = "s31-variant-b")))]
-pub use default_config::*;
+#[cfg(not(any(feature = "mosaico", feature = "korvo")))]
+pub use mosaico::*;  // 桌面开发默认使用 Mosaico 的配置
 
 // ============================================
 // 通用配置（所有变体共享）
 // ============================================
 
 /// 帧缓冲字节数 - 根据编译时的屏幕尺寸计算
-#[cfg(feature = "s31-variant-a")]
+#[cfg(feature = "mosaico")]
 pub const LCD_FB_BYTES: usize = 480 * 480 * 2;  // RGB565: 450KB
 
-#[cfg(feature = "s31-variant-b")]
+#[cfg(feature = "korvo")]
 pub const LCD_FB_BYTES: usize = 800 * 480 * 2;  // RGB565: 750KB
 
-#[cfg(not(any(feature = "s31-variant-a", feature = "s31-variant-b")))]
+#[cfg(not(any(feature = "mosaico", feature = "korvo")))]
 pub const LCD_FB_BYTES: usize = 480 * 480 * 2;  // 默认
 
 /// 目标帧时间(毫秒):60fps

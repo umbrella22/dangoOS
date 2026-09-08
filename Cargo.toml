@@ -9,15 +9,15 @@ authors = ["Kiro", "Claude"]
 # ============================================
 # 使用方法:
 #   桌面开发: cargo run
-#   ESP32-S31 变体A: cargo build --features s31-variant-a
-#   ESP32-S31 变体B: cargo build --features s31-variant-b
+#   ESP32-S31 Mosaico: cargo build --features mosaico
+#   ESP32-S31 Korvo-1: cargo build --features korvo
 
 [features]
 default = []  # 桌面开发模式（无硬件 feature）
 
 # ESP32-S31 硬件变体
-s31-variant-a = []  # ESP-Mosaico 官方开发板
-s31-variant-b = []  # 自定义 S31 配置
+mosaico = []  # ESP-Mosaico 官方开发板 (480×480 AMOLED)
+korvo = []    # ESP32-S31-Korvo-1 开发板 (800×480 RGB LCD)
 
 [dependencies]
 slint = "1.3"

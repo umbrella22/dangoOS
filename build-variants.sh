@@ -18,8 +18,8 @@ show_usage() {
 用法: $0 [选项] <变体>
 
 变体选择:
-  variant-a    ESP-Mosaico 官方开发板
-  variant-b    自定义 S31 配置
+  mosaico      ESP-Mosaico 官方开发板 (480×480 AMOLED)
+  korvo        ESP32-S31-Korvo-1 开发板 (800×480 RGB LCD)
   desktop      桌面开发模式（默认）
 
 选项:
@@ -28,10 +28,10 @@ show_usage() {
   --monitor    烧录后启动串口监视器
 
 示例:
-  $0 variant-a              # 开发构建变体A
-  $0 variant-b --release    # Release构建变体B
-  $0 variant-a --flash      # 构建并烧录变体A
-  $0 desktop                # 桌面开发模式
+  $0 mosaico              # 开发构建 Mosaico
+  $0 korvo --release      # Release 构建 Korvo-1
+  $0 mosaico --flash      # 构建并烧录 Mosaico
+  $0 desktop              # 桌面开发模式
 
 EOF
 }
@@ -44,7 +44,7 @@ DO_MONITOR=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        variant-a|variant-b|desktop)
+        mosaico|korvo|desktop)
             VARIANT="$1"
             shift
             ;;
@@ -82,13 +82,13 @@ fi
 
 # 变体配置映射
 case $VARIANT in
-    variant-a)
-        FEATURE="s31-variant-a"
-        CONFIG_NAME="ESP-Mosaico 官方开发板"
+    mosaico)
+        FEATURE="mosaico"
+        CONFIG_NAME="ESP-Mosaico (480×480 AMOLED)"
         ;;
-    variant-b)
-        FEATURE="s31-variant-b"
-        CONFIG_NAME="自定义 S31 配置"
+    korvo)
+        FEATURE="korvo"
+        CONFIG_NAME="ESP32-S31-Korvo-1 (800×480 RGB LCD)"
         ;;
     desktop)
         FEATURE=""

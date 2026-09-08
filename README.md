@@ -56,14 +56,15 @@ cargo run
 项目支持两种硬件配置，通过 Cargo Features 选择：
 
 ```bash
-# 变体 A: ESP-Mosaico 官方开发板
-./build-variants.sh variant-a --release --flash
+# Mosaico (480×480 AMOLED)
+./build-variants.sh mosaico --release --flash
 
-# 变体 B: 自定义 S31 配置
-./build-variants.sh variant-b --release --flash
+# Korvo-1 (800×480 RGB LCD)
+./build-variants.sh korvo --release --flash
 
 # 手动编译
-cargo build --features s31-variant-a --release
+cargo build --features mosaico --release
+cargo build --features korvo --release
 ```
 
 详见 [`src/embedded_hal/VARIANTS.md`](src/embedded_hal/VARIANTS.md)

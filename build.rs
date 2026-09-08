@@ -1,12 +1,12 @@
 fn main() {
     // 根据 feature 选择不同的 UI 文件（树摇优化）
-    #[cfg(feature = "s31-variant-a")]
+    #[cfg(feature = "mosaico")]
     let ui_file = "src/ui/fan_control.slint";
     
-    #[cfg(feature = "s31-variant-b")]
+    #[cfg(feature = "korvo")]
     let ui_file = "src/ui/fan_control_800x480.slint";
     
-    #[cfg(not(any(feature = "s31-variant-a", feature = "s31-variant-b")))]
+    #[cfg(not(any(feature = "mosaico", feature = "korvo")))]
     let ui_file = "src/ui/fan_control.slint";
     
     // 编译选定的 Slint UI 文件
