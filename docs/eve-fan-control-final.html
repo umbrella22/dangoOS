@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EVE 风扇控制系统 - 简化版（CRT 上电效果）</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+        }
+        
+        #container {
+            position: relative;
+        }
+        
+        svg {
+            display: block;
+            border: 2px solid #5fd0e0;
+            border-radius: 4px;
+        }
+        
+        .info-panel {
+            position: absolute;
+            bottom: -80px;
+            left: 0;
+            right: 0;
+            color: #5fd0e0;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        .info-panel p {
+            margin: 8px 0;
+            color: #68838f;
+        }
+        
+        .info-panel strong {
+            color: #5fd0e0;
+        }
+        
+        #restart-btn {
+            margin-top: 10px;
+            padding: 8px 20px;
+            background: #5fd0e020;
+            border: 1px solid #5fd0e0;
+            color: #5fd0e0;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+        }
+        
+        #restart-btn:hover {
+            background: #5fd0e040;
+            box-shadow: 0 0 10px rgba(95, 208, 224, 0.3);
+        }
+        
+        /* CRT 闪烁效果 */
+        @keyframes crt-flicker {
+            0%, 100% { opacity: 0; }
+            10% { opacity: 1; }
+            20% { opacity: 0.3; }
+            30% { opacity: 1; }
+            40% { opacity: 0.4; }
+            50% { opacity: 1; }
+            60% { opacity: 0.2; }
+            70% { opacity: 1; }
+            80%, 90% { opacity: 1; }
+        }
+        
+        .crt-powerup {
+            animation: crt-flicker 1s ease-out forwards;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <svg width="480" height="480" viewBox="0 0 480 480" xmlns="http://www.w3.org/2000/svg" id="mainSvg">
+            <defs>
+                <!-- EVE 风格渐变 -->
+                <linearGradient id="panelGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#0a1821;stop-opacity:0.9" />
+                    <stop offset="100%" style="stop-color:#071119;stop-opacity:0.85" />
+                </linearGradient>
+                
+                <!-- 辉光滤镜 -->
+                <filter id="glow">
+                    <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                    <feMerge>
+                        <feMergeNode in="coloredBlur"/>
+                        <feMergeNode in="SourceGraphic"/>
+                    </feMerge>
+                </filter>
+                
+                <!-- 强辉光 -->
+                <filter id="strongGlow">
+                    <feGaussianBlur stdDeviation="5" result="coloredBlur"/>
+                    <feMerge>
+                        <feMergeNode in="coloredBlur"/>
+                        <feMergeNode in="SourceGraphic"/>
+                    </feMerge>
+                </filter>
+            </defs>
+            
+            <!-- 背景 -->
+            <rect width="480" height="480" fill="#02060a"/>
+            
+            <!-- 启动序列层 -->
+            <g id="boot-sequence" opacity="1">
+                <!-- 深色背景 -->
+                <rect width="480" height="480" fill="#010407"/>
+                
+                <!-- 简化启动：只有标题 + 进度条 -->
+                <g id="boot-content" opacity="0">
+                    <text x="240" y="200" font-family="Arial, sans-serif" font-size="28" font-weight="700" 
+                          fill="#5fd0e0" text-anchor="middle" filter="url(#glow)">
+                        神经链接
+                    </text>
+                    <text x="240" y="230" font-family="Courier New, monospace" font-size="12" 
+                          fill="#68838f" text-anchor="middle">
+                        NEURAL LINK
+                    </text>
+                    
+                    <!-- 进度条容器 -->
+                    <rect x="120" y="260" width="240" height="8" fill="#1a2029" rx="2" opacity="0" id="progress-bg"/>
+                    
+                    <!-- 进度条填充 -->
+                    <rect x="120" y="260" width="0" height="8" fill="#5fd0e0" rx="2" id="progress-bar" filter="url(#glow)"/>
+                    
+                    <!-- 百分比文字 -->
+                    <text x="240" y="285" font-family="Courier New, monospace" font-size="11" 
+                          fill="#5fd0e0" text-anchor="middle" id="progress-text" opacity="0">
+                        0%
+                    </text>
+                </g>
+            </g>
+            
+            <!-- 主界面层 -->
+            <g id="main-ui" opacity="0">
+                <!-- 星空背景点缀 -->
+                <g id="stars">
+                    <circle cx="50" cy="50" r="1" fill="#5fd0e0" opacity="0.3">
+                        <animate attributeName="opacity" values="0.3;0.6;0.3" dur="3s" repeatCount="indefinite"/>
+                    </circle>
+                    <circle cx="420" cy="80" r="1.5" fill="#5fd0e0" opacity="0.4">
+                        <animate attributeName="opacity" values="0.4;0.8;0.4" dur="2.5s" repeatCount="indefinite"/>
+                    </circle>
+                    <circle cx="100" cy="400" r="1" fill="#e8c25a" opacity="0.3">
+                        <animate attributeName="opacity" values="0.3;0.7;0.3" dur="4s" repeatCount="indefinite"/>
+                    </circle>
+                    <circle cx="350" cy="420" r="1.5" fill="#6fb7ff" opacity="0.2">
+                        <animate attributeName="opacity" values="0.2;0.5;0.2" dur="3.5s" repeatCount="indefinite"/>
+                    </circle>
+                    <circle cx="200" cy="150" r="1" fill="#5fd0e0" opacity="0.25">
+                        <animate attributeName="opacity" values="0.25;0.5;0.25" dur="2.8s" repeatCount="indefinite"/>
+                    </circle>
+                    <circle cx="380" cy="250" r="1.2" fill="#7bc98a" opacity="0.3">
+                        <animate attributeName="opacity" values="0.3;0.6;0.3" dur="3.2s" repeatCount="indefinite"/>
+                    </circle>
+                </g>
+                
+                <!-- 标题栏 -->
+                <g id="header" class="powerup-module" opacity="0">
+                    <text x="20" y="30" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#5fd0e0">
+                        热管理控制系统
+                    </text>
+                    <text x="20" y="48" font-family="Courier New, monospace" font-size="11" fill="#68838f">
+                        ESP-MOSAICO · S31 · V0.2.0
+                    </text>
+                </g>
+                
+                <!-- 顶部状态栏 -->
+                <g id="status-bar" class="powerup-module" opacity="0">
+                    <rect x="10" y="65" width="460" height="50" fill="url(#panelGrad)" stroke="#6ebdd266" stroke-width="1"/>
+                    
+                    <!-- 四角标记 -->
+                    <line x1="9" y1="65" x2="23" y2="65" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="10" y1="64" x2="10" y2="78" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="457" y1="65" x2="471" y2="65" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="470" y1="64" x2="470" y2="78" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="9" y1="115" x2="23" y2="115" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="10" y1="102" x2="10" y2="116" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="457" y1="115" x2="471" y2="115" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="470" y1="102" x2="470" y2="116" stroke="#6ebdd26e" stroke-width="1"/>
+                    
+                    <text x="25" y="83" font-family="Arial, sans-serif" font-size="12" font-weight="600" fill="#5fd0e0">
+                        系统状态
+                    </text>
+                    
+                    <text x="25" y="105" font-family="Courier New, monospace" font-size="11" fill="#c2dbe4">
+                        运行时间: <tspan id="uptime">00:00:00</tspan>
+                    </text>
+                    
+                    <text x="210" y="105" font-family="Courier New, monospace" font-size="11" fill="#c2dbe4">
+                        CPU: <tspan id="cpu-temp">42</tspan>°C
+                    </text>
+                    
+                    <circle cx="440" cy="90" r="4" fill="#7bc98a" filter="url(#glow)">
+                        <animate attributeName="opacity" values="1;0.7;1" dur="2s" repeatCount="indefinite"/>
+                    </circle>
+                    <text x="372" y="95" font-family="Arial, sans-serif" font-size="11" fill="#7bc98a">
+                        [ 在线 ]
+                    </text>
+                </g>
+                
+                <!-- 左侧温度面板 -->
+                <g id="temp-panel" class="powerup-module" opacity="0">
+                    <rect x="10" y="130" width="220" height="160" fill="url(#panelGrad)" stroke="#6ebdd266" stroke-width="1"/>
+                    
+                    <!-- 四角标记 -->
+                    <line x1="9" y1="130" x2="23" y2="130" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="10" y1="129" x2="10" y2="143" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="217" y1="130" x2="231" y2="130" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="230" y1="129" x2="230" y2="143" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="9" y1="290" x2="23" y2="290" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="10" y1="277" x2="10" y2="291" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="217" y1="290" x2="231" y2="290" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="230" y1="277" x2="230" y2="291" stroke="#6ebdd26e" stroke-width="1"/>
+                    
+                    <text x="25" y="148" font-family="Arial, sans-serif" font-size="13" font-weight="600" fill="#5fd0e0">
+                        温度监控
+                    </text>
+                    
+                    <line x1="25" y1="156" x2="215" y2="156" stroke="#6ebdd222" stroke-width="1"/>
+                    
+                    <text x="25" y="178" font-family="Courier New, monospace" font-size="10" fill="#68838f">
+                        传感器-01
+                    </text>
+                    
+                    <text x="25" y="210" font-family="Arial, sans-serif" font-size="36" font-weight="700" fill="#5fd0e0">
+                        <tspan id="temp-value">28.5</tspan>
+                    </text>
+                    <text x="102" y="210" font-family="Arial, sans-serif" font-size="18" fill="#7895a1">
+                        °C
+                    </text>
+                    
+                    <!-- 温度条形图 -->
+                    <rect x="25" y="225" width="190" height="8" fill="#1a2029" rx="1"/>
+                    <rect id="temp-bar" x="25" y="225" width="95" height="8" fill="#5fd0e0" rx="1"/>
+                    
+                    <text x="25" y="248" font-family="Courier New, monospace" font-size="9" fill="#68838f">
+                        正常
+                    </text>
+                    <text x="115" y="248" font-family="Courier New, monospace" font-size="9" fill="#e8c25a">
+                        警告: 60°C
+                    </text>
+                    
+                    <text x="25" y="270" font-family="Courier New, monospace" font-size="9" fill="#7bc98a">
+                        ▲ +0.2°C/分钟
+                    </text>
+                </g>
+                
+                <!-- 右侧转速面板 -->
+                <g id="rpm-panel" class="powerup-module" opacity="0">
+                    <rect x="250" y="130" width="220" height="160" fill="url(#panelGrad)" stroke="#6ebdd266" stroke-width="1"/>
+                    
+                    <!-- 四角标记 -->
+                    <line x1="249" y1="130" x2="263" y2="130" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="250" y1="129" x2="250" y2="143" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="457" y1="130" x2="471" y2="130" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="470" y1="129" x2="470" y2="143" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="249" y1="290" x2="263" y2="290" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="250" y1="277" x2="250" y2="291" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="457" y1="290" x2="471" y2="290" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="470" y1="277" x2="470" y2="291" stroke="#6ebdd26e" stroke-width="1"/>
+                    
+                    <text x="265" y="148" font-family="Arial, sans-serif" font-size="13" font-weight="600" fill="#5fd0e0">
+                        转速监控
+                    </text>
+                    
+                    <line x1="265" y1="156" x2="455" y2="156" stroke="#6ebdd222" stroke-width="1"/>
+                    
+                    <text x="265" y="178" font-family="Courier New, monospace" font-size="10" fill="#68838f">
+                        风扇-01
+                    </text>
+                    
+                    <text x="265" y="208" font-family="Arial, sans-serif" font-size="32" font-weight="700" fill="#e8c25a">
+                        <tspan id="rpm-value">2450</tspan>
+                    </text>
+                    <text x="365" y="208" font-family="Arial, sans-serif" font-size="16" fill="#7895a1">
+                        RPM
+                    </text>
+                    
+                    <!-- 圆形百分比 -->
+                    <circle cx="420" cy="195" r="25" fill="none" stroke="#1a2029" stroke-width="4"/>
+                    <circle id="rpm-ring" cx="420" cy="195" r="25" fill="none" stroke="#e8c25a" stroke-width="4" 
+                            stroke-dasharray="157" stroke-dashoffset="39.25"
+                            transform="rotate(-90 420 195)" filter="url(#glow)"/>
+                    <text x="420" y="200" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#e8c25a" text-anchor="middle">
+                        <tspan id="rpm-percent">75</tspan>
+                    </text>
+                    <text x="420" y="212" font-family="Courier New, monospace" font-size="8" fill="#68838f" text-anchor="middle">
+                        %
+                    </text>
+                    
+                    <text x="265" y="248" font-family="Courier New, monospace" font-size="9" fill="#68838f">
+                        功率: <tspan id="power-value">5.2</tspan>W
+                    </text>
+                    
+                    <text x="355" y="248" font-family="Courier New, monospace" font-size="9" fill="#7bc98a">
+                        效率: 最优
+                    </text>
+                </g>
+                
+                <!-- 底部控制面板 -->
+                <g id="control-panel" class="powerup-module" opacity="0">
+                    <rect x="10" y="310" width="460" height="120" fill="url(#panelGrad)" stroke="#6ebdd266" stroke-width="1"/>
+                    
+                    <!-- 四角标记 -->
+                    <line x1="9" y1="310" x2="23" y2="310" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="10" y1="309" x2="10" y2="323" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="457" y1="310" x2="471" y2="310" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="470" y1="309" x2="470" y2="323" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="9" y1="430" x2="23" y2="430" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="10" y1="417" x2="10" y2="431" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="457" y1="430" x2="471" y2="430" stroke="#6ebdd26e" stroke-width="1"/>
+                    <line x1="470" y1="417" x2="470" y2="431" stroke="#6ebdd26e" stroke-width="1"/>
+                    
+                    <text x="25" y="330" font-family="Arial, sans-serif" font-size="13" font-weight="600" fill="#5fd0e0">
+                        风扇控制
+                    </text>
+                    
+                    <line x1="25" y1="338" x2="455" y2="338" stroke="#6ebdd222" stroke-width="1"/>
+                    
+                    <text x="25" y="358" font-family="Courier New, monospace" font-size="10" fill="#68838f">
+                        档位选择
+                    </text>
+                    
+                    <!-- 六边形档位按钮 -->
+                    <g id="speed-buttons">
+                        <!-- 0% -->
+                        <g class="speed-btn" data-speed="0" style="cursor: pointer;">
+                            <polygon points="60,375 70,380 70,390 60,395 50,390 50,380" 
+                                     fill="#0a1821" stroke="#6ebdd266" stroke-width="1.5"/>
+                            <text x="60" y="390" font-family="Arial, sans-serif" font-size="11" fill="#68838f" text-anchor="middle">0</text>
+                            <text x="60" y="410" font-family="Courier New, monospace" font-size="8" fill="#68838f" text-anchor="middle">停止</text>
+                        </g>
+                        
+                        <!-- 25% -->
+                        <g class="speed-btn" data-speed="25" style="cursor: pointer;">
+                            <polygon points="130,375 140,380 140,390 130,395 120,390 120,380" 
+                                     fill="#0a1821" stroke="#6ebdd266" stroke-width="1.5"/>
+                            <text x="130" y="390" font-family="Arial, sans-serif" font-size="11" fill="#68838f" text-anchor="middle">25</text>
+                            <text x="130" y="410" font-family="Courier New, monospace" font-size="8" fill="#68838f" text-anchor="middle">低速</text>
+                        </g>
+                        
+                        <!-- 50% -->
+                        <g class="speed-btn" data-speed="50" style="cursor: pointer;">
+                            <polygon points="200,375 210,380 210,390 200,395 190,390 190,380" 
+                                     fill="#0a1821" stroke="#6ebdd266" stroke-width="1.5"/>
+                            <text x="200" y="390" font-family="Arial, sans-serif" font-size="11" fill="#68838f" text-anchor="middle">50</text>
+                            <text x="200" y="410" font-family="Courier New, monospace" font-size="8" fill="#68838f" text-anchor="middle">中速</text>
+                        </g>
+                        
+                        <!-- 75% - 当前选中 -->
+                        <g class="speed-btn active" data-speed="75" style="cursor: pointer;">
+                            <polygon points="270,375 280,380 280,390 270,395 260,390 260,380" 
+                                     fill="#5fd0e020" stroke="#5fd0e0" stroke-width="2" filter="url(#strongGlow)">
+                                <animate attributeName="stroke-opacity" values="1;0.6;1" dur="1.5s" repeatCount="indefinite"/>
+                            </polygon>
+                            <text x="270" y="390" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#5fd0e0" text-anchor="middle">75</text>
+                            <text x="270" y="410" font-family="Courier New, monospace" font-size="8" fill="#5fd0e0" text-anchor="middle">高速</text>
+                        </g>
+                        
+                        <!-- 100% -->
+                        <g class="speed-btn" data-speed="100" style="cursor: pointer;">
+                            <polygon points="340,375 350,380 350,390 340,395 330,390 330,380" 
+                                     fill="#0a1821" stroke="#6ebdd266" stroke-width="1.5"/>
+                            <text x="340" y="390" font-family="Arial, sans-serif" font-size="11" fill="#68838f" text-anchor="middle">100</text>
+                            <text x="340" y="410" font-family="Courier New, monospace" font-size="8" fill="#68838f" text-anchor="middle">全速</text>
+                        </g>
+                        
+                        <!-- AUTO 自动模式 -->
+                        <g class="speed-btn" data-speed="auto" style="cursor: pointer;">
+                            <polygon points="420,375 430,380 430,390 420,395 410,390 410,380" 
+                                     fill="#0a1821" stroke="#7bc98a66" stroke-width="1.5"/>
+                            <text x="420" y="387" font-family="Arial, sans-serif" font-size="10" fill="#7bc98a" text-anchor="middle">AUTO</text>
+                            <text x="420" y="410" font-family="Courier New, monospace" font-size="8" fill="#7bc98a" text-anchor="middle">自动</text>
+                        </g>
+                    </g>
+                </g>
+                
+                <!-- 底部状态栏 -->
+                <g id="footer" class="powerup-module" opacity="0">
+                    <line x1="10" y1="448" x2="470" y2="448" stroke="#6ebdd222" stroke-width="1"/>
+                    
+                    <text x="20" y="465" font-family="Courier New, monospace" font-size="9" fill="#68838f">
+                        MOSAICO-S31
+                    </text>
+                    
+                    <text x="240" y="465" font-family="Courier New, monospace" font-size="9" fill="#5fd0e0" text-anchor="middle">
+                        [ 神经链接激活 ]
+                    </text>
+                    
+                    <text x="460" y="465" font-family="Courier New, monospace" font-size="9" fill="#68838f" text-anchor="end" id="current-date">
+                        2026-09-08
+                    </text>
+                </g>
+            </g>
+        </svg>
+        
+        <div class="info-panel">
+            <p id="boot-status"><strong>状态:</strong> <span style="color: #e8c25a;">启动中...</span></p>
+            <p><strong>效果:</strong> 简化启动 + CRT 上电闪烁</p>
+            <p>当前档位: <span id="current-speed" style="color: #5fd0e0;">75%</span></p>
+            <button id="restart-btn">重启系统</button>
+        </div>
+    </div>
+
+    <script>
+        // 全局状态
+        let bootCompleted = false;
+        let temperature = 28.5;
+        let rpm = 2450;
+        let cpuTemp = 42;
+        let currentSpeed = 75;
+        let uptime = { h: 0, m: 0, s: 0 };
+        let mainLoopInterval = null;
+        
+        // 简化的启动序列
+        function startBootSequence() {
+            const bootSeq = document.getElementById('boot-sequence');
+            const mainUI = document.getElementById('main-ui');
+            const statusText = document.getElementById('boot-status');
+            
+            bootSeq.style.opacity = '1';
+            mainUI.style.opacity = '0';
+            bootCompleted = false;
+            
+            // 显示标题
+            setTimeout(() => {
+                statusText.innerHTML = '<strong>状态:</strong> <span style="color: #5fd0e0;">初始化中...</span>';
+                fadeIn('boot-content', 400);
+                fadeIn('progress-bg', 400);
+                fadeIn('progress-text', 400);
+            }, 300);
+            
+            // 进度条动画（2秒）
+            setTimeout(() => {
+                animateProgress(0, 100, 2000, () => {
+                    // 完成后进入主界面
+                    setTimeout(() => {
+                        enterMainUI();
+                    }, 300);
+                });
+            }, 800);
+        }
+        
+        // 进度条动画
+        function animateProgress(from, to, duration, callback) {
+            const startTime = Date.now();
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            
+            function update() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                const current = from + (to - from) * progress;
+                
+                progressBar.setAttribute('width', (240 * current / 100).toString());
+                progressText.textContent = Math.round(current) + '%';
+                
+                if (progress < 1) {
+                    requestAnimationFrame(update);
+                } else if (callback) {
+                    callback();
+                }
+            }
+            update();
+        }
+        
+        // 进入主界面 - CRT 上电效果
+        function enterMainUI() {
+            const bootSeq = document.getElementById('boot-sequence');
+            const mainUI = document.getElementById('main-ui');
+            const statusText = document.getElementById('boot-status');
+            
+            // 淡出启动界面
+            fadeOut('boot-sequence', 300, () => {
+                bootSeq.style.display = 'none';
+            });
+            
+            // 淡入主界面背景
+            mainUI.style.transition = 'opacity 400ms';
+            mainUI.style.opacity = '1';
+            
+            // CRT 上电闪烁效果 - 逐个模块
+            const modules = [
+                'header',
+                'status-bar',
+                'temp-panel',
+                'rpm-panel',
+                'control-panel',
+                'footer'
+            ];
+            
+            modules.forEach((moduleId, index) => {
+                setTimeout(() => {
+                    crtPowerUp(moduleId);
+                }, index * 200); // 每个模块间隔 200ms
+            });
+            
+            // 所有模块完成后
+            setTimeout(() => {
+                bootCompleted = true;
+                statusText.innerHTML = '<strong>状态:</strong> <span style="color: #7bc98a;">运行中</span>';
+                
+                // 重置运行时间
+                uptime = { h: 0, m: 0, s: 0 };
+                
+                // 启动主循环
+                if (mainLoopInterval) clearInterval(mainLoopInterval);
+                mainLoopInterval = setInterval(mainLoop, 1000);
+                
+                // 设置日期
+                const now = new Date();
+                document.getElementById('current-date').textContent = 
+                    `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+            }, modules.length * 200 + 1000); // 等待最后一个模块完成
+        }
+        
+        // CRT 上电闪烁效果
+        function crtPowerUp(elementId) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            
+            // 使用 CSS 动画实现复古闪烁
+            el.style.opacity = '0';
+            el.style.animation = 'crt-flicker 1s ease-out forwards';
+            
+            // 动画结束后移除，保持稳定显示
+            setTimeout(() => {
+                el.style.animation = '';
+                el.style.opacity = '1';
+            }, 1000);
+        }
+        
+        // 辅助函数：淡入
+        function fadeIn(id, duration, callback) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.style.transition = `opacity ${duration}ms`;
+            el.style.opacity = '1';
+            if (callback) setTimeout(callback, duration);
+        }
+        
+        // 辅助函数：淡出
+        function fadeOut(id, duration, callback) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.style.transition = `opacity ${duration}ms`;
+            el.style.opacity = '0';
+            if (callback) setTimeout(callback, duration);
+        }
+        
+        // 主循环
+        function mainLoop() {
+            if (!bootCompleted) return;
+            
+            updateUptime();
+            updateTemperature();
+            updateRpm();
+            updateCpuTemp();
+        }
+        
+        // 更新运行时间
+        function updateUptime() {
+            uptime.s++;
+            if (uptime.s >= 60) {
+                uptime.s = 0;
+                uptime.m++;
+                if (uptime.m >= 60) {
+                    uptime.m = 0;
+                    uptime.h++;
+                }
+            }
+            const h = String(uptime.h).padStart(2, '0');
+            const m = String(uptime.m).padStart(2, '0');
+            const s = String(uptime.s).padStart(2, '0');
+            document.getElementById('uptime').textContent = `${h}:${m}:${s}`;
+        }
+        
+        // 更新温度
+        function updateTemperature() {
+            temperature += (Math.random() - 0.5) * 0.3;
+            temperature = Math.max(25, Math.min(35, temperature));
+            document.getElementById('temp-value').textContent = temperature.toFixed(1);
+            
+            const tempPercent = ((temperature - 20) / 80) * 100;
+            const tempBar = document.getElementById('temp-bar');
+            if (tempBar) {
+                tempBar.setAttribute('width', (190 * tempPercent / 100).toString());
+            }
+        }
+        
+        // 更新转速
+        function updateRpm() {
+            const targetRpm = currentSpeed * 32 + 100;
+            rpm += (targetRpm - rpm) * 0.05;
+            rpm = Math.round(rpm);
+            document.getElementById('rpm-value').textContent = rpm;
+            document.getElementById('rpm-percent').textContent = currentSpeed;
+            
+            const percent = currentSpeed / 100;
+            const circumference = 2 * Math.PI * 25;
+            const offset = circumference * (1 - percent);
+            const ring = document.getElementById('rpm-ring');
+            if (ring) {
+                ring.setAttribute('stroke-dashoffset', offset.toString());
+            }
+            
+            const power = (currentSpeed * 8 / 100).toFixed(1);
+            document.getElementById('power-value').textContent = power;
+        }
+        
+        // 更新 CPU 温度
+        function updateCpuTemp() {
+            cpuTemp += (Math.random() - 0.5) * 0.5;
+            cpuTemp = Math.max(38, Math.min(48, cpuTemp));
+            document.getElementById('cpu-temp').textContent = Math.round(cpuTemp);
+        }
+        
+        // 处理档位按钮点击
+        document.querySelectorAll('.speed-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                if (!bootCompleted) return;
+                
+                const speed = this.getAttribute('data-speed');
+                
+                document.querySelectorAll('.speed-btn').forEach(b => {
+                    b.classList.remove('active');
+                    const polygon = b.querySelector('polygon');
+                    const texts = b.querySelectorAll('text');
+                    
+                    if (b.getAttribute('data-speed') === 'auto') {
+                        polygon.setAttribute('fill', '#0a1821');
+                        polygon.setAttribute('stroke', '#7bc98a66');
+                        polygon.setAttribute('stroke-width', '1.5');
+                        polygon.removeAttribute('filter');
+                        texts.forEach(t => t.setAttribute('fill', '#7bc98a'));
+                    } else {
+                        polygon.setAttribute('fill', '#0a1821');
+                        polygon.setAttribute('stroke', '#6ebdd266');
+                        polygon.setAttribute('stroke-width', '1.5');
+                        polygon.removeAttribute('filter');
+                        texts.forEach(t => {
+                            t.setAttribute('fill', '#68838f');
+                            t.setAttribute('font-weight', 'normal');
+                        });
+                    }
+                });
+                
+                this.classList.add('active');
+                const polygon = this.querySelector('polygon');
+                const texts = this.querySelectorAll('text');
+                
+                if (speed === 'auto') {
+                    polygon.setAttribute('fill', '#7bc98a20');
+                    polygon.setAttribute('stroke', '#7bc98a');
+                    polygon.setAttribute('stroke-width', '2');
+                    polygon.setAttribute('filter', 'url(#strongGlow)');
+                    texts[0].setAttribute('fill', '#7bc98a');
+                    texts[0].setAttribute('font-weight', '700');
+                    currentSpeed = 60;
+                    document.getElementById('current-speed').textContent = '自动模式';
+                } else {
+                    polygon.setAttribute('fill', '#5fd0e020');
+                    polygon.setAttribute('stroke', '#5fd0e0');
+                    polygon.setAttribute('stroke-width', '2');
+                    polygon.setAttribute('filter', 'url(#strongGlow)');
+                    texts[0].setAttribute('fill', '#5fd0e0');
+                    texts[0].setAttribute('font-weight', '700');
+                    texts[1].setAttribute('fill', '#5fd0e0');
+                    currentSpeed = parseInt(speed);
+                    document.getElementById('current-speed').textContent = currentSpeed + '%';
+                }
+            });
+        });
+        
+        // 重启按钮
+        document.getElementById('restart-btn').addEventListener('click', () => {
+            if (mainLoopInterval) clearInterval(mainLoopInterval);
+            
+            // 重置所有模块
+            document.querySelectorAll('.powerup-module').forEach(el => {
+                el.style.opacity = '0';
+                el.style.animation = '';
+            });
+            
+            document.getElementById('boot-content').style.opacity = '0';
+            document.getElementById('progress-bar').setAttribute('width', '0');
+            document.getElementById('boot-sequence').style.display = 'block';
+            
+            startBootSequence();
+        });
+        
+        // 页面加载完成后自动启动
+        window.addEventListener('load', () => {
+            startBootSequence();
+        });
+    </script>
+</body>
+</html>
