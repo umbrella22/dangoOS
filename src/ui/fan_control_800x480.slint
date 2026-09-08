@@ -280,18 +280,39 @@ export component FanControlUI inherits Window {
                         }
                     }
 
-                    // 温度进度条（量程 15~70°C，警告线 60°C）
+                    // 温度标尺（量程 15~70°C，警告线 60°C）
+                    // ▼ 游标标记当前温度位置 —— 只读指示，非可操作控件
                     Rectangle {
-                        height: 8px;
-                        background: #1a2029;
-                        border-radius: 1px;
+                        height: 16px;
 
+                        property <float> pos: clamp((root.temperature - 15.0) / 55.0, 0.0, 1.0);
+
+                        // 轨道 + 填充
                         Rectangle {
-                            width: parent.width * clamp((root.temperature - 15.0) / 55.0, 0.0, 1.0);
-                            height: parent.height;
-                            background: root.temperature >= 60 ? eve-colors.red-warn
-                                       : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.cyan-primary);
+                            y: 8px;
+                            height: 8px;
+                            width: 100%;
+                            background: #1a2029;
                             border-radius: 1px;
+
+                            Rectangle {
+                                width: parent.width * clamp((root.temperature - 15.0) / 55.0, 0.0, 1.0);
+                                height: parent.height;
+                                background: root.temperature >= 60 ? eve-colors.red-warn
+                                           : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.cyan-primary);
+                                border-radius: 1px;
+                            }
+                        }
+
+                        // 当前位置游标（随温度移动，颜色跟随状态分级）
+                        Text {
+                            x: min((parent.width - 10px) * parent.pos, parent.width - self.width);
+                            y: -2px;
+                            text: "▼";
+                            color: root.temperature >= 60 ? eve-colors.red-warn
+                                   : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.cyan-primary);
+                            font-size: 8px;
+                            animate x { duration: 300ms; easing: ease-out; }
                         }
                     }
 
