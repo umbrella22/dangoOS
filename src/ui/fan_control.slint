@@ -471,10 +471,10 @@ export component FanControlUI inherits Window {
         }
         
         // ====================================
-        // 系统状态栏（修复：单行水平布局）
+        // 系统状态栏（增加高度避免文本挤压）
         // ====================================
         EvePanel {
-            height: 50px;
+            height: 65px;  // 从 50px 增加到 65px
             title: "系统状态";
             power-on: panel-1-on;
             
