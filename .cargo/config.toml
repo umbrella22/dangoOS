@@ -1,12 +1,14 @@
-[build]
-target = "riscv32imafc-unknown-none-elf"
+# 桌面开发配置（模拟硬件）
+# 使用系统默认工具链
 
-# cargo run / cargo flash 直接经 espflash 烧录并打开串口监视
-# 板载 USB Type-C(UART)口经 USB 转 UART 桥接器连接 UART0(GPIO58/59)
-[target.riscv32imafc-unknown-none-elf]
-runner = "espflash flash --monitor --chip esp32s31"
-# linkall.x 由 esp-hal 的 build.rs 生成到 OUT_DIR,内含 memory/ROM 符号等全部脚本
-rustflags = ["-C", "link-arg=-Tlinkall.x"]
+# 如果需要切换到 ESP32 真机编译：
+# 1. 删除此文件
+# 2. 重命名 config.esp32.toml 为 config.toml
+# 3. 取消注释 Cargo.toml 中的 esp-idf-* 依赖
 
-[env]
-ESP_LOG = "info"
+[alias]
+# 桌面运行（模拟硬件）
+desktop = "run"
+
+# ESP32 编译（需要先切换配置）
+# esp32 = "build --target riscv32imafc-unknown-none-elf"

@@ -1,50 +1,21 @@
 [package]
-name = "my-slint-fan"
+name = "eve-fan-control"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.86"
+authors = ["Kiro", "Claude"]
 
 [dependencies]
-# 目标硬件:ESP32-S31-Korvo-1(乐鑫官方多媒体开发板)
-# 2026-08 全量最新组合:S31 有硬件原子指令,无 portable-atomic 互斥,
-# Slint 正式版与 esp-rtos 均可直接使用
-esp-hal = { version = "1.2.0-rc.0", features = ["esp32s31", "unstable"] }
+slint = "1.3"
+rand = "0.8"
 
-# Embassy 运行时:esp-rtos(esp-hal-embassy 的后继)
-# 注意:S31 用 CLIC 中断架构,不再需要 C3 时代的 unstable/unstable_module 特性
-esp-rtos = { version = "0.4.0", features = ["embassy", "esp32s31"] }
-embassy-executor = { version = "0.10" }
-embassy-time = { version = "0.5" }
-embassy-sync = { version = "0.8" }
-critical-section = "1.2"
-
-# 堆分配器:内部 SRAM 堆 + PSRAM 堆(16MB,RGB 帧缓冲放这里)
-esp-alloc = { version = "0.11", features = ["esp32s31"] }
-
-# ESP-IDF 应用描述符(espflash 4.x 烧录校验;0.6.0 配套 esp-hal ~1.2.0-rc.0)
-esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s31"] }
-
-# 日志与 panic 诊断
-esp-println = { version = "0.18", default-features = false, features = ["colors", "uart", "esp32s31", "log-04"] }
-log = "0.4"
-esp-backtrace = { version = "0.20", features = ["esp32s31", "panic-handler", "println"] }
-
-# Slint UI 框架:正式版 1.17(官方 MCU 推荐特性组合,软件渲染器)
-[dependencies.slint]
-version = "1.17"
-default-features = false
-features = [
-    "compat-1-2",             # 兼容 1.2 API
-    "unsafe-single-threaded", # 单核单线程运行
-    "libm",                   # 无 std 数学库
-    "renderer-software",      # 软件渲染器
-]
+# TODO: 真机硬件依赖（取消注释）
+# esp-idf-hal = "0.42"
+# esp-idf-sys = "0.33"
+# embedded-hal = "0.2"
 
 [build-dependencies]
-slint-build = "1.17"
+slint-build = "1.3"
 
-[profile.release]
-opt-level = 3
-codegen-units = 1
-debug = true
-lto = "off" # Slint 软件渲染器在部分版本与 fat LTO 冲突,先关闭
+[[bin]]
+name = "fan-control"
+path = "src/main.rs"

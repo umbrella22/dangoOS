@@ -8,42 +8,24 @@ import { VerticalBox, HorizontalBox } from "std-widgets.slint";
 // ============================================
 // 颜色定义（EVE 青金石蓝风格）
 // ============================================
-export struct EveColors {
+export global eve-colors {
     // 主色调
-    cyan-primary: color,      // #5fd0e0 青金石蓝
-    amber-accent: color,      // #e8c25a 琥珀金
-    green-ok: color,          // #7bc98a 正常绿
-    red-warn: color,          // #e05d5d 警告红
+    out property <color> cyan-primary: #5fd0e0;      // 青金石蓝
+    out property <color> amber-accent: #e8c25a;      // 琥珀金
+    out property <color> green-ok: #7bc98a;          // 正常绿
+    out property <color> red-warn: #e05d5d;          // 警告红
     
     // 背景色
-    bg-deep: color,           // #02060a 深空黑
-    bg-panel: color,          // #0a1821 面板背景
-    bg-panel-dark: color,     // #071119 面板渐变底
+    out property <color> bg-deep: #02060a;           // 深空黑
+    out property <color> bg-panel: #0a1821;          // 面板背景
+    out property <color> bg-panel-dark: #071119;     // 面板渐变底
     
     // 边框和文字
-    border-main: color,       // #6ebdd266 半透明青色边框
-    border-accent: color,     // #6ebdd26e 四角标记
-    text-primary: color,      // #c2dbe4 主文字
-    text-secondary: color,    // #68838f 次要文字
-    text-muted: color,        // #7895a1 灰色文字
-}
-
-// 默认颜色实例
-export global eve-colors := EveColors {
-    cyan-primary: #5fd0e0,
-    amber-accent: #e8c25a,
-    green-ok: #7bc98a,
-    red-warn: #e05d5d,
-    
-    bg-deep: #02060a,
-    bg-panel: #0a1821,
-    bg-panel-dark: #071119,
-    
-    border-main: #6ebdd266,
-    border-accent: #6ebdd26e,
-    text-primary: #c2dbe4,
-    text-secondary: #68838f,
-    text-muted: #7895a1,
+    out property <color> border-main: #6ebdd266;     // 半透明青色边框
+    out property <color> border-accent: #6ebdd26e;   // 四角标记
+    out property <color> text-primary: #c2dbe4;      // 主文字
+    out property <color> text-secondary: #68838f;    // 次要文字
+    out property <color> text-muted: #7895a1;        // 灰色文字
 }
 
 // ============================================
@@ -188,13 +170,13 @@ component HexButton inherits Rectangle {
                 (is-auto ? #7bc98a66 : eve-colors.border-main);
         stroke-width: active ? 2px : 1.5px;
         
-        // 正六边形坐标
-        MoveTo { x: 12px; y: 0; }
-        LineTo { x: 24px; y: 6px; }
-        LineTo { x: 24px; y: 22px; }
-        LineTo { x: 12px; y: 28px; }
-        LineTo { x: 0; y: 22px; }
-        LineTo { x: 0; y: 6px; }
+        // 正六边形坐标（无单位）
+        MoveTo { x: 12; y: 0; }
+        LineTo { x: 24; y: 6; }
+        LineTo { x: 24; y: 22; }
+        LineTo { x: 12; y: 28; }
+        LineTo { x: 0; y: 22; }
+        LineTo { x: 0; y: 6; }
         Close {}
         
         // 活动状态辉光动画

@@ -1,10 +1,7 @@
 fn main() {
-    // no_std 目标:资源全部内嵌进固件,不依赖文件系统
-    // EmbedForSoftwareRenderer:以软件渲染器优化的格式内嵌图片与字体(slint 1.17 起)
-    slint_build::compile_with_config(
-        "ui/appwindow.slint",
-        slint_build::CompilerConfiguration::new()
-            .embed_resources(slint_build::EmbedResourcesKind::EmbedForSoftwareRenderer),
-    )
-    .expect("编译 ui/appwindow.slint 失败");
+    // 编译 Slint UI 文件
+    slint_build::compile("src/ui/fan_control.slint").unwrap();
+    
+    // 如果文件改变则重新编译
+    println!("cargo:rerun-if-changed=src/ui/fan_control.slint");
 }

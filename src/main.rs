@@ -1,155 +1,91 @@
-#![no_std]
-#![no_main]
-#![allow(static_mut_refs)]
+// EVE 风扇控制系统 - 主入口
+// 作者: Kiro + Claude
 
-extern crate alloc;
+mod service;
+mod ui;
 
-mod board;
-mod display;
-mod fan;
-mod gui;
+use slint::*;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use core::cell::RefCell;
+// 导入服务层
+use service::hardware::{FanControlState};
+// use service::mock::{MockTempSensor, MockFanController, MockCpuTempSensor};  // 已在 new_mock() 内部使用
 
-use critical_section::Mutex;
-use embassy_executor::Spawner;
-use esp_hal::clock::CpuClock;
-use esp_hal::gpio::{Level, Output, OutputConfig};
-use esp_hal::init;
-use esp_hal::spi::{master::{Config as SpiConfig, Spi}, Mode};
-use esp_hal::time::Rate;
-use esp_hal::timer::timg::{TimerGroup, Wdt};
-use log::info;
-
-// build.rs 编译 ui/appwindow.slint 后,在此生成 AppWindow 等类型
+// 导入 UI 定义
 slint::include_modules!();
 
-// 显式引入:确保 esp-backtrace 的 #[panic_handler] 被纳入编译图
-extern crate esp_backtrace;
-
-// ESP-IDF 应用描述符(espflash 4.x 烧录时校验)
-esp_bootloader_esp_idf::esp_app_desc!();
-
-// 状态灯(低电平点亮) - 使用 Mutex + RefCell 代替 static mut
-static STATUS_LED: Mutex<RefCell<Option<Output<'static>>>> = Mutex::new(RefCell::new(None));
-
-// 看门狗(喂狗保护) - 使用 Mutex + RefCell
-static WATCHDOG: Mutex<RefCell<Option<Wdt<esp_hal::peripherals::TIMG0>>>> =
-    Mutex::new(RefCell::new(None));
-
-/// 喂狗函数(由主循环定期调用)
-pub fn feed_watchdog() {
-    critical_section::with(|cs| {
-        if let Some(wdt) = WATCHDOG.borrow_ref_mut(cs).as_mut() {
-            wdt.feed();
+fn main() -> Result<(), slint::PlatformError> {
+    println!("🚀 EVE 风扇控制系统启动中...");
+    
+    // 创建 UI 实例
+    let ui = FanControlUI::new()?;
+    
+    // 创建状态管理器（模拟硬件）
+    // TODO: 真机时替换为真实硬件
+    let state = Arc::new(Mutex::new(FanControlState::new_mock()));
+    
+    // TODO: 真机版本（硬件到货后取消注释）
+    // let state = Arc::new(Mutex::new(
+    //     FanControlState::new_hardware(
+    //         Box::new(service::esp32::Esp32TempSensor::new(...)),
+    //         Box::new(service::esp32::Esp32FanController::new(...)),
+    //         Box::new(service::esp32::Esp32CpuTempSensor::new()),
+    //     )
+    // ));
+    
+    println!("✅ 硬件接口初始化完成（模拟模式）");
+    
+    // 设置档位改变回调
+    let state_clone = state.clone();
+    ui.on_speed_changed(move |speed| {
+        let mut state = state_clone.lock().unwrap();
+        if let Err(e) = state.set_fan_speed(speed) {
+            eprintln!("❌ 设置风扇档位失败: {}", e);
+        } else {
+            println!("🔧 风扇档位已设置: {}%", if speed < 0 { "AUTO".to_string() } else { speed.to_string() });
         }
     });
-}
-
-// #[esp_rtos::main] 把 async main 包装成 esp-rtos 线程模式执行器上的任务;
-// 调度器在本任务内调用 esp_rtos::start 后才真正运转
-#[esp_rtos::main]
-async fn main(spawner: Spawner) -> ! {
-    // 1. 堆分配器必须最先初始化:Slint 在 no_std 下依赖动态内存
-    esp_alloc::heap_allocator!(size: 72 * 1024);
-
-    // 2. 初始化外设,拉满主频(双核 320MHz)
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let peripherals = init(config);
-
-    esp_println::logger::init_logger_from_env();
-    info!("my-slint-fan 启动(ESP-Mosaico / ESP32-S31)");
-
-    // 3. PSRAM 堆:封装内 16MB,帧缓冲(450KB)从这里分配
-    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
-
-    // 4. 看门狗初始化(TIMG0 看门狗,3 秒超时)
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    let mut wdt = timg0.wdt;
-    wdt.enable();
-    wdt.set_timeout(
-        esp_hal::timer::timg::MwdtStage::Stage0,
-        esp_hal::time::Duration::from_millis(board::WATCHDOG_TIMEOUT_MS),
-    );
-    info!("看门狗已启用(超时 {}ms)", board::WATCHDOG_TIMEOUT_MS);
-
-    critical_section::with(|cs| {
-        *WATCHDOG.borrow_ref_mut(cs) = Some(wdt);
-    });
-
-    // 5. 状态灯与 3.3V 电源控制
-    let led = Output::new(
-        peripherals.GPIO3,
-        Level::High, // 高 = 灭
-        OutputConfig::default(),
-    );
-    critical_section::with(|cs| {
-        *STATUS_LED.borrow_ref_mut(cs) = Some(led);
-    });
-
-    // VCC_3V3_CTRL:拉高开启外设电源轨
-    let _vcc_ctrl = Output::new(
-        peripherals.GPIO60,
-        Level::High,
-        OutputConfig::default(),
-    );
-
-    // 6. 启动 esp-rtos 调度器:TIMG1 定时器做时间源(TIMG0 给看门狗了)
-    let timg1 = TimerGroup::new(peripherals.TIMG1);
-    esp_rtos::start(timg1.timer0, peripherals.FROM_CPU_INTR0);
-
-    // 7. 初始化 QSPI(CO5300 480×480 AMOLED):SCLK/D0-D3,引脚见 board.rs
-    let spi = Spi::new(
-        peripherals.SPI2,
-        SpiConfig::default()
-            .with_frequency(Rate::from_hz(board::LCD_SPI_HZ))
-            .with_mode(Mode::_0),
-    )
-    .expect("QSPI 配置错误")
-    .with_sck(peripherals.GPIO44)
-    .with_sio0(peripherals.GPIO36) // D0
-    .with_sio1(peripherals.GPIO51) // D1
-    .with_sio2(peripherals.GPIO35) // D2
-    .with_sio3(peripherals.GPIO9); // D3
-
-    let cs = Output::new(peripherals.GPIO50, Level::High, OutputConfig::default());
-    let rst = Output::new(peripherals.GPIO42, Level::High, OutputConfig::default());
-    display::attach(spi, cs, rst);
-
-    // 帧缓冲(PSRAM,450KB)+ CO5300 初始化
-    display::alloc_frame_buffer_bytes();
-    display::init().expect("显示初始化失败");
-
-    // 8. 初始化 Slint 平台层(必须先于任何 UI 组件创建)
-    let window = gui::init_platform();
-
-    // 9. UI 回调:状态灯镜像
-    gui::on_light_toggled(|| {
-        critical_section::with(|cs| {
-            if let Some(led) = STATUS_LED.borrow_ref_mut(cs).as_mut() {
-                led.toggle();
+    
+    println!("✅ UI 回调已绑定");
+    
+    // 启动数据更新循环（每秒更新）
+    let ui_weak = ui.as_weak();
+    let state_clone = state.clone();
+    
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            
+            let mut state = state_clone.lock().unwrap();
+            
+            // 更新传感器数据
+            if let Err(e) = state.update() {
+                eprintln!("❌ 数据更新失败: {}", e);
+                continue;
             }
-        });
+            
+            // 更新 UI
+            if let Some(ui) = ui_weak.upgrade() {
+                ui.set_temperature(state.temperature as f32);
+                ui.set_temp_trend(state.get_temp_trend());
+                ui.set_fan_rpm(state.fan_rpm as i32);
+                ui.set_fan_percentage(state.fan_duty as i32);
+                ui.set_fan_power(state.get_power_estimate());
+                ui.set_cpu_temp(state.cpu_temp);
+                ui.set_uptime(state.format_uptime().into());
+                ui.set_system_online(true);
+            }
+        }
     });
-
-    // 10. 业务任务:风扇控制(事件驱动,PWM 待硬件实现)
-    let _ = spawner.spawn(fan::fan_control_task().unwrap());
-
-    // 11. 主循环驱动 UI 渲染(unsafe-single-threaded:所有 Slint 调用在同一执行线程)
-    // 注意:gui::run_ui 内部会定期需要喂狗,这里启动看门狗喂养任务
-    let _ = spawner.spawn(watchdog_task().unwrap());
-
-    gui::run_ui(window).await
-}
-
-/// 看门狗喂养任务(独立任务定期喂狗,避免主循环阻塞导致复位)
-#[embassy_executor::task]
-async fn watchdog_task() {
-    loop {
-        embassy_time::Timer::after(embassy_time::Duration::from_millis(
-            board::WATCHDOG_TIMEOUT_MS / 3, // 在超时时间的 1/3 处喂狗
-        ))
-        .await;
-        feed_watchdog();
-    }
+    
+    println!("✅ 数据更新循环已启动");
+    
+    // TODO: 启动 CRT 上电动画
+    // service::animation::run_crt_powerup(&ui.as_weak());
+    
+    println!("🎨 UI 渲染中...");
+    
+    // 运行主循环
+    ui.run()
 }
