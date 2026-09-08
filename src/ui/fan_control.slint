@@ -23,8 +23,8 @@ export global eve-colors {
     out property <color> border-main: #D7E2EC;     // 实色细线边框
     out property <color> border-accent: #2E6FA3;   // 四角标记
     out property <color> text-primary: #16324A;    // 深海军
-    out property <color> text-secondary: #5B7B95;
-    out property <color> text-muted: #8FA6B8;
+    out property <color> text-secondary: #3F627E;  // 小数据文本（白底 ≥4.5:1）
+    out property <color> text-muted: #5E7A92;      // 弱化文本（白底 ≥4:1）
 
     out property <color> separator: #E4EBF2;       // 分隔线
     out property <color> track-bg: #E9EFF5;        // 标尺轨道/圆环底
@@ -149,7 +149,7 @@ component HexButton inherits VerticalLayout {
     Text {
         text: label;
         color: active ? (is-auto ? eve-colors.green-ok : eve-colors.accent-primary) : eve-colors.text-muted;
-        font-family: "Courier New";
+        font-weight: 600; font-family: "Courier New";
         font-size: 9px;
         horizontal-alignment: center;
     }
@@ -215,7 +215,7 @@ export component FanControlUI inherits Window {
                     Text {
                         text: "ESP-MOSAICO · S31 · V0.2.0";
                         color: eve-colors.text-secondary;
-                        font-family: "Courier New";
+                        font-weight: 600; font-family: "Courier New";
                         font-size: 9px;
                     }
                 }
@@ -228,7 +228,7 @@ export component FanControlUI inherits Window {
                     Text {
                         text: "运行时间 " + root.uptime;
                         color: eve-colors.text-primary;
-                        font-family: "Courier New";
+                        font-weight: 600; font-family: "Courier New";
                         font-size: 10px;
                         vertical-alignment: center;
                     }
@@ -236,7 +236,7 @@ export component FanControlUI inherits Window {
                     Text {
                         text: "CPU " + root.cpu-temp + "°C";
                         color: eve-colors.text-primary;
-                        font-family: "Courier New";
+                        font-weight: 600; font-family: "Courier New";
                         font-size: 10px;
                         vertical-alignment: center;
                     }
@@ -245,18 +245,17 @@ export component FanControlUI inherits Window {
                         spacing: 5px;
                         alignment: center;
 
-                        Rectangle {
-                            width: 6px;
-                            height: 6px;
-                            y: 3px;
-                            border-radius: 3px;
-                            background: root.system-online ? eve-colors.green-ok : eve-colors.text-muted;
+                        Text {
+                            text: "●";
+                            color: root.system-online ? eve-colors.green-ok : eve-colors.text-muted;
+                            font-size: 8px;
+                            vertical-alignment: center;
                         }
 
                         Text {
                             text: root.system-online ? "[ 在线 ]" : "[ 离线 ]";
                             color: root.system-online ? eve-colors.green-ok : eve-colors.red-warn;
-                            font-family: "Courier New";
+                            font-weight: 600; font-family: "Courier New";
                             font-size: 10px;
                             vertical-alignment: center;
                         }
@@ -282,7 +281,7 @@ export component FanControlUI inherits Window {
                     Text {
                         text: "传感器-01";
                         color: eve-colors.text-secondary;
-                        font-family: "Courier New";
+                        font-weight: 600; font-family: "Courier New";
                         font-size: 9px;
                     }
 
@@ -351,14 +350,14 @@ export component FanControlUI inherits Window {
                             text: root.temperature < 50 ? "正常" : (root.temperature < 60 ? "升高" : "警告");
                             color: root.temperature < 50 ? eve-colors.text-secondary
                                    : (root.temperature < 60 ? eve-colors.amber-accent : eve-colors.red-warn);
-                            font-family: "Courier New";
+                            font-weight: 600; font-family: "Courier New";
                             font-size: 9px;
                         }
 
                         Text {
                             text: "警告: 60°C";
                             color: eve-colors.amber-accent;
-                            font-family: "Courier New";
+                            font-weight: 600; font-family: "Courier New";
                             font-size: 9px;
                         }
                     }
@@ -369,7 +368,7 @@ export component FanControlUI inherits Window {
                               : (root.temp-trend < -0.05 ? "▼ " + round(root.temp-trend * 10) / 10 + "°C/分钟" : "● 稳定");
                         color: root.temp-trend > 0.05 ? eve-colors.green-ok
                                : (root.temp-trend < -0.05 ? eve-colors.trend-falling : eve-colors.text-secondary);
-                        font-family: "Courier New";
+                        font-weight: 600; font-family: "Courier New";
                         font-size: 9px;
                     }
                 }
@@ -387,7 +386,7 @@ export component FanControlUI inherits Window {
                     Text {
                         text: "风扇-01";
                         color: eve-colors.text-secondary;
-                        font-family: "Courier New";
+                        font-weight: 600; font-family: "Courier New";
                         font-size: 9px;
                     }
 
@@ -410,7 +409,7 @@ export component FanControlUI inherits Window {
                             Text {
                                 text: "RPM";
                                 color: eve-colors.text-muted;
-                                font-family: "Courier New";
+                                font-weight: 600; font-family: "Courier New";
                                 font-size: 10px;
                             }
                         }
@@ -459,14 +458,14 @@ export component FanControlUI inherits Window {
                         Text {
                             text: "功率: " + round(root.fan-power * 10) / 10 + "W";
                             color: eve-colors.text-secondary;
-                            font-family: "Courier New";
+                            font-weight: 600; font-family: "Courier New";
                             font-size: 9px;
                         }
 
                         Text {
                             text: "效率: 最优";
                             color: eve-colors.green-ok;
-                            font-family: "Courier New";
+                            font-weight: 600; font-family: "Courier New";
                             font-size: 9px;
                         }
                     }
@@ -545,14 +544,14 @@ export component FanControlUI inherits Window {
                 Text {
                     text: "MOSAICO-S31";
                     color: eve-colors.text-secondary;
-                    font-family: "Courier New";
+                    font-weight: 600; font-family: "Courier New";
                     font-size: 9px;
                 }
 
                 Text {
                     text: "2026-09-08";
                     color: eve-colors.text-muted;
-                    font-family: "Courier New";
+                    font-weight: 600; font-family: "Courier New";
                     font-size: 9px;
                 }
             }
