@@ -19,19 +19,42 @@ esp-32/
 │   └── eve-fan-control-*.html     # 设计演示（10+ 个版本）
 │
 └── 📂 src/                         # 源代码 ⭐⭐⭐
-    ├── 📄 main.rs                 # 主入口
+    ├── 📄 main.rs                 # 主入口（桌面开发版）
     │
-    ├── 📂 service/                # 硬件交互层
+    ├── 📂 service/                # 硬件交互层（桌面开发版）
     │   ├── mod.rs                # 模块定义
     │   ├── hardware.rs           # HAL trait 定义 ⭐
     │   ├── mock.rs               # 模拟硬件（开发用）⭐
     │   ├── esp32.rs              # 真机硬件（待实现）
     │   └── animation.rs          # 动画控制
     │
-    └── 📂 ui/                     # UI 层
-        ├── mod.rs                # UI 模块
-        └── fan_control.slint     # Slint UI 定义 ⭐
+    ├── 📂 ui/                     # UI 层
+    │   ├── mod.rs                # UI 模块
+    │   └── fan_control.slint     # Slint UI 定义 ⭐
+    │
+    └── 📂 embedded_hal/           # ESP32 真机实现（no_std）
+        ├── README.md             # 硬件实现说明
+        ├── board.rs              # 引脚映射
+        ├── display.rs            # AMOLED 驱动
+        ├── fan.rs                # PWM 控制
+        └── gui.rs                # Slint 集成
 ```
+
+---
+
+## 🔀 两个版本说明
+
+项目包含两个并行的实现版本：
+
+### 桌面开发版（当前活动）
+- **位置**: `src/main.rs` + `src/service/` + `src/ui/`
+- **特点**: 使用 `std` 库，Mock 硬件，用于 UI 开发
+- **运行**: `cargo run`
+
+### ESP32 真机版（等待硬件）
+- **位置**: `src/embedded_hal/`
+- **特点**: `no_std` + `esp-hal`，真实硬件驱动
+- **说明**: 详见 `src/embedded_hal/README.md`
 
 ---
 
