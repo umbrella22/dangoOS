@@ -120,9 +120,9 @@ impl FanControlState {
         match self.temp_sensor.read_celsius() {
             Ok(temp) => {
                 self.temperature = temp;
-                // 保留最近 10 个温度值用于趋势计算
+                // 保留最近 60 个采样（1s/次）: 供趋势计算与宽屏趋势图使用
                 self.temp_history.push(temp);
-                if self.temp_history.len() > 10 {
+                if self.temp_history.len() > 60 {
                     self.temp_history.remove(0);
                 }
             }
@@ -187,13 +187,14 @@ impl FanControlState {
         if self.temp_history.len() < 2 {
             return 0.0;
         }
-        
+
         let first = self.temp_history[0];
         let last = self.temp_history[self.temp_history.len() - 1];
         let delta = last - first;
-        
-        // 假设历史记录跨度约 10 秒，转换为每分钟
-        delta * 6.0
+
+        // 采样间隔 1s，按实际跨度换算为每分钟变化率
+        let span_secs = (self.temp_history.len() - 1) as f32;
+        delta * 60.0 / span_secs
     }
     
     /// 计算功率估算 (W)

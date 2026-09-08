@@ -70,6 +70,9 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_temperature(state.temperature as f32);
                 ui.set_temp_trend(state.get_temp_trend());
+                // 最近 30 个采样供趋势图（宽屏版渲染，480 版属性保留不渲染）
+                let hist: Vec<f32> = state.temp_history.iter().rev().take(30).rev().cloned().collect();
+                ui.set_temp_history(ModelRc::new(VecModel::from(hist)));
                 ui.set_fan_rpm(state.fan_rpm as i32);
                 ui.set_fan_percentage(state.fan_duty as i32);
                 ui.set_fan_power(state.get_power_estimate());
@@ -85,7 +88,7 @@ fn main() -> Result<(), slint::PlatformError> {
     println!("🎨 UI 渲染中...");
     println!("✨ CRT 上电动画启动...");
     
-    // CRT 上电动画（使用 Slint 的定时器在主线程执行）
+    // CRT 上电动画（宽屏版: 左栏 → 中栏转速 → 中栏控制 → 右栏+底栏；480 版: 自上而下）
     let ui_weak_anim = ui.as_weak();
     slint::Timer::single_shot(Duration::from_millis(500), move || {
         if let Some(ui) = ui_weak_anim.upgrade() {

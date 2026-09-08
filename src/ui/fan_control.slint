@@ -410,6 +410,7 @@ export component FanControlUI inherits Window {
     // 温度数据
     in-out property <float> temperature: 28.5;     // 当前温度 (°C)
     in-out property <float> temp-trend: 0.2;       // 温度趋势 (°C/分钟)
+    in-out property <[float]> temp-history: [];    // 温度历史采样（480 版不渲染，属性为共享 main.rs 而保留）
     
     // 转速数据
     in-out property <int> fan-rpm: 2450;           // 当前转速 (RPM)
