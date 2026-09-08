@@ -1,0 +1,132 @@
+// my-slint-fan 主界面:风扇调速 + 状态灯开关
+// 显示:ESP-Mosaico 板载 2.16 寸 480×480 QSPI AMOLED(CO5300,方形)
+// 注意:no_std 下不引入 std-widgets,控件全部手写
+// Slint 语法要求:组件必须先定义后使用,故 SpeedSlider 放在 AppWindow 之前
+
+// 手写滑杆:轨道 + 填充 + 手柄 + TouchArea
+component SpeedSlider inherits Rectangle {
+    // 拖动时组件内部会回写,必须 in-out
+    in-out property <int> value: 0;
+    callback changed(int);
+
+    background: #1a2029;
+    border-radius: 24px;
+
+    // 轨道填充
+    Rectangle {
+        x: 6px;
+        y: 6px;
+        height: parent.height - 12px;
+        width: max(28px, (parent.width - 12px) * parent.value / 100);
+        border-radius: 18px;
+        background: #4fc3f7.with-alpha(0.35);
+    }
+
+    // 手柄
+    Rectangle {
+        width: 32px;
+        height: 32px;
+        x: min(parent.width - 38px, max(6px, (parent.width - 12px) * parent.value / 100 - 16px));
+        y: (parent.height - 32px) / 2;
+        border-radius: 16px;
+        background: white;
+    }
+
+    ta := TouchArea {
+        moved => {
+            root.value = clamp(
+                round((ta.mouse-x - 6px) / (root.width - 12px) * 100),
+                0,
+                100,
+            );
+            root.changed(root.value);
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    width: 480px;
+    height: 480px;
+    background: #0e1116;
+
+    // ← Rust 侧可读写
+    in-out property <int> fan-speed: 0; // 0~100(%)
+    in-out property <bool> light-on: true;
+
+    // ← Rust 侧注册回调
+    callback fan-speed-changed(int);
+    callback light-toggled();
+
+    VerticalLayout {
+        x: (parent.width - self.width) / 2;
+        width: 360px;
+        padding-top: 64px;
+        padding-bottom: 64px;
+        spacing: 32px;
+
+        Text {
+            text: "MY SLINT FAN";
+            color: #8ab4f8;
+            font-size: 22px;
+            horizontal-alignment: center;
+        }
+
+        // 当前档位大字
+        Text {
+            height: 120px;
+            text: root.fan-speed + "%";
+            color: root.fan-speed > 0 ? #ffffff : #555c66;
+            font-size: 84px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        // 风扇滑杆
+        SpeedSlider {
+            height: 44px;
+            value: root.fan-speed;
+            changed(speed) => {
+                root.fan-speed = speed;
+                root.fan-speed-changed(speed);
+            }
+        }
+
+        // 灯开关(板载橙色状态 LED GPIO3)
+        Rectangle {
+            height: 64px;
+            border-radius: 14px;
+            background: root.light-on ? #ffb74d.with-alpha(0.25) : #1a1f26;
+            border-width: 1px;
+            border-color: root.light-on ? #ffb74d : #2a313a;
+
+            HorizontalLayout {
+                padding: 14px;
+                alignment: center;
+                spacing: 10px;
+
+                Rectangle {
+                    width: 18px;
+                    height: 18px;
+                    y: (parent.height - 18px) / 2;
+                    border-radius: 9px;
+                    background: root.light-on ? #ffb74d : #39424d;
+                }
+
+                Text {
+                    text: root.light-on ? "LIGHT ON" : "LIGHT OFF";
+                    color: root.light-on ? #ffffff : #7a838f;
+                    font-size: 18px;
+                    vertical-alignment: center;
+                }
+            }
+
+            TouchArea {
+                clicked => {
+                    root.light-on = !root.light-on;
+                    root.light-toggled();
+                }
+            }
+        }
+    }
+}

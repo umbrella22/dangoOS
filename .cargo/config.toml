@@ -1,0 +1,12 @@
+[build]
+target = "riscv32imafc-unknown-none-elf"
+
+# cargo run / cargo flash 直接经 espflash 烧录并打开串口监视
+# 板载 USB Type-C(UART)口经 USB 转 UART 桥接器连接 UART0(GPIO58/59)
+[target.riscv32imafc-unknown-none-elf]
+runner = "espflash flash --monitor --chip esp32s31"
+# linkall.x 由 esp-hal 的 build.rs 生成到 OUT_DIR,内含 memory/ROM 符号等全部脚本
+rustflags = ["-C", "link-arg=-Tlinkall.x"]
+
+[env]
+ESP_LOG = "info"
