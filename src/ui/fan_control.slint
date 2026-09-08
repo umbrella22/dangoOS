@@ -183,16 +183,18 @@ component HexButton inherits Rectangle {
         // TODO: Slint 需要用 drop-shadow 或自定义滤镜实现辉光
     }
     
-    // 数字/文字
+    // 数字/文字（修复：垂直居中）
     Text {
-        y: 11px;
         text: value > 0 ? value : (is-auto ? "AUTO" : "0");
         color: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary) : 
                (is-auto ? eve-colors.green-ok : eve-colors.text-secondary);
-        font-family: is-auto ? "Arial" : "Arial";
-        font-size: is-auto ? 9px : 12px;
+        font-family: "Arial";
+        font-size: is-auto ? 8px : 12px;
         font-weight: active ? 700 : 400;
         horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
     }
     
     // 触摸区域
@@ -242,16 +244,16 @@ component TempDisplay inherits VerticalLayout {
         }
     }
     
-    // 温度条形图
+    // 温度条形图（修复：基于警告阈值而非 100°C）
     Rectangle {
         height: 8px;
         background: #1a2029;
         border-radius: 1px;
         
         Rectangle {
-            width: parent.width * clamp(temperature / 100, 0, 1);
-            height: 100%;
-            background: eve-colors.cyan-primary;
+            width: parent.width * clamp(temperature / warning-threshold, 0, 1.2);
+            height: parent.height;
+            background: temperature < warning-threshold ? eve-colors.cyan-primary : eve-colors.amber-accent;
             border-radius: 1px;
         }
     }
@@ -331,24 +333,40 @@ component RpmDisplay inherits VerticalLayout {
             }
         }
         
-        // 右侧：圆形百分比
-        // TODO: Slint 需要用 Path 绘制圆环进度
+        // 右侧：圆形百分比（简化版圆环）
         Rectangle {
-            width: 56px;
-            height: 56px;
+            width: 80px;
+            height: 80px;
             
-            // 背景圆环（完整圆）
-            // TODO: 实现圆环路径
+            // 使用旋转的 Rectangle 模拟圆环（临时方案）
+            Rectangle {
+                width: 70px;
+                height: 70px;
+                border-radius: 35px;
+                border-width: 6px;
+                border-color: #1a2029;
+                background: transparent;
+            }
             
-            // 进度圆环（根据百分比）
-            // TODO: 实现圆环路径 + stroke-dasharray
+            // 进度指示（使用渐变色模拟）
+            Rectangle {
+                width: 70px;
+                height: 70px;
+                border-radius: 35px;
+                border-width: 6px;
+                border-color: percentage > 0 ? eve-colors.amber-accent : transparent;
+                background: transparent;
+                
+                // 通过裁剪模拟进度
+                clip: true;
+            }
             
             // 百分比文字
             Text {
                 text: percentage + "%";
                 color: eve-colors.amber-accent;
-                font-family: "Arial";
-                font-size: 16px;
+                font-family: "Rajdhani";
+                font-size: 18px;
                 font-weight: 700;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -453,7 +471,7 @@ export component FanControlUI inherits Window {
         }
         
         // ====================================
-        // 系统状态栏
+        // 系统状态栏（修复：单行水平布局）
         // ====================================
         EvePanel {
             height: 50px;
@@ -461,7 +479,9 @@ export component FanControlUI inherits Window {
             power-on: panel-1-on;
             
             HorizontalLayout {
-                spacing: 20px;
+                padding-left: 10px;
+                padding-right: 10px;
+                alignment: space-between;
                 
                 Text {
                     text: "运行时间: " + uptime;
@@ -477,12 +497,15 @@ export component FanControlUI inherits Window {
                     font-size: 11px;
                 }
                 
-                Rectangle {
-                    width: 100px;
-                }
-                
                 HorizontalLayout {
                     spacing: 8px;
+                    
+                    Text {
+                        text: "[ 在线 ]";
+                        color: eve-colors.green-ok;
+                        font-family: "Arial";
+                        font-size: 11px;
+                    }
                     
                     // 在线指示灯
                     Rectangle {
@@ -490,14 +513,6 @@ export component FanControlUI inherits Window {
                         height: 8px;
                         border-radius: 4px;
                         background: system-online ? eve-colors.green-ok : eve-colors.text-secondary;
-                        // TODO: 添加呼吸动画
-                    }
-                    
-                    Text {
-                        text: "[ 在线 ]";
-                        color: eve-colors.green-ok;
-                        font-family: "Arial";
-                        font-size: 11px;
                     }
                 }
             }
