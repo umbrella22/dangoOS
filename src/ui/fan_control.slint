@@ -1,666 +1,554 @@
-// EVE 风格风扇控制系统 - 主界面
-// 设计版本: 嵌入式版 (480×480 AMOLED)
-// 作者: Claude + Kiro
-// 日期: 2024
-
-import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+// EVE 风格风扇控制系统 - 480×480 方屏版
+// 目标硬件: ESP-Mosaico + 2.16" QSPI AMOLED (CO5300)
+//
+// 布局: 纵向四段 — 标题+系统状态 / 监控行 / 风扇控制 / 底栏
+// 垂直预算(硬性): padding 8+4 + 标题行 38 + 监控 224 + 控制 152 + 底栏 18 + 间距 3×8 = 468 ≤ 480
+// 结构决策: 方屏寸土寸金,系统状态合并进标题行右侧,不再独占一行
+// CRT 上电顺序: 标题+状态 → 温度 → 转速 → 控制+底栏 (panel-1..4, 由 Rust 依次触发)
 
 // ============================================
-// 颜色定义（EVE 青金石蓝风格）
+// 颜色定义（EVE 青金石蓝风格，与宽屏版一致）
 // ============================================
 export global eve-colors {
-    // 主色调
-    out property <color> cyan-primary: #5fd0e0;      // 青金石蓝
-    out property <color> amber-accent: #e8c25a;      // 琥珀金
-    out property <color> green-ok: #7bc98a;          // 正常绿
-    out property <color> red-warn: #e05d5d;          // 警告红
-    
-    // 背景色
-    out property <color> bg-deep: #02060a;           // 深空黑
-    out property <color> bg-panel: #0a1821;          // 面板背景
-    out property <color> bg-panel-dark: #071119;     // 面板渐变底
-    
-    // 边框和文字
-    out property <color> border-main: #6ebdd266;     // 半透明青色边框
-    out property <color> border-accent: #6ebdd26e;   // 四角标记
-    out property <color> text-primary: #c2dbe4;      // 主文字
-    out property <color> text-secondary: #68838f;    // 次要文字
-    out property <color> text-muted: #7895a1;        // 灰色文字
+    out property <color> cyan-primary: #5fd0e0;
+    out property <color> amber-accent: #e8c25a;
+    out property <color> green-ok: #7bc98a;
+    out property <color> red-warn: #e05d5d;
+
+    out property <color> bg-deep: #02060a;
+    out property <color> bg-panel: #0a1821;
+    out property <color> bg-panel-dark: #071119;
+
+    out property <color> border-main: #6ebdd266;
+    out property <color> border-accent: #6ebdd26e;
+    out property <color> text-primary: #c2dbe4;
+    out property <color> text-secondary: #68838f;
+    out property <color> text-muted: #7895a1;
 }
 
 // ============================================
-// 基础组件：EVE 风格面板
+// 基础组件：EVE 风格面板（四角标记 + 分层上电）
 // ============================================
 component EvePanel inherits Rectangle {
-    // 输入属性
     in property <string> title: "";
-    in property <bool> power-on: false;  // CRT 上电状态
-    
-    // 内部状态
+    in property <bool> power-on: false;
+
     property <float> border-opacity: 0;
     property <float> content-opacity: 0;
-    
-    // 背景渐变
+
     background: @linear-gradient(180deg, eve-colors.bg-panel 0%, eve-colors.bg-panel-dark 100%);
-    
-    // 主边框
     border-width: 1px;
     border-color: eve-colors.border-main;
-    border-radius: 0;
-    
-    // CRT 上电动画状态
+
     states [
         powered-up when power-on: {
             border-opacity: 1;
             content-opacity: 1;
-            
+
             in {
-                // 边框先闪（0.6秒）
-                animate border-opacity {
-                    duration: 600ms;
-                    easing: ease-out;
-                }
-                // 内容后闪（0.8秒，延迟300ms）
-                animate content-opacity {
-                    delay: 300ms;
-                    duration: 800ms;
-                    easing: ease-out;
-                }
+                animate border-opacity { duration: 600ms; easing: ease-out; }
+                animate content-opacity { delay: 300ms; duration: 800ms; easing: ease-out; }
             }
         }
     ]
-    
-    // 四角标记容器
+
+    // 四角标记
     Rectangle {
         opacity: border-opacity;
-        
-        // 左上角
-        Rectangle {
-            x: -1px; y: -1px;
-            width: 14px; height: 1px;
-            background: eve-colors.border-accent;
-        }
-        Rectangle {
-            x: -1px; y: -1px;
-            width: 1px; height: 14px;
-            background: eve-colors.border-accent;
-        }
-        
-        // 右上角
-        Rectangle {
-            x: parent.width - 13px; y: -1px;
-            width: 14px; height: 1px;
-            background: eve-colors.border-accent;
-        }
-        Rectangle {
-            x: parent.width; y: -1px;
-            width: 1px; height: 14px;
-            background: eve-colors.border-accent;
-        }
-        
-        // 左下角
-        Rectangle {
-            x: -1px; y: parent.height;
-            width: 14px; height: 1px;
-            background: eve-colors.border-accent;
-        }
-        Rectangle {
-            x: -1px; y: parent.height - 13px;
-            width: 1px; height: 14px;
-            background: eve-colors.border-accent;
-        }
-        
-        // 右下角
-        Rectangle {
-            x: parent.width - 13px; y: parent.height;
-            width: 14px; height: 1px;
-            background: eve-colors.border-accent;
-        }
-        Rectangle {
-            x: parent.width; y: parent.height - 13px;
-            width: 1px; height: 14px;
-            background: eve-colors.border-accent;
-        }
+
+        Rectangle { x: -1px; y: -1px; width: 12px; height: 1px; background: eve-colors.border-accent; }
+        Rectangle { x: -1px; y: -1px; width: 1px; height: 12px; background: eve-colors.border-accent; }
+
+        Rectangle { x: parent.width - 11px; y: -1px; width: 12px; height: 1px; background: eve-colors.border-accent; }
+        Rectangle { x: parent.width; y: -1px; width: 1px; height: 12px; background: eve-colors.border-accent; }
+
+        Rectangle { x: -1px; y: parent.height; width: 12px; height: 1px; background: eve-colors.border-accent; }
+        Rectangle { x: -1px; y: parent.height - 11px; width: 1px; height: 12px; background: eve-colors.border-accent; }
+
+        Rectangle { x: parent.width - 11px; y: parent.height; width: 12px; height: 1px; background: eve-colors.border-accent; }
+        Rectangle { x: parent.width; y: parent.height - 11px; width: 1px; height: 12px; background: eve-colors.border-accent; }
     }
-    
-    // 内容容器
+
     VerticalLayout {
         opacity: content-opacity;
-        padding: 16px;
+        padding: 14px;
         spacing: 8px;
-        
-        // 标题
+
         if title != "" : Text {
             text: title;
             color: eve-colors.cyan-primary;
             font-family: "Rajdhani";
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
         }
-        
-        // 分隔线
+
         if title != "" : Rectangle {
             height: 1px;
             background: #6ebdd222;
         }
-        
-        // 子内容插槽
+
         @children
     }
 }
 
 // ============================================
-// 组件：六边形按钮
+// 组件：六边形档位按钮（方屏版 30×34 + 中文标签）
 // ============================================
-component HexButton inherits Rectangle {
+component HexButton inherits VerticalLayout {
     in property <int> value: 0;
     in property <string> label: "";
     in property <bool> active: false;
-    in property <bool> is-auto: false;  // 是否为 AUTO 模式
-    
-    callback clicked();
-    
-    width: 24px;
-    height: 28px;
-    
-    // 六边形路径（使用 Path）
-    Path {
-        fill: active ? (is-auto ? #7bc98a20 : #5fd0e020) : #0a1821;
-        stroke: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary) : 
-                (is-auto ? #7bc98a66 : eve-colors.border-main);
-        stroke-width: active ? 2px : 1.5px;
-        
-        // 正六边形坐标（无单位）
-        MoveTo { x: 12; y: 0; }
-        LineTo { x: 24; y: 6; }
-        LineTo { x: 24; y: 22; }
-        LineTo { x: 12; y: 28; }
-        LineTo { x: 0; y: 22; }
-        LineTo { x: 0; y: 6; }
-        Close {}
-        
-        // 活动状态辉光动画
-        // TODO: Slint 需要用 drop-shadow 或自定义滤镜实现辉光
-    }
-    
-    // 数字/文字（修复：垂直居中）
-    Text {
-        text: value > 0 ? value : (is-auto ? "AUTO" : "0");
-        color: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary) : 
-               (is-auto ? eve-colors.green-ok : eve-colors.text-secondary);
-        font-family: "Arial";
-        font-size: is-auto ? 8px : 12px;
-        font-weight: active ? 700 : 400;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        width: 100%;
-        height: 100%;
-    }
-    
-    // 触摸区域
-    TouchArea {
-        clicked => {
-            root.clicked();
-        }
-    }
-}
+    in property <bool> is-auto: false;
 
-// ============================================
-// 组件：温度显示
-// ============================================
-component TempDisplay inherits VerticalLayout {
-    in property <float> temperature: 28.5;
-    in property <float> trend: 0.2;  // °C/分钟
-    in property <float> warning-threshold: 60.0;
-    
-    spacing: 8px;
-    
-    // 传感器标签
-    Text {
-        text: "传感器-01";
-        color: eve-colors.text-secondary;
-        font-family: "Courier New";
-        font-size: 10px;
-    }
-    
-    // 温度大数字
-    HorizontalLayout {
-        spacing: 4px;
-        
-        Text {
-            text: round(temperature * 10) / 10;
-            color: eve-colors.cyan-primary;
-            font-family: "Rajdhani";
-            font-size: 36px;
-            font-weight: 700;
+    callback clicked();
+
+    spacing: 4px;
+
+    Rectangle {
+        width: 30px;
+        height: 34px;
+
+        Path {
+            fill: active ? (is-auto ? #7bc98a20 : #5fd0e020) : #0a1821;
+            stroke: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary)
+                    : (is-auto ? #7bc98a66 : eve-colors.border-main);
+            stroke-width: active ? 2px : 1.5px;
+
+            MoveTo { x: 15; y: 0; }
+            LineTo { x: 30; y: 7; }
+            LineTo { x: 30; y: 27; }
+            LineTo { x: 15; y: 34; }
+            LineTo { x: 0; y: 27; }
+            LineTo { x: 0; y: 7; }
+            Close {}
         }
-        
+
         Text {
-            text: "°C";
-            color: eve-colors.text-muted;
+            width: 100%;
+            height: 100%;
+            text: value > 0 ? value : (is-auto ? "AUTO" : "0");
+            color: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary)
+                   : (is-auto ? eve-colors.green-ok : eve-colors.text-secondary);
             font-family: "Rajdhani";
-            font-size: 18px;
+            font-size: is-auto ? 8px : 12px;
+            font-weight: 700;
+            horizontal-alignment: center;
             vertical-alignment: center;
         }
-    }
-    
-    // 温度条形图（修复：基于警告阈值而非 100°C）
-    Rectangle {
-        height: 8px;
-        background: #1a2029;
-        border-radius: 1px;
-        
-        Rectangle {
-            width: parent.width * clamp(temperature / warning-threshold, 0, 1.2);
-            height: parent.height;
-            background: temperature < warning-threshold ? eve-colors.cyan-primary : eve-colors.amber-accent;
-            border-radius: 1px;
+
+        TouchArea {
+            clicked => { root.clicked(); }
         }
     }
-    
-    // 状态文字
-    HorizontalLayout {
-        spacing: 20px;
-        
-        Text {
-            text: temperature < 50 ? "正常" : (temperature < 60 ? "升高" : "警告");
-            color: temperature < 50 ? eve-colors.text-secondary : 
-                   (temperature < 60 ? eve-colors.amber-accent : eve-colors.red-warn);
-            font-family: "Courier New";
-            font-size: 9px;
-        }
-        
-        Text {
-            text: "警告: " + warning-threshold + "°C";
-            color: eve-colors.amber-accent;
-            font-family: "Courier New";
-            font-size: 9px;
-        }
-    }
-    
-    // 趋势指示
+
     Text {
-        text: trend > 0 ? "▲ +" + round(trend * 10) / 10 + "°C/分钟" :
-              trend < 0 ? "▼ " + round(trend * 10) / 10 + "°C/分钟" :
-              "● 稳定";
-        color: trend > 0 ? eve-colors.green-ok :
-               trend < 0 ? #6fb7ff :
-               eve-colors.text-secondary;
+        text: label;
+        color: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary) : eve-colors.text-muted;
         font-family: "Courier New";
         font-size: 9px;
+        horizontal-alignment: center;
     }
 }
 
 // ============================================
-// 组件：转速显示（带圆环）
-// ============================================
-component RpmDisplay inherits VerticalLayout {
-    in property <int> rpm: 2450;
-    in property <int> percentage: 75;
-    in property <float> power: 6.0;
-    
-    spacing: 8px;
-    
-    // 风扇标签
-    Text {
-        text: "风扇-01";
-        color: eve-colors.text-secondary;
-        font-family: "Courier New";
-        font-size: 10px;
-    }
-    
-    // 转速数字和圆环
-    HorizontalLayout {
-        spacing: 20px;
-        
-        // 左侧：转速数字
-        VerticalLayout {
-            spacing: 0;
-            
-            Text {
-                text: rpm;
-                color: eve-colors.amber-accent;
-                font-family: "Rajdhani";
-                font-size: 32px;
-                font-weight: 700;
-            }
-            
-            Text {
-                text: "RPM";
-                color: eve-colors.text-muted;
-                font-family: "Arial";
-                font-size: 12px;
-            }
-        }
-        
-        // 右侧：圆形百分比（简化版圆环）
-        Rectangle {
-            width: 80px;
-            height: 80px;
-            
-            // 使用旋转的 Rectangle 模拟圆环（临时方案）
-            Rectangle {
-                width: 70px;
-                height: 70px;
-                border-radius: 35px;
-                border-width: 6px;
-                border-color: #1a2029;
-                background: transparent;
-            }
-            
-            // 进度指示（使用渐变色模拟）
-            Rectangle {
-                width: 70px;
-                height: 70px;
-                border-radius: 35px;
-                border-width: 6px;
-                border-color: percentage > 0 ? eve-colors.amber-accent : transparent;
-                background: transparent;
-                
-                // 通过裁剪模拟进度
-                clip: true;
-            }
-            
-            // 百分比文字
-            Text {
-                text: percentage + "%";
-                color: eve-colors.amber-accent;
-                font-family: "Rajdhani";
-                font-size: 18px;
-                font-weight: 700;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-    }
-    
-    // 底部信息
-    HorizontalLayout {
-        spacing: 20px;
-        
-        Text {
-            text: "功率: " + round(power * 10) / 10 + "W";
-            color: eve-colors.text-secondary;
-            font-family: "Courier New";
-            font-size: 9px;
-        }
-        
-        Text {
-            text: "效率: 最优";
-            color: eve-colors.green-ok;
-            font-family: "Courier New";
-            font-size: 9px;
-        }
-    }
-}
-
-// ============================================
-// 主界面：风扇控制系统
+// 主界面：480×480
 // ============================================
 export component FanControlUI inherits Window {
     title: "EVE 风扇控制系统";
     width: 480px;
     height: 480px;
     background: eve-colors.bg-deep;
-    
-    // ========================================
-    // 数据属性（绑定到 Rust 后端）
-    // ========================================
-    
-    // 温度数据
-    in-out property <float> temperature: 28.5;     // 当前温度 (°C)
-    in-out property <float> temp-trend: 0.2;       // 温度趋势 (°C/分钟)
-    in-out property <[float]> temp-history: [];    // 温度历史采样（480 版不渲染，属性为共享 main.rs 而保留）
-    
-    // 转速数据
-    in-out property <int> fan-rpm: 2450;           // 当前转速 (RPM)
-    in-out property <int> fan-percentage: 75;      // 转速百分比
-    in-out property <float> fan-power: 6.0;        // 功率 (W)
-    
-    // 系统状态
-    in-out property <string> uptime: "00:00:00";   // 运行时间
-    in-out property <int> cpu-temp: 42;            // CPU 温度 (°C)
-    in-out property <bool> system-online: true;    // 系统在线状态
-    
-    // 风扇控制
-    in-out property <int> target-speed: 75;        // 目标档位 (0/25/50/75/100/-1=AUTO)
-    
-    // CRT 上电状态（默认关闭，由 Rust 触发动画）
+
+    // ============ 数据属性（Rust 后端绑定，与宽屏版同名共享 main.rs）============
+    in-out property <float> temperature: 28.5;
+    in-out property <float> temp-trend: 0.2;
+    in-out property <[float]> temp-history: [];      // 属性保留共享管线（方屏不渲染趋势图）
+    in-out property <int> fan-rpm: 2450;
+    in-out property <int> fan-percentage: 75;
+    in-out property <float> fan-power: 6.0;
+    in-out property <int> cpu-temp: 42;
+    in-out property <string> uptime: "00:00:00";
+    in-out property <bool> system-online: true;
+    in-out property <int> target-speed: 75;          // 0/25/50/75/100/-1=AUTO
+
+    // CRT 上电状态: 1=标题+状态行 2=温度 3=转速 4=控制(+底栏)
     in-out property <bool> panel-1-on: false;
     in-out property <bool> panel-2-on: false;
     in-out property <bool> panel-3-on: false;
     in-out property <bool> panel-4-on: false;
-    in-out property <bool> panel-5-on: false;
-    in-out property <bool> panel-6-on: false;
-    
-    // ========================================
-    // 回调（Rust 调用）
-    // ========================================
-    callback speed-changed(int);  // 档位改变回调
-    
-    // ========================================
-    // 主布局
-    // ========================================
+
+    callback speed-changed(int);
+
     VerticalLayout {
-        padding: 10px;
-        spacing: 15px;
-        
-        // ====================================
-        // 标题栏
-        // ====================================
-        HorizontalLayout {
-            height: 40px;
-            
-            VerticalLayout {
-                spacing: 2px;
-                
-                Text {
-                    text: "热管理控制系统";
-                    color: eve-colors.cyan-primary;
-                    font-family: "Arial";
-                    font-size: 18px;
-                    font-weight: 700;
-                }
-                
-                Text {
-                    text: "ESP-MOSAICO · S31 · V0.2.0";
-                    color: eve-colors.text-secondary;
-                    font-family: "Courier New";
-                    font-size: 11px;
-                }
-            }
-        }
-        
-        // ====================================
-        // 系统状态栏（增加高度避免文本挤压）
-        // ====================================
-        EvePanel {
-            height: 65px;  // 从 50px 增加到 65px
-            title: "系统状态";
-            power-on: panel-1-on;
-            
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 8px;
+        padding-bottom: 4px;
+        spacing: 8px;
+
+        // ==================== 标题 + 系统状态行 38px ====================
+        Rectangle {
+            height: 38px;
+            opacity: panel-1-on ? 1 : 0;
+            animate opacity { duration: 500ms; }
+
             HorizontalLayout {
-                padding-left: 10px;
-                padding-right: 10px;
                 alignment: space-between;
-                
-                Text {
-                    text: "运行时间: " + uptime;
-                    color: eve-colors.text-primary;
-                    font-family: "Courier New";
-                    font-size: 11px;
-                }
-                
-                Text {
-                    text: "CPU: " + cpu-temp + "°C";
-                    color: eve-colors.text-primary;
-                    font-family: "Courier New";
-                    font-size: 11px;
-                }
-                
-                HorizontalLayout {
-                    spacing: 8px;
-                    
+
+                // 左: 标题
+                VerticalLayout {
+                    spacing: 2px;
+
                     Text {
-                        text: "[ 在线 ]";
-                        color: eve-colors.green-ok;
-                        font-family: "Arial";
-                        font-size: 11px;
+                        text: "热管理控制系统";
+                        color: eve-colors.cyan-primary;
+                        font-family: "Rajdhani";
+                        font-size: 16px;
+                        font-weight: 700;
                     }
-                    
-                    // 在线指示灯
-                    Rectangle {
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: system-online ? eve-colors.green-ok : eve-colors.text-secondary;
+
+                    Text {
+                        text: "ESP-MOSAICO · S31 · V0.2.0";
+                        color: eve-colors.text-secondary;
+                        font-family: "Courier New";
+                        font-size: 9px;
+                    }
+                }
+
+                // 右: 系统状态（合并自原独立状态栏）
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: center;
+
+                    Text {
+                        text: "运行时间 " + root.uptime;
+                        color: eve-colors.text-primary;
+                        font-family: "Courier New";
+                        font-size: 10px;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "CPU " + root.cpu-temp + "°C";
+                        color: eve-colors.text-primary;
+                        font-family: "Courier New";
+                        font-size: 10px;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 5px;
+                        alignment: center;
+
+                        Rectangle {
+                            width: 6px;
+                            height: 6px;
+                            y: 3px;
+                            border-radius: 3px;
+                            background: root.system-online ? eve-colors.green-ok : eve-colors.text-muted;
+                        }
+
+                        Text {
+                            text: root.system-online ? "[ 在线 ]" : "[ 离线 ]";
+                            color: root.system-online ? eve-colors.green-ok : eve-colors.red-warn;
+                            font-family: "Courier New";
+                            font-size: 10px;
+                            vertical-alignment: center;
+                        }
                     }
                 }
             }
         }
-        
-        // ====================================
-        // 监控面板行（增加高度给文本留空间）
-        // ====================================
+
+        // ==================== 监控行 224px ====================
         HorizontalLayout {
-            spacing: 20px;
-            height: 180px;  // 从 150px 增加到 180px，给文本留空间
-            
-            // 温度监控面板
+            height: 224px;
+            spacing: 12px;
+
+            // ---------- 温度监控 (220px) ----------
             EvePanel {
                 width: 220px;
                 title: "温度监控";
                 power-on: panel-2-on;
-                
-                TempDisplay {
-                    temperature: root.temperature;
-                    trend: root.temp-trend;
-                    warning-threshold: 60.0;
+
+                VerticalLayout {
+                    spacing: 8px;
+
+                    Text {
+                        text: "传感器-01";
+                        color: eve-colors.text-secondary;
+                        font-family: "Courier New";
+                        font-size: 9px;
+                    }
+
+                    // 主温度
+                    HorizontalLayout {
+                        spacing: 5px;
+
+                        Text {
+                            text: round(root.temperature * 10) / 10;
+                            color: root.temperature >= 60 ? eve-colors.red-warn
+                                   : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.cyan-primary);
+                            font-family: "Rajdhani";
+                            font-size: 36px;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: "°C";
+                            color: eve-colors.text-muted;
+                            font-family: "Rajdhani";
+                            font-size: 15px;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // 温度标尺（量程 15~70°C，警告线 60°C）—— 与宽屏版同款
+                    // ▼ 游标标记当前温度位置，只读指示
+                    Rectangle {
+                        height: 16px;
+
+                        property <float> pos: clamp((root.temperature - 15.0) / 55.0, 0.0, 1.0);
+
+                        Rectangle {
+                            y: 8px;
+                            height: 8px;
+                            width: 100%;
+                            background: #1a2029;
+                            border-radius: 1px;
+
+                            Rectangle {
+                                width: parent.width * clamp((root.temperature - 15.0) / 55.0, 0.0, 1.0);
+                                height: parent.height;
+                                background: root.temperature >= 60 ? eve-colors.red-warn
+                                           : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.cyan-primary);
+                                border-radius: 1px;
+                            }
+                        }
+
+                        Text {
+                            x: min((parent.width - 10px) * parent.pos, parent.width - self.width);
+                            y: -2px;
+                            text: "▼";
+                            color: root.temperature >= 60 ? eve-colors.red-warn
+                                   : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.cyan-primary);
+                            font-size: 8px;
+                            animate x { duration: 300ms; easing: ease-out; }
+                        }
+                    }
+
+                    // 状态行
+                    HorizontalLayout {
+                        alignment: space-between;
+
+                        Text {
+                            text: root.temperature < 50 ? "正常" : (root.temperature < 60 ? "升高" : "警告");
+                            color: root.temperature < 50 ? eve-colors.text-secondary
+                                   : (root.temperature < 60 ? eve-colors.amber-accent : eve-colors.red-warn);
+                            font-family: "Courier New";
+                            font-size: 9px;
+                        }
+
+                        Text {
+                            text: "警告: 60°C";
+                            color: eve-colors.amber-accent;
+                            font-family: "Courier New";
+                            font-size: 9px;
+                        }
+                    }
+
+                    // 趋势指示
+                    Text {
+                        text: root.temp-trend > 0.05 ? "▲ +" + round(root.temp-trend * 10) / 10 + "°C/分钟"
+                              : (root.temp-trend < -0.05 ? "▼ " + round(root.temp-trend * 10) / 10 + "°C/分钟" : "● 稳定");
+                        color: root.temp-trend > 0.05 ? eve-colors.green-ok
+                               : (root.temp-trend < -0.05 ? #6fb7ff : eve-colors.text-secondary);
+                        font-family: "Courier New";
+                        font-size: 9px;
+                    }
                 }
             }
-            
-            // 转速监控面板
+
+            // ---------- 转速监控 (220px) ----------
             EvePanel {
                 width: 220px;
                 title: "转速监控";
                 power-on: panel-3-on;
-                
-                RpmDisplay {
-                    rpm: root.fan-rpm;
-                    percentage: root.fan-percentage;
-                    power: root.fan-power;
+
+                VerticalLayout {
+                    spacing: 8px;
+
+                    Text {
+                        text: "风扇-01";
+                        color: eve-colors.text-secondary;
+                        font-family: "Courier New";
+                        font-size: 9px;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 18px;
+
+                        // 左: 转速数字
+                        VerticalLayout {
+                            spacing: 0;
+                            alignment: center;
+
+                            Text {
+                                text: root.fan-rpm;
+                                color: eve-colors.amber-accent;
+                                font-family: "Rajdhani";
+                                font-size: 34px;
+                                font-weight: 700;
+                            }
+
+                            Text {
+                                text: "RPM";
+                                color: eve-colors.text-muted;
+                                font-family: "Courier New";
+                                font-size: 10px;
+                            }
+                        }
+
+                        // 右: 百分比圆环（76px，border-radius 方案）
+                        Rectangle {
+                            width: 76px;
+                            height: 76px;
+
+                            Rectangle {
+                                width: 100%;
+                                height: 100%;
+                                border-radius: self.width / 2;
+                                border-width: 6px;
+                                border-color: #1a2029;
+                                background: transparent;
+                            }
+
+                            Rectangle {
+                                width: 100%;
+                                height: 100%;
+                                border-radius: self.width / 2;
+                                border-width: 6px;
+                                border-color: root.fan-percentage > 0 ? eve-colors.amber-accent : transparent;
+                                background: transparent;
+                            }
+
+                            Text {
+                                width: 100%;
+                                height: 100%;
+                                text: root.fan-percentage + "%";
+                                color: eve-colors.amber-accent;
+                                font-family: "Rajdhani";
+                                font-size: 17px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // 底部信息行
+                    HorizontalLayout {
+                        alignment: space-between;
+
+                        Text {
+                            text: "功率: " + round(root.fan-power * 10) / 10 + "W";
+                            color: eve-colors.text-secondary;
+                            font-family: "Courier New";
+                            font-size: 9px;
+                        }
+
+                        Text {
+                            text: "效率: 最优";
+                            color: eve-colors.green-ok;
+                            font-family: "Courier New";
+                            font-size: 9px;
+                        }
+                    }
                 }
             }
         }
-        
-        // ====================================
-        // 风扇控制面板（减小高度）
-        // ====================================
+
+        // ==================== 风扇控制 152px ====================
         EvePanel {
-            height: 100px;  // 从 120px 减少到 100px
+            height: 152px;
             title: "风扇控制";
             power-on: panel-4-on;
-            
-            // 六边形按钮组
-            // 六边形档位按钮（6个：0/25/50/75/100/AUTO）
-            HorizontalLayout {
-                spacing: 50px;
-                padding-top: 10px;  // 从 20px 减少到 10px
-                alignment: center;
-                
-                // 0% 停止
-                HexButton {
-                    value: 0;
-                    active: root.target-speed == 0;
-                    clicked => {
-                        root.target-speed = 0;
-                        root.speed-changed(0);
+
+            // 六档按钮 + 中文标签（标签回归，方屏版 30×34）
+            VerticalLayout {
+                HorizontalLayout {
+                    spacing: 32px;
+                    alignment: center;
+
+                    HexButton {
+                        value: 0;
+                        label: "停止";
+                        active: root.target-speed == 0;
+                        clicked => { root.target-speed = 0; root.speed-changed(0); }
                     }
-                }
-                
-                // 25% 低速
-                HexButton {
-                    value: 25;
-                    active: root.target-speed == 25;
-                    clicked => {
-                        root.target-speed = 25;
-                        root.speed-changed(25);
+                    HexButton {
+                        value: 25;
+                        label: "低速";
+                        active: root.target-speed == 25;
+                        clicked => { root.target-speed = 25; root.speed-changed(25); }
                     }
-                }
-                
-                // 50% 中速
-                HexButton {
-                    value: 50;
-                    active: root.target-speed == 50;
-                    clicked => {
-                        root.target-speed = 50;
-                        root.speed-changed(50);
+                    HexButton {
+                        value: 50;
+                        label: "中速";
+                        active: root.target-speed == 50;
+                        clicked => { root.target-speed = 50; root.speed-changed(50); }
                     }
-                }
-                
-                // 75% 高速
-                HexButton {
-                    value: 75;
-                    active: root.target-speed == 75;
-                    clicked => {
-                        root.target-speed = 75;
-                        root.speed-changed(75);
+                    HexButton {
+                        value: 75;
+                        label: "高速";
+                        active: root.target-speed == 75;
+                        clicked => { root.target-speed = 75; root.speed-changed(75); }
                     }
-                }
-                
-                // 100% 全速
-                HexButton {
-                    value: 100;
-                    active: root.target-speed == 100;
-                    clicked => {
-                        root.target-speed = 100;
-                        root.speed-changed(100);
+                    HexButton {
+                        value: 100;
+                        label: "全速";
+                        active: root.target-speed == 100;
+                        clicked => { root.target-speed = 100; root.speed-changed(100); }
                     }
-                }
-                
-                // AUTO 自动
-                HexButton {
-                    value: 0;
-                    is-auto: true;
-                    active: root.target-speed == -1;
-                    clicked => {
-                        root.target-speed = -1;
-                        root.speed-changed(-1);
+                    HexButton {
+                        is-auto: true;
+                        label: "自动";
+                        active: root.target-speed == -1;
+                        clicked => { root.target-speed = -1; root.speed-changed(-1); }
                     }
                 }
             }
         }
-        
-        // ====================================
-        // 底部状态栏
-        // ====================================
+
+        // ==================== 底部状态栏 18px（随控制面板一起点亮）====================
         Rectangle {
-            height: 20px;
-            
+            height: 18px;
+            opacity: panel-4-on ? 1 : 0;
+            animate opacity { duration: 400ms; }
+
             Rectangle {
                 width: parent.width;
                 height: 1px;
                 background: #6ebdd222;
             }
-            
+
             HorizontalLayout {
-                padding-top: 5px;
-                
+                padding-top: 4px;
+                alignment: space-between;
+
                 Text {
                     text: "MOSAICO-S31";
                     color: eve-colors.text-secondary;
                     font-family: "Courier New";
                     font-size: 9px;
                 }
-                
-                Rectangle { width: 1px; }
-                
+
                 Text {
-                    text: "2026-09-08";  // TODO: 动态日期
-                    color: eve-colors.text-secondary;
+                    text: "2026-09-08";
+                    color: eve-colors.text-muted;
                     font-family: "Courier New";
                     font-size: 9px;
-                    horizontal-alignment: right;
                 }
             }
         }
