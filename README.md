@@ -22,32 +22,51 @@
 ```bash
 esp-32/
 ├── 📘 QUICKSTART.md              # 5分钟快速启动 ⭐
+├── 📜 build-variants.sh          # 多变体构建脚本
 ├── docs/                         # 设计文档
-│   ├── eve-fan-control-embedded.html    # 最终设计
-│   └── PROJECT_SUMMARY.md               # 项目总结 ⭐
+│   ├── PROJECT_STRUCTURE.md      # 项目结构说明 ⭐
+│   ├── PROJECT_SUMMARY.md        # 项目总结
+│   └── eve-fan-control-ultimate.html  # 最终设计演示
 │
-└── ui/eve_fan/                   # 嵌入式实现 ⭐
-    ├── fan_control.slint         # Slint UI (800+ 行)
-    ├── src/main.rs               # Rust 逻辑 (600+ 行)
-    └── README.md                 # 详细文档
+└── src/                          # 源代码 ⭐
+    ├── main.rs                   # 桌面开发版入口
+    ├── service/                  # 硬件抽象层
+    ├── ui/                       # Slint UI 定义
+    └── embedded_hal/             # ESP32 真机实现
+        ├── VARIANTS.md           # 多变体说明 ⭐
+        └── *.rs                  # 硬件驱动代码
 ```
 
 ---
 
 ## 🚀 快速开始
 
-### 查看设计效果
+### 桌面开发（推荐先在桌面预览 UI）
 
 ```bash
-open docs/eve-fan-control-embedded.html
-```
-
-### 运行桌面版本（模拟硬件）
-
-```bash
-cd ui/eve_fan
+# 直接运行
 cargo run
+
+# 或使用构建脚本
+./build-variants.sh desktop
 ```
+
+### ESP32-S31 真机编译
+
+项目支持两种硬件配置，通过 Cargo Features 选择：
+
+```bash
+# 变体 A: ESP-Mosaico 官方开发板
+./build-variants.sh variant-a --release --flash
+
+# 变体 B: 自定义 S31 配置
+./build-variants.sh variant-b --release --flash
+
+# 手动编译
+cargo build --features s31-variant-a --release
+```
+
+详见 [`src/embedded_hal/VARIANTS.md`](src/embedded_hal/VARIANTS.md)
 
 **5 秒启动，立即看到效果！** ✨
 
