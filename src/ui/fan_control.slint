@@ -7,23 +7,28 @@
 // CRT 上电顺序: 标题+状态 → 温度 → 转速 → 控制+底栏 (panel-1..4, 由 Rust 依次触发)
 
 // ============================================
-// 颜色定义（EVE 青金石蓝风格，与宽屏版一致）
+// 颜色定义（蓝白 · 仪器白，两屏统一）
+// 语义分工: 蓝=温度/冷量 · 琥珀=能量/转速 · 绿=正常(专属) · 红=告警
 // ============================================
 export global eve-colors {
-    out property <color> cyan-primary: #5fd0e0;
-    out property <color> amber-accent: #e8c25a;
-    out property <color> green-ok: #7bc98a;
-    out property <color> red-warn: #e05d5d;
+    out property <color> accent-primary: #1E6FA8;  // 工业蓝：温度/标题/激活态
+    out property <color> amber-accent: #E8A13A;    // 琥珀：转速/功率/能量
+    out property <color> green-ok: #2E9E5B;        // 正常（状态专属色）
+    out property <color> red-warn: #D64545;        // 告警
 
-    out property <color> bg-deep: #02060a;
-    out property <color> bg-panel: #0a1821;
-    out property <color> bg-panel-dark: #071119;
+    out property <color> bg-deep: #EDF2F7;         // 页面底（冷灰蓝）
+    out property <color> bg-panel: #FFFFFF;        // 白卡片
+    out property <color> bg-panel-dark: #F8FAFC;   // 面板内嵌区
 
-    out property <color> border-main: #6ebdd266;
-    out property <color> border-accent: #6ebdd26e;
-    out property <color> text-primary: #c2dbe4;
-    out property <color> text-secondary: #68838f;
-    out property <color> text-muted: #7895a1;
+    out property <color> border-main: #D7E2EC;     // 实色细线边框
+    out property <color> border-accent: #2E6FA3;   // 四角标记
+    out property <color> text-primary: #16324A;    // 深海军
+    out property <color> text-secondary: #5B7B95;
+    out property <color> text-muted: #8FA6B8;
+
+    out property <color> separator: #E4EBF2;       // 分隔线
+    out property <color> track-bg: #E9EFF5;        // 标尺轨道/圆环底
+    out property <color> trend-falling: #2B7CB8;   // 下降趋势（降温=蓝）
 }
 
 // ============================================
@@ -76,7 +81,7 @@ component EvePanel inherits Rectangle {
 
         if title != "" : Text {
             text: title;
-            color: eve-colors.cyan-primary;
+            color: eve-colors.accent-primary;
             font-family: "Rajdhani";
             font-size: 12px;
             font-weight: 600;
@@ -84,7 +89,7 @@ component EvePanel inherits Rectangle {
 
         if title != "" : Rectangle {
             height: 1px;
-            background: #6ebdd222;
+            background: eve-colors.separator;
         }
 
         @children
@@ -109,9 +114,9 @@ component HexButton inherits VerticalLayout {
         height: 34px;
 
         Path {
-            fill: active ? (is-auto ? #7bc98a20 : #5fd0e020) : #0a1821;
-            stroke: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary)
-                    : (is-auto ? #7bc98a66 : eve-colors.border-main);
+            fill: active ? (is-auto ? #2e9e5b1f : #1e6fa81f) : eve-colors.bg-panel-dark;
+            stroke: active ? (is-auto ? eve-colors.green-ok : eve-colors.accent-primary)
+                    : (is-auto ? #2e9e5b66 : eve-colors.border-main);
             stroke-width: active ? 2px : 1.5px;
 
             MoveTo { x: 15; y: 0; }
@@ -127,7 +132,7 @@ component HexButton inherits VerticalLayout {
             width: 100%;
             height: 100%;
             text: value > 0 ? value : (is-auto ? "AUTO" : "0");
-            color: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary)
+            color: active ? (is-auto ? eve-colors.green-ok : eve-colors.accent-primary)
                    : (is-auto ? eve-colors.green-ok : eve-colors.text-secondary);
             font-family: "Rajdhani";
             font-size: is-auto ? 8px : 12px;
@@ -143,7 +148,7 @@ component HexButton inherits VerticalLayout {
 
     Text {
         text: label;
-        color: active ? (is-auto ? eve-colors.green-ok : eve-colors.cyan-primary) : eve-colors.text-muted;
+        color: active ? (is-auto ? eve-colors.green-ok : eve-colors.accent-primary) : eve-colors.text-muted;
         font-family: "Courier New";
         font-size: 9px;
         horizontal-alignment: center;
@@ -201,7 +206,7 @@ export component FanControlUI inherits Window {
 
                     Text {
                         text: "热管理控制系统";
-                        color: eve-colors.cyan-primary;
+                        color: eve-colors.accent-primary;
                         font-family: "Rajdhani";
                         font-size: 16px;
                         font-weight: 700;
@@ -288,7 +293,7 @@ export component FanControlUI inherits Window {
                         Text {
                             text: round(root.temperature * 10) / 10;
                             color: root.temperature >= 60 ? eve-colors.red-warn
-                                   : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.cyan-primary);
+                                   : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.accent-primary);
                             font-family: "Rajdhani";
                             font-size: 36px;
                             font-weight: 700;
@@ -315,14 +320,14 @@ export component FanControlUI inherits Window {
                             y: 8px;
                             height: 8px;
                             width: 100%;
-                            background: #1a2029;
+                            background: eve-colors.track-bg;
                             border-radius: 1px;
 
                             Rectangle {
                                 width: parent.width * clamp((root.temperature - 15.0) / 55.0, 0.0, 1.0);
                                 height: parent.height;
                                 background: root.temperature >= 60 ? eve-colors.red-warn
-                                           : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.cyan-primary);
+                                           : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.accent-primary);
                                 border-radius: 1px;
                             }
                         }
@@ -332,7 +337,7 @@ export component FanControlUI inherits Window {
                             y: -2px;
                             text: "▼";
                             color: root.temperature >= 60 ? eve-colors.red-warn
-                                   : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.cyan-primary);
+                                   : (root.temperature >= 50 ? eve-colors.amber-accent : eve-colors.accent-primary);
                             font-size: 8px;
                             animate x { duration: 300ms; easing: ease-out; }
                         }
@@ -363,7 +368,7 @@ export component FanControlUI inherits Window {
                         text: root.temp-trend > 0.05 ? "▲ +" + round(root.temp-trend * 10) / 10 + "°C/分钟"
                               : (root.temp-trend < -0.05 ? "▼ " + round(root.temp-trend * 10) / 10 + "°C/分钟" : "● 稳定");
                         color: root.temp-trend > 0.05 ? eve-colors.green-ok
-                               : (root.temp-trend < -0.05 ? #6fb7ff : eve-colors.text-secondary);
+                               : (root.temp-trend < -0.05 ? eve-colors.trend-falling : eve-colors.text-secondary);
                         font-family: "Courier New";
                         font-size: 9px;
                     }
@@ -420,7 +425,7 @@ export component FanControlUI inherits Window {
                                 height: 100%;
                                 border-radius: self.width / 2;
                                 border-width: 6px;
-                                border-color: #1a2029;
+                                border-color: eve-colors.track-bg;
                                 background: transparent;
                             }
 
@@ -530,7 +535,7 @@ export component FanControlUI inherits Window {
             Rectangle {
                 width: parent.width;
                 height: 1px;
-                background: #6ebdd222;
+                background: eve-colors.separator;
             }
 
             HorizontalLayout {
