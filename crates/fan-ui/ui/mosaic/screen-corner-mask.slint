@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: Apache-2.0
+// A tunable rounded-rectangle safety overlay. 60px is a layout assumption;
+// neither upstream sources nor board documentation specify a physical radius.
+// Four small paths avoid a full-frame bitmap and preserve software rendering.
+// Input outside the visible shape must be rejected at the pointer dispatcher.
+import { Palette } from "palette.slint";
+
+export component ScreenCornerMask inherits Rectangle {
+    in property <length> corner-radius: Palette.screen-corner-radius;
+    width: 480px;
+    height: 480px;
+    Path {
+        x: 0px; y: 0px;
+        width: root.corner-radius; height: root.corner-radius;
+        viewbox-x: 0; viewbox-y: 0;
+        viewbox-width: 100; viewbox-height: 100;
+        commands: "M 0 0 H 100 C 44.7715 0 0 44.7715 0 100 Z";
+        fill: #000000;
+    }
+    Path {
+        x: root.width - root.corner-radius;
+        y: 0px;
+        width: root.corner-radius; height: root.corner-radius;
+        viewbox-x: 0; viewbox-y: 0;
+        viewbox-width: 100; viewbox-height: 100;
+        commands: "M 0 0 H 100 V 100 C 100 44.7715 55.2285 0 0 0 Z";
+        fill: #000000;
+    }
+    Path {
+        x: 0px;
+        y: root.height - root.corner-radius;
+        width: root.corner-radius; height: root.corner-radius;
+        viewbox-x: 0; viewbox-y: 0;
+        viewbox-width: 100; viewbox-height: 100;
+        commands: "M 0 0 V 100 H 100 C 44.7715 100 0 55.2285 0 0 Z";
+        fill: #000000;
+    }
+    Path {
+        x: root.width - root.corner-radius;
+        y: root.height - root.corner-radius;
+        width: root.corner-radius; height: root.corner-radius;
+        viewbox-x: 0; viewbox-y: 0;
+        viewbox-width: 100; viewbox-height: 100;
+        commands: "M 100 0 V 100 H 0 C 55.2285 100 100 55.2285 100 0 Z";
+        fill: #000000;
+    }
+}

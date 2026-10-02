@@ -1,0 +1,52 @@
+// A single opaque surface; only the wordmark colors and the short line change.
+export component BootSplash inherits Rectangle {
+    in property <float> progress: 0;
+    in property <color> surface: #EDF2F7;
+    in property <color> accent: #409EFF;
+
+    private property <float> logo-phase: clamp(root.progress / 0.65, 0.0, 1.0);
+    private property <float> logo-level: 1.0 - (1.0 - logo-phase) * (1.0 - logo-phase) * (1.0 - logo-phase);
+    private property <float> line-phase: clamp((root.progress - 0.1) / 0.75, 0.0, 1.0);
+    private property <float> line-length: 1.0 - (1.0 - line-phase) * (1.0 - line-phase) * (1.0 - line-phase);
+
+    background: root.surface;
+
+    Text {
+        y: (parent.height - self.height) / 2 - 22px;
+        width: parent.width;
+        height: 80px;
+        text: "ikaros";
+        font-family: "Noto Sans SC";
+        font-weight: 700;
+        font-size: 48px;
+        letter-spacing: 4px;
+        color: #16324A.mix(root.surface, root.logo-level);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Text {
+        y: parent.height / 2 + 32px;
+        width: parent.width;
+        height: 18px;
+        text: "THERMAL CONTROL";
+        font-family: "Noto Sans SC";
+        font-weight: 400;
+        font-size: 10px;
+        letter-spacing: 2px;
+        color: #5E7A92.mix(root.surface, root.line-length);
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height / 2 + 72px;
+        width: 180px * root.line-length;
+        height: 2px;
+        background: root.accent;
+    }
+
+    // Consume presses while the control page is absent.
+    TouchArea { }
+}

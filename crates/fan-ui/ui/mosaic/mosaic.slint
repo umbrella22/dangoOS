@@ -1,0 +1,405 @@
+// SPDX-License-Identifier: Apache-2.0
+// MosaicApp 根组件: 官方 Hub UI 的 Slint 实现(M2)
+// 层级结构(对齐官方场景):
+//   launcher PageFlow(Home|Apps) → App 页 → Hub 状态栏/导航 →
+//   quick_drawer(下拉) → lock_screen(锁屏, 最顶层)
+// Hub 状态栏打开 drawer，Settings 亮度行打开同一面板；AI 键切换锁屏
+
+import { Palette } from "palette.slint";
+import { StatusBar } from "status-bar.slint";
+import { HubHome } from "hub-home.slint";
+import { HubApps } from "hub-apps.slint";
+import { AppSystemStatus, AppSlotStatus } from "app-system-status.slint";
+import { ScreenCornerMask } from "screen-corner-mask.slint";
+import { AppSettings } from "app-settings.slint";
+import { AppImu } from "app-imu.slint";
+import { AppTof } from "app-tof.slint";
+import { AppBreakout } from "app-breakout.slint";
+import { AppCamera, AppAlbum } from "app-camera-album.slint";
+import { AppWeather } from "app-weather.slint";
+import { QuickDrawer } from "quick-drawer.slint";
+import { LockScreen } from "lock-screen.slint";
+
+// 官方中文字体子集(出厂固件同款), 注册家庭名 "Noto Sans SC"
+import "../../assets/fonts/NotoSansSC-MosaicUI.ttf";
+
+export component MosaicApp inherits Window {
+    width: 480px;
+    height: 480px;
+    default-font-family: "Noto Sans SC";
+
+    // ---- 运行时数据(平台层驱动) ----
+    in property <string> status-time: "12:00";
+    in property <int> wifi-level: 0;
+    in property <int> battery-pct: 80;
+    in property <bool> charging: false;
+    in property <string> weather-temp: "--";
+    in property <string> weather-desc: "--";
+    in property <string> weather-city: "--";
+    in property <int> weather-art: 0;
+    in property <string> weather-date: "--/--";
+    in property <string> weather-low: "--";
+    in property <string> weather-high: "--";
+    // Drawer
+    in property <bool> wlan-on: false;
+    in property <bool> bt-on: false;
+    in-out property <string> quick-feedback: "";
+    callback quick-feedback-requested();
+    in-out property <length> screen-corner-radius: Palette.screen-corner-radius;
+    in-out property <int> volume: 50;
+    in-out property <int> brightness: 70;
+    // Settings/风扇卡
+    in property <bool> fan-available: false;
+    in property <bool> fan-rpm-valid: false;
+    in property <bool> fan-temperature-valid: false;
+    in property <int> fan-rpm: 0;
+    in property <int> fan-duty: 0;
+    in property <int> fan-temperature: 0;
+    // 锁屏日期(无 RTC 占位, M4 NTP 接管)
+    in property <string> date-prefix: "7/20 · ";
+    in property <string> date-day: "Mon";
+
+    // ---- 导航状态 ----
+    in-out property <int> page: 0; // 0=Home 1=Apps
+    in-out property <int> app: -1; // -1=Hub 0=Settings 1=IMU 2=Album 3=Breakout 4=TOF 5=Weather 6=Camera 7=Status 8=Slot
+    in-out property <int> status-feature: 0;
+    in-out property <int> status-origin: 0; // 1=Drawer, 2=Settings, 3=Slot
+    in-out property <int> slot-side: 0;
+    in-out property <int> drawer-source-app: -1;
+    in-out property <bool> slot-test-open: false;
+    out property <bool> in-settings: root.app == 0;
+    // IMU 运行时数据
+    in property <length> bubble-x: 202px;
+    in property <length> bubble-y: 166.5px;
+    in property <bool> imu-valid: false;
+    in property <string> imu-angle: "0°";
+    in property <string> imu-pitch: "0";
+    in property <string> imu-roll: "0";
+    // TOF(无模块占位)
+    in-out property <int> tof-threshold: 50;
+    in property <string> tof-distance: "--";
+    in property <bool> tof-valid: false;
+    // 相机运行时数据：只有完整预览帧就绪时展示画面。
+    in property <image> camera-frame;
+    in property <bool> camera-preview-ready: false;
+    in property <string> camera-status: "Camera preview unavailable";
+    in property <bool> camera-retry-available: false;
+    callback camera-retry-requested();
+    // Breakout 游戏状态(Rust 步进)
+    in property <int> game-score: 0;
+    in property <int> game-lives: 3;
+    in property <bool> game-running: false;
+    in property <length> game-ball-x: 240px;
+    in property <length> game-ball-y: 300px;
+    in property <length> game-paddle-x: 190px;
+    in property <[bool]> game-bricks-live;
+    in-out property <bool> drawer-open: false;
+    in-out property <bool> locked: false;
+
+    callback open-app(int);
+    open-app(i) => {
+        if i >= 0 && i <= 6 && !root.locked && !root.drawer-open {
+            root.slot-test-open = false;
+            root.status-origin = 0;
+            root.app = i;
+        }
+    }
+    function return-from-app() {
+        if root.app == 7 && root.status-origin == 3 {
+            root.app = 8;
+        } else if root.app == 7 && root.status-origin == 2 {
+            root.app = 0;
+        } else if root.app == 7 || root.app == 8 {
+            root.app = root.drawer-source-app;
+            root.quick-feedback = "";
+            root.drawer-open = true;
+        } else if root.slot-test-open {
+            root.slot-test-open = false;
+            root.app = 8;
+        } else {
+            root.app = -1;
+        }
+    }
+    function control-action(feature: int) {
+        if feature == 6 {
+            root.drawer-source-app = root.app;
+            root.status-feature = 6;
+            root.status-origin = 1;
+            root.drawer-open = false;
+            root.app = 7;
+        } else {
+            root.quick-feedback = feature == 0 ? "Wi-Fi unavailable"
+                : feature == 1 ? "Join not supported"
+                : feature == 2 ? "Bluetooth unavailable"
+                : feature == 3 ? "Low Power unavailable"
+                : feature == 4 ? "Ringtone unavailable" : "Vibration unavailable";
+            root.quick-feedback-requested();
+        }
+    }
+    callback brightness-changed(int);
+    callback wlan-toggled();
+    callback game-start();
+
+    background: Palette.screen-bg;
+
+    // 横向手势容器先观察子控件事件；只有识别到拖动才取消图标点击。
+    // 在释放时切换一次，避免同一个 contact 触发新页面的底层操作。
+    if root.app == -1: SwipeGestureHandler {
+        x: 0px;
+        y: 0px;
+        width: 480px;
+        height: 480px;
+        enabled: !root.drawer-open && !root.locked;
+        handle-swipe-left: true;
+        handle-swipe-right: true;
+        swiped => {
+            if Math.abs(self.current-position.x - self.pressed-position.x) >= 60px
+                && Math.abs(self.current-position.x - self.pressed-position.x)
+                    >= Math.abs(self.current-position.y - self.pressed-position.y) * 1.5 {
+                if self.current-position.x < self.pressed-position.x && root.page == 0 {
+                    root.page = 1;
+                } else if self.current-position.x > self.pressed-position.x && root.page == 1 {
+                    root.page = 0;
+                }
+            }
+        }
+        if root.page == 0 && root.app == -1: HubHome {
+            y: 56px;
+            width: 480px;
+            height: 424px;
+            weather-temp: root.weather-temp;
+            weather-desc: root.weather-desc;
+            weather-city: root.weather-city;
+            open-shortcut(i) => {
+                root.open-app(i);
+            }
+        }
+        if root.page == 1 && root.app == -1: HubApps {
+            y: 56px;
+            width: 480px;
+            height: 424px;
+            open-app(i) => {
+                root.open-app(i);
+            }
+        }
+        // Hub 状态栏/导航也在手势容器内，按钮起手仍可横向切页。
+        if root.app == -1 && !root.drawer-open && !root.locked: StatusBar {
+            y: 0px;
+            time: root.status-time;
+            wifi-level: root.wifi-level;
+            battery-pct: root.battery-pct;
+            charging: root.charging;
+        }
+        if root.app == -1 && !root.drawer-open && !root.locked: Rectangle {
+            x: 222px;
+            y: 450px;
+            width: 12px;
+            height: 12px;
+            border-radius: 6px;
+            background: root.page == 0 ? Palette.text : Palette.capsule;
+            TouchArea {
+                x: -6px; y: -14px; width: 24px; height: 40px;
+                clicked => { root.page = 0; }
+            }
+        }
+        if root.app == -1 && !root.drawer-open && !root.locked: Rectangle {
+            x: 246px;
+            y: 450px;
+            width: 12px;
+            height: 12px;
+            border-radius: 6px;
+            background: root.page == 1 ? Palette.text : Palette.capsule;
+            TouchArea {
+                x: -6px; y: -14px; width: 24px; height: 40px;
+                clicked => { root.page = 1; }
+            }
+        }
+
+    }
+
+    // ---- 第 2 层: App 页 ----
+    if root.app == 1: AppImu {
+        width: 480px;
+        height: 480px;
+        bubble-x: root.bubble-x;
+        bubble-y: root.bubble-y;
+        valid: root.imu-valid;
+        angle: root.imu-angle;
+        pitch: root.imu-pitch;
+        roll: root.imu-roll;
+        back-requested => {
+            root.return-from-app();
+        }
+    }
+    if root.app == 3: AppBreakout {
+        width: 480px;
+        height: 480px;
+        score: root.game-score;
+        lives: root.game-lives;
+        running: root.game-running;
+        ball-x: root.game-ball-x;
+        ball-y: root.game-ball-y;
+        paddle-x: root.game-paddle-x;
+        bricks-live: root.game-bricks-live;
+        back-requested => {
+            root.return-from-app();
+        }
+        start-requested => {
+            if !root.locked && !root.drawer-open {
+                root.game-start();
+            }
+        }
+    }
+    if root.app == 5: AppWeather {
+        width: 480px;
+        height: 480px;
+        temperature: root.weather-temp;
+        condition: root.weather-desc;
+        city: root.weather-city;
+        art: root.weather-art;
+        date: root.weather-date;
+        low: root.weather-low;
+        high: root.weather-high;
+        back-requested => {
+            root.return-from-app();
+        }
+    }
+    if root.app == 2: AppAlbum {
+        width: 480px;
+        height: 480px;
+        back-requested => {
+            root.return-from-app();
+        }
+    }
+    if root.app == 6: AppCamera {
+        width: 480px;
+        height: 480px;
+        frame: root.camera-frame;
+        preview-ready: root.camera-preview-ready;
+        status: root.camera-status;
+        retry-available: root.camera-retry-available;
+        back-requested => {
+            root.return-from-app();
+        }
+        retry-requested => {
+            root.camera-retry-requested();
+        }
+    }
+    if root.app == 4: AppTof {
+        width: 480px;
+        height: 480px;
+        distance: root.tof-distance;
+        valid: root.tof-valid;
+        threshold: root.tof-threshold;
+        threshold-changed(v) => {
+            root.tof-threshold = v;
+        }
+        back-requested => {
+            root.return-from-app();
+        }
+    }
+    if root.app == 0: AppSettings {
+        width: 480px;
+        height: 480px;
+        rpm: root.fan-rpm;
+        duty: root.fan-duty;
+        temperature: root.fan-temperature;
+        fan-available: root.fan-available;
+        rpm-valid: root.fan-rpm-valid;
+        temperature-valid: root.fan-temperature-valid;
+        brightness: root.brightness;
+        wlan-on: root.wlan-on;
+        back-requested => {
+            root.return-from-app();
+        }
+        brightness-requested => {
+            root.drawer-open = true;
+        }
+        status-requested(feature) => {
+            root.status-feature = feature;
+            root.status-origin = 2;
+            root.app = 7;
+        }
+    }
+    if root.app == 7: AppSystemStatus {
+        feature: root.status-feature;
+        back-requested => { root.return-from-app(); }
+    }
+    if root.app == 8: AppSlotStatus {
+        side: root.slot-side;
+        camera-status: root.camera-status;
+        back-requested => { root.return-from-app(); }
+        test-requested(test) => {
+            if test == 1 || (test == 6 && root.slot-side == 0) {
+                root.slot-test-open = true;
+                root.app = test;
+            } else if test == 8 || test == 9 {
+                root.status-feature = test;
+                root.status-origin = 3;
+                root.app = 7;
+            }
+        }
+    }
+
+    // Hub 顶部点击/向下拖动打开面板。位于导航之上、drawer 之下。
+    if root.app == -1 && !root.drawer-open && !root.locked: TouchArea {
+        x: 0px;
+        y: 0px;
+        width: 480px;
+        height: 32px;
+        clicked => { root.drawer-open = true; }
+        moved => {
+            if self.pressed && self.mouse-y - self.pressed-y >= 40px {
+                root.drawer-open = true;
+            }
+        }
+    }
+
+    // ---- 第 4 层: 下拉面板 ----
+    if root.drawer-open && !root.locked: QuickDrawer {
+        width: 480px;
+        height: 480px;
+        status-time: root.status-time;
+        wifi-level: root.wifi-level;
+        battery-pct: root.battery-pct;
+        charging: root.charging;
+        wlan-on: root.wlan-on;
+        bt-on: root.bt-on;
+        volume: root.volume;
+        brightness: root.brightness;
+        dismissed => {
+            root.drawer-open = false;
+        }
+        feedback-text: root.quick-feedback;
+        control-requested(feature) => { root.control-action(feature); }
+        slot-requested(side) => {
+            root.drawer-source-app = root.app;
+            root.slot-side = side;
+            root.slot-test-open = false;
+            root.drawer-open = false;
+            root.app = 8;
+        }
+        volume-changed(v) => {
+            root.volume = v;
+        }
+        brightness-changed(v) => {
+            root.brightness = v;
+            root.brightness-changed(v);
+        }
+    }
+
+    // ---- 第 5 层: 锁屏(最顶) ----
+    if root.locked: LockScreen {
+        width: 480px;
+        height: 480px;
+        time: root.status-time;
+        date-prefix: root.date-prefix;
+        date-day: root.date-day;
+        charging: root.charging;
+        unlock-requested => {
+            root.locked = false;
+        }
+    }
+    // Radius is a design assumption until the physical panel is measured.
+    ScreenCornerMask { corner-radius: root.screen-corner-radius; }
+}

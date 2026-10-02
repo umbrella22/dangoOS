@@ -1,0 +1,6 @@
+[package]
+name = "fan-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Platform-independent fan control policy"

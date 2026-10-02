@@ -1,334 +1,70 @@
-# 项目结构说明
+# Crate 与源码结构
 
-## 📁 新的目录结构
+桌面和固件共享控制计算与 Slint 组件；各自的入口负责组装运行环境。固件显示驱动负责 PSRAM 帧渲染与 QSPI GRAM 整帧刷新，UI 层只写渲染缓冲。
 
-```
-esp-32/
-├── 📄 README.md                    # 项目入口文档
-├── 📄 QUICKSTART.md                # 快速启动指南
-├── 📄 Cargo.toml                   # Rust 项目配置
-├── 📄 build.rs                     # Slint 编译脚本
-│
-├── 📂 .cargo/                      # Cargo 配置
-│   ├── config.toml                # 桌面开发配置 ⭐ 当前使用
-│   └── config.esp32.toml          # ESP32 真机配置（切换时重命名）
-│
-├── 📂 docs/                        # 文档和设计
-│   ├── PROJECT_SUMMARY.md         # 项目总结
-│   ├── DEVELOPMENT.md             # 开发指南
-│   └── eve-fan-control-*.html     # 设计演示（10+ 个版本）
-│
-└── 📂 src/                         # 源代码 ⭐⭐⭐
-    ├── 📄 main.rs                 # 主入口（桌面开发版）
-    │
-    ├── 📂 service/                # 硬件交互层（桌面开发版）
-    │   ├── mod.rs                # 模块定义
-    │   ├── hardware.rs           # HAL trait 定义 ⭐
-    │   ├── mock.rs               # 模拟硬件（开发用）⭐
-    │   ├── esp32.rs              # 真机硬件（待实现）
-    │   └── animation.rs          # 动画控制
-    │
-    ├── 📂 ui/                     # UI 层
-    │   ├── mod.rs                # UI 模块
-    │   └── fan_control.slint     # Slint UI 定义 ⭐
-    │
-    └── 📂 embedded_hal/           # ESP32 真机实现（no_std）
-        ├── README.md             # 硬件实现说明
-        ├── board.rs              # 引脚映射
-        ├── display.rs            # AMOLED 驱动
-        ├── fan.rs                # PWM 控制
-        └── gui.rs                # Slint 集成
+## 运行路径
+
+```mermaid
+flowchart LR
+    Desktop[fan-desktop：Slint Timer] --> Core[fan-core：控制策略]
+    Firmware[fan-firmware：主循环] --> Core
+    Desktop --> UI[fan-ui：FanControlUI]
+    Firmware --> UI
+    UI --> Renderer[固件 Slint 软件渲染器]
+    Renderer --> FB[PSRAM 帧缓冲]
+    FB --> Flush[present：LE→BE 换序 + 内部 RAM 暂存]
+    Flush --> DMA[SPI DMA → QSPI → CO5300 GRAM]
+    Touch[CST9220] --> Firmware
+    Firmware --> PWM[RMT 风扇 PWM]
 ```
 
----
+桌面窗口由 Slint 桌面后端显示。图中的 PSRAM、DMA 和面板路径只存在于固件。
 
-## 🔀 两个版本说明
+## 目录
 
-项目包含两个并行的实现版本：
-
-### 桌面开发版（当前活动）
-- **位置**: `src/main.rs` + `src/service/` + `src/ui/`
-- **特点**: 使用 `std` 库，Mock 硬件，用于 UI 开发
-- **运行**: `cargo run`
-
-### ESP32 真机版（等待硬件）
-- **位置**: `src/embedded_hal/`
-- **特点**: `no_std` + `esp-hal`，真实硬件驱动
-- **说明**: 详见 `src/embedded_hal/README.md`
-
----
-
-## 🎯 分层架构
-
-### 第 1 层：主入口 (`src/main.rs`)
-
-**职责**:
-- 创建 UI 实例
-- 初始化硬件（模拟或真机）
-- 绑定回调函数
-- 启动数据更新循环
-
-**关键代码**:
-```rust
-fn main() {
-    let ui = FanControlUI::new()?;
-    let state = FanControlState::new_mock();  // 或 new_hardware()
-    
-    // 绑定回调
-    ui.on_speed_changed(|speed| { ... });
-    
-    // 启动更新循环
-    std::thread::spawn(|| { ... });
-    
-    ui.run()
-}
+```text
+.
+├── Cargo.toml / Cargo.lock       统一依赖和发布优化
+├── .cargo/config.toml           命令别名及 MCU 链接配置
+├── rust-toolchain.toml          Rust 工具链与交叉编译目标
+├── crates/
+│   ├── fan-core/
+│   │   ├── src/{lib,fan}.rs     无平台依赖的控制计算
+│   │   └── tests/fan_policy.rs  温度曲线与功率契约测试
+│   ├── fan-ui/
+│   │   ├── build.rs             编译 Slint 布局
+│   │   ├── src/{lib,boot}.rs    组件、尺寸及共享启动动画时序
+│   │   ├── ui/                  方屏布局及启动页
+│   │   └── assets/fonts/        两种字重的字体子集
+│   ├── fan-desktop/
+│   │   └── src/
+│   │       ├── main.rs          桌面入口
+│   │       ├── app.rs           UI 回调和 Timer
+│   │       └── simulation/      模拟设备与应用状态
+│   └── fan-firmware/
+│       ├── src/
+│       │   ├── main.rs          no_std 入口、应用元数据、panic 复位
+│       │   ├── app.rs           硬件版本自检、外设初始化
+│       │   ├── board.rs         Mosaico v1.2 引脚、扩展槽与 eFuse 版本检测
+│       │   ├── platform.rs      Slint 平台、触摸事件、渲染和主循环
+│       │   └── drivers/         display.rs(CO5300) / touch.rs(CST9220) / fan.rs
+│       └── assets/boot/         已验证的 bootloader 和分区表
+├── scripts/                     检查与打包
+├── releases/                    本地生成的交付包（Git 忽略）
+└── docs/                        架构、开发、发布说明及历史参考
 ```
 
-### 第 2 层：服务层 (`src/service/`)
+## 边界与状态
 
-#### `hardware.rs` - 硬件抽象层 ⭐
+| 边界 | 传递的数据 | 规则 |
+| --- | --- | --- |
+| 控制计算 | 摄氏温度、占空比 | `fan-core` 不引用 Slint、HAL 或时钟；自动曲线保留现有取整行为 |
+| UI 绑定 | 属性和档位回调 | `fan-ui` 不依赖具体设备；桌面 UI 访问位于事件循环线程 |
+| 帧刷新 | PSRAM 帧缓冲字节 | `present()` 换序进内部 RAM 暂存后 DMA 整帧写 GRAM；刷新期间主循环阻塞 |
+| 触摸输入 | TouchState 下/抬 | I2C 错误与坏报文不产生抬手事件，由心跳汇总 |
 
-**定义 3 个 trait**:
-- `TemperatureSensor` - 温度传感器接口
-- `FanController` - 风扇控制接口
-- `CpuTempSensor` - CPU 温度接口
+固件启动即读取 eFuse 硬件版本（v1.1/v1.2 才放行），随后按官方 BSP 时序开 VCC_PW 轨、初始化 CO5300 与 CST9220。GRAM 面板自扫描，无需帧界同步；`present()` 期间触摸不轮询。
 
-**状态管理**:
-- `FanControlState` - 应用状态管理
-  - `new_mock()` - 创建模拟硬件
-  - `new_hardware()` - 创建真机硬件
-  - `update()` - 更新传感器数据
-  - `set_fan_speed()` - 设置风扇档位
+状态保存在内存中；当前应用没有保存档位、温度历史或界面设置到 Flash 的流程。触摸控制器未检出时，启动日志记录状态，显示和主循环继续运行。
 
-#### `mock.rs` - 模拟硬件实现 ⭐
-
-**用途**: 桌面开发，无需真实硬件
-
-**实现**:
-- `MockTempSensor` - 模拟温度 ± 波动
-- `MockFanController` - 模拟 PWM 和转速
-- `MockCpuTempSensor` - 模拟 CPU 温度
-
-#### `esp32.rs` - 真机硬件（待实现）
-
-**TODO**: 硬件到货后实现
-- `Esp32TempSensor` - I2C 温度传感器
-- `Esp32FanController` - LEDC PWM 控制
-- `Esp32CpuTempSensor` - ESP32 内部温度
-
-#### `animation.rs` - 动画控制
-
-**TODO**: CRT 上电动画等
-
-### 第 3 层：UI 层 (`src/ui/`)
-
-#### `fan_control.slint` - UI 定义 ⭐
-
-**组件**:
-- `eve-colors` - 颜色系统
-- `EvePanel` - EVE 风格面板
-- `HexButton` - 六边形按钮
-- `TempDisplay` - 温度显示
-- `RpmDisplay` - 转速显示
-- `FanControlUI` - 主界面
-
-**数据绑定**:
-```rust
-ui.set_temperature(28.5);
-ui.set_fan_rpm(2450);
-ui.on_speed_changed(|speed| { ... });
-```
-
----
-
-## 🔄 开发 vs 真机切换
-
-### 桌面开发（当前模式）
-
-**配置**: `.cargo/config.toml` (已激活)
-
-**特点**:
-- ✅ 使用模拟硬件
-- ✅ 在 macOS/Linux/Windows 运行
-- ✅ 快速迭代开发
-
-**运行**:
-```bash
-cargo run
-```
-
-### ESP32 真机编译
-
-**配置**: 需要切换配置文件
-
-**步骤**:
-```bash
-# 1. 切换配置
-rm .cargo/config.toml
-mv .cargo/config.esp32.toml .cargo/config.toml
-
-# 2. 取消注释 Cargo.toml 中的 esp-idf-* 依赖
-
-# 3. 实现 src/service/esp32.rs 中的硬件驱动
-
-# 4. 修改 src/main.rs，使用 new_hardware()
-
-# 5. 编译并烧录
-cargo build --release
-espflash flash target/riscv32imafc-unknown-none-elf/release/fan-control
-```
-
----
-
-## 🛠️ 修改指南
-
-### 修改 UI
-
-**文件**: `src/ui/fan_control.slint`
-
-**示例**: 修改颜色
-```slint
-export global eve-colors {
-    out property <color> cyan-primary: #5fd0e0;  // 修改这里
-    // ...
-}
-```
-
-### 添加硬件功能
-
-**文件**: `src/service/hardware.rs`
-
-**示例**: 添加新 trait
-```rust
-pub trait NewSensor: Send {
-    fn read_data(&self) -> Result<Data, &'static str>;
-}
-```
-
-### 实现真机驱动
-
-**文件**: `src/service/esp32.rs`
-
-**示例**: 实现温度传感器
-```rust
-pub struct Esp32TempSensor {
-    i2c: esp_idf_hal::i2c::Master<...>,
-}
-
-impl TemperatureSensor for Esp32TempSensor {
-    fn read_celsius(&self) -> Result<f32, &'static str> {
-        // 实现 I2C 读取
-    }
-}
-```
-
-### 修改主逻辑
-
-**文件**: `src/main.rs`
-
-**示例**: 修改更新频率
-```rust
-std::thread::spawn(move || {
-    loop {
-        std::thread::sleep(Duration::from_millis(500));  // 改为 500ms
-        // ...
-    }
-});
-```
-
----
-
-## 📊 文件职责总结
-
-| 文件 | 职责 | 修改频率 |
-|------|------|---------|
-| `src/main.rs` | 程序入口、初始化 | 低 |
-| `src/service/hardware.rs` | HAL trait 定义 | 低 |
-| `src/service/mock.rs` | 模拟硬件 | 低 |
-| `src/service/esp32.rs` | 真机硬件 | 高（待实现）|
-| `src/ui/fan_control.slint` | UI 定义 | 中 |
-| `.cargo/config.toml` | 编译配置 | 低（切换时）|
-
----
-
-## 🎯 下一步开发
-
-### Phase 1: 完善 UI（无需硬件）
-
-- [ ] 实现圆环进度条（Slint Path）
-- [ ] 添加辉光滤镜效果
-- [ ] 完善 CRT 上电动画
-
-**文件**: `src/ui/fan_control.slint`
-
-### Phase 2: 实现硬件驱动（硬件到货后）
-
-- [ ] I2C 温度传感器
-- [ ] LEDC PWM 风扇控制
-- [ ] GPIO 转速读取
-
-**文件**: `src/service/esp32.rs`
-
-### Phase 3: 集成测试
-
-- [ ] 真机烧录
-- [ ] 数据验证
-- [ ] 性能测试
-
-**文件**: 全部
-
----
-
-## 💡 关键设计理念
-
-### 1. 分层清晰
-
-```
-UI 层 (fan_control.slint)
-    ↓
-入口层 (main.rs)
-    ↓
-服务层 (service/)
-    ↓
-硬件层 (hardware.rs traits)
-```
-
-### 2. 抽象隔离
-
-- **HAL Trait** 隔离硬件差异
-- **模拟实现** 支持无硬件开发
-- **真机实现** 即插即用
-
-### 3. 模块独立
-
-- `service/` 可以独立测试
-- `ui/` 可以独立开发
-- `main.rs` 只负责组装
-
----
-
-## 📝 常见任务
-
-### 添加新传感器
-
-1. 在 `hardware.rs` 定义 trait
-2. 在 `mock.rs` 实现模拟版本
-3. 在 `esp32.rs` 实现真机版本
-4. 在 `main.rs` 集成
-
-### 修改 UI 布局
-
-1. 打开 `src/ui/fan_control.slint`
-2. 修改组件布局
-3. `cargo run` 测试
-
-### 切换到真机
-
-1. 切换 `.cargo/config.toml`
-2. 实现 `esp32.rs` 驱动
-3. 修改 `main.rs` 使用 `new_hardware()`
-4. 编译烧录
-
----
-
-**项目结构清晰，易于维护和扩展！** ✨
+QSPI 线序、厂商初始化序列和 GRAM 刷新路径集中在 `drivers/display.rs`；扩展槽引脚与模块生态定义集中在 `board.rs` 的 `subboard` 模块。共享 UI 或控制策略不处理这些细节。硬件真相来源见 [Mosaico v1.2 硬件文档](MOSAICO_V12_HARDWARE.md)，运行日志判读见 [固件说明](../crates/fan-firmware/README.md)。

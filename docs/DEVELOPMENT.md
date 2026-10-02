@@ -1,335 +1,61 @@
-# EVE 风格风扇控制系统 - 嵌入式实现
+# 开发、检查和发布
 
-## 📋 项目概述
+## 开发入口
 
-基于 Slint UI 框架的 EVE Online 风格风扇控制界面，专为 ESP32-S31 + AMOLED 显示屏设计。
+根 `Cargo.toml` 是虚拟 workspace，默认成员为 `fan-desktop`。`Cargo.lock` 同时记录桌面和固件依赖。直接寄存器访问使用 crates.io 正式版本 `esp32s31 0.3.0`。HAL 与应用元数据辅助库仍固定到同一个已验证的 Git revision；变更依赖时同时检查固件构建和真机运行。
 
-**设计分辨率**: 480×480 像素  
-**目标平台**: ESP32-S31 (ESP-IDF)  
-**UI 框架**: Slint 1.3  
-**渲染方式**: 软件渲染 (30fps)
+`esp-hal 1.2.2` 虽支持 S31，但尚未开放该芯片的 `lcd_cam`，无法构建当前 RGB 显示驱动。单独将 `esp-bootloader-esp-idf` 切换为正式版 `0.6.0` 会与 Git HAL 的 `esp-rom-sys` 产生原生库 `links` 冲突，因此二者暂时保留 Git 来源。HAL 仍传递依赖 Git 版 PAC；直接依赖切换为 `esp32s31 0.3.0` 并不消除这条依赖链。
 
----
+Slint 与 `slint-build` 固定为 `1.17.1`，并通过 `[patch.crates-io]` 使用同版本的软件渲染器本地副本。`1.18.0` 和 `1.18.1` 的路径采样调用了 `no_std` 下不可用的 `f32::rem_euclid`，因此暂不升级。升级 Slint 时需要同步迁移脏区裁剪、路径工作区复用及性能计数补丁，运行渲染回归测试并构建 MCU 固件；补丁说明见 [`vendor/i-slint-renderer-software/PATCHES.md`](../vendor/i-slint-renderer-software/PATCHES.md)。
 
-## 🎨 视觉效果
-
-- ✅ EVE Online 青金石蓝配色风格
-- ✅ 分层 CRT 上电动画（边框先闪，内容后闪）
-- ✅ 六边形档位控制（0/25/50/75/100/AUTO）
-- ✅ 实时温度/转速监控
-- ✅ 圆环百分比显示
-- ✅ 无星空背景（性能优化）
-
----
-
-## 📁 项目结构
-
-```
-ui/eve_fan/
-├── fan_control.slint       # Slint UI 定义
-├── src/
-│   └── main.rs             # Rust 后端逻辑
-├── build.rs                # Slint 编译脚本
-├── Cargo.toml              # 依赖配置
-└── README.md               # 本文档
-```
-
----
-
-## 🔧 开发环境搭建
-
-### 1. 桌面开发（模拟硬件）
-
-**前置要求**:
-- Rust 1.70+
-- Slint 1.3+
-
-**编译运行**:
 ```bash
-cd ui/eve_fan
-cargo run
+cargo desktop                          # 方屏预览（480×480）
+cargo check -p fan-desktop
+cargo firmware --locked                # 主固件 release 构建
 ```
 
-**特性**:
-- 使用模拟传感器和风扇控制器
-- 可在 Windows/macOS/Linux 上运行
-- 适合 UI 开发和逻辑调试
+Slint 布局和字体在 `crates/fan-ui/`，两种运行环境依赖同一组件 crate。控制曲线在 `crates/fan-core/src/fan.rs`。板级和寄存器操作在 `crates/fan-firmware/src/`。桌面模拟设备只服务于预览。
 
-### 2. ESP32 真机编译
+桌面 `app.rs` 通过 Slint Timer 更新状态及 UI，回调在事件循环线程执行。固件 `platform_mosaic.rs` 轮询触摸，按单调时间更新游戏与 IMU，按需局部重绘单缓冲，同步分块刷新 GRAM；发送失败后重试未发布帧。GPIO12 风扇 PWM 默认关闭，仅在左槽为空且引脚独占时通过 `fan-pwm-gpio12` feature 启用。
 
-**前置要求**:
-- ESP-IDF 5.0+
-- Rust ESP 工具链
-- espflash
+## 检查
 
-**编译**:
 ```bash
-# 安装 ESP Rust 工具链
-rustup target add xtensa-esp32s3-none-elf
-
-# 编译
-cd ui/eve_fan
-cargo build --release --target xtensa-esp32s3-none-elf
-
-# 烧录
-espflash flash target/xtensa-esp32s3-none-elf/release/fan-control
+./scripts/check.sh
 ```
 
-**注意**: 需要取消注释 `Cargo.toml` 中的 `esp-idf-*` 依赖。
+脚本执行格式检查、`fan-core` 契约测试、启动动画时序及 RGB565 渲染回归测试、桌面模拟器的温度与调速回归测试、桌面布局的构建检查和主固件的 release 构建，并检查 MCU 的运行时依赖不包含桌面窗口后端或 IDF 运行时库。命令失败立即退出，不清理已有 target 产物。
 
----
+`./scripts/test-touch.sh` 使用 `rustc --test` 测试固件生产路径的 CST9220 地址编码与报告解析，主机无需链接 ESP32 HAL。`./scripts/test-mosaic-runtime.sh` 验证定时调度、覆盖层触点隔离、失败重试、游戏重开以及 BMI270 初始化和读数转换。模拟协议样例不代表真机抓包。
 
-## 🛠️ 硬件接口实现
+桌面软件渲染使用 `cargo test --locked -p fan-ui --features software-rendering --test software_rendering`；Mosaic 软件渲染与指针交互使用 `cargo test --locked -p fan-ui --features embedded --test mosaic_rendering`。两条命令分别编译对应 UI 根，避免把旧界面编入固件。
 
-### 当前状态：模拟硬件
+`./verify-tree-shaking.sh` 保留为该检查脚本的兼容入口。构建通过证明模块、feature 和链接配置可用；显示连续扫描、触摸和 PWM 的实际时序仍由真机验证。
 
-`src/main.rs` 中默认使用模拟硬件：
-- `MockTempSensor` - 模拟温度传感器
-- `MockFanController` - 模拟 PWM 风扇
-- `MockCpuTempSensor` - 模拟 CPU 温度
+## 固件构建边界
 
-### 待实现：真机硬件
+- MCU target 是 `riscv32imafc-unknown-none-elf`。根 `.cargo/config.toml` 仅为此 target 设置 `-Tlinkall.x` 和烧录 runner。
+- `cargo firmware` 固定选择 `fan-firmware` 的 `fan-control-fw` binary 和 release 配置。
+- `cargo flash` 会烧录设备；`cargo firmware` 和检查脚本仅构建。
+- `cargo build --workspace` 无法用一个 target 同时满足桌面与固件依赖，检查流程分别选择 package 和 target。
+- Cargo feature 会叠加。目标板唯一（ESP-Mosaico v1.2），固件固定启用 `fan-ui/embedded`。
+- QSPI 线序、厂商初始化序列、GRAM 刷新路径与 eFuse 版本自检集中在 `drivers/display.rs`/`board.rs`，相关修改需对照官方 BSP/组件源码与 [Mosaico v1.2 硬件文档](MOSAICO_V12_HARDWARE.md) 验证。
 
-**1. 温度传感器接口**
+## 发布
 
-```rust
-pub trait TemperatureSensor {
-    fn read_celsius(&self) -> Result<f32, &'static str>;
-}
+```bash
+./scripts/make-release.sh v17
 ```
 
-**实现建议**:
-- I2C 传感器（如 DS18B20, DHT22）
-- SPI 传感器
-- 内置 ADC + NTC 热敏电阻
+脚本从仓库根目录构建 `fan-firmware`，使用 `--locked`，将 `docs/releases/<版本>.md`（如存在）附到包内 README。产物位于 `releases/fan-control-<版本>-<日期>/` 和同名 ZIP，已有包不会被覆盖。
 
-**示例实现**（`src/main.rs` 中已注释）:
-```rust
-pub struct Esp32TempSensor {
-    i2c: esp_idf_hal::i2c::Master<...>,
-    address: u8,
-}
+打包使用 Python 3.11+ 和支持 S31 的 `espflash`。默认先构建再打包；`--no-build` 复用现有 ELF，并在 `BUILD.json` 标记 `reused_elf=true`，此时当前源码哈希不能证明该 ELF 由当前源码生成。
 
-impl TemperatureSensor for Esp32TempSensor {
-    fn read_celsius(&self) -> Result<f32, &'static str> {
-        // 从 I2C 读取传感器数据
-        // ...
-    }
-}
-```
+包内包含：
 
-**2. 风扇控制接口**
+- app（烧录地址 `0x20000`）和合并镜像（`0x0`）。
+- 已验证的 bootloader（`0x2000`）、分区表（`0x9000`）和 ELF。
+- `BUILD.json`：构建命令、工具版本、关键依赖、ELF 和 workspace 源文件哈希。
+- `SHA256SUMS` 及烧录、日志判读说明。
 
-```rust
-pub trait FanController {
-    fn set_duty_cycle(&mut self, percentage: u8) -> Result<(), &'static str>;
-    fn read_rpm(&self) -> Result<u16, &'static str>;
-}
-```
-
-**实现建议**:
-- PWM 输出：ESP32 LEDC 通道
-- 转速反馈：GPIO 中断计数 TACH 脉冲
-
-**示例实现**（`src/main.rs` 中已注释）:
-```rust
-pub struct Esp32FanController {
-    pwm: esp_idf_hal::ledc::LedcChannel<...>,
-    rpm_pin: esp_idf_hal::gpio::PinDriver<...>,
-}
-
-impl FanController for Esp32FanController {
-    fn set_duty_cycle(&mut self, percentage: u8) -> Result<(), &'static str> {
-        let duty = (percentage as u32 * self.pwm.get_max_duty() / 100) as u32;
-        self.pwm.set_duty(duty)
-            .map_err(|_| "PWM set duty error")
-    }
-    
-    fn read_rpm(&self) -> Result<u16, &'static str> {
-        // 从 TACH 引脚读取转速脉冲
-        // ...
-    }
-}
-```
-
-**3. CPU 温度接口**
-
-```rust
-pub trait CpuTempSensor {
-    fn read_celsius(&self) -> Result<i32, &'static str>;
-}
-```
-
-**实现建议**:
-- ESP32 内部温度传感器
-- 外部监控芯片
-
----
-
-## 📊 数据流架构
-
-```
-┌─────────────┐
-│ 硬件传感器   │
-│ - 温度传感器 │
-│ - 风扇 TACH │
-│ - CPU 温度  │
-└──────┬──────┘
-       │ read()
-       ↓
-┌─────────────────┐
-│ FanControlState │  ← 每秒更新
-│ - 读取传感器    │
-│ - 计算趋势     │
-│ - 自动控制     │
-└──────┬──────────┘
-       │ update()
-       ↓
-┌─────────────────┐
-│  Slint UI      │
-│ - 显示数据     │
-│ - 用户交互     │
-└──────┬──────────┘
-       │ speed_changed()
-       ↓
-┌─────────────────┐
-│ PWM 控制器     │
-│ - 设置档位     │
-└─────────────────┘
-```
-
----
-
-## 🎯 功能清单
-
-### ✅ 已实现
-
-- [x] Slint UI 完整布局
-- [x] 模拟传感器和风扇
-- [x] 档位切换逻辑
-- [x] AUTO 模式（温度自动调节）
-- [x] 温度趋势计算
-- [x] 功率估算
-- [x] 运行时间格式化
-- [x] 硬件接口 trait 定义
-
-### 🚧 待实现
-
-- [ ] CRT 上电动画集成
-- [ ] 圆环进度条绘制（Slint Path）
-- [ ] 辉光滤镜效果
-- [ ] 真机硬件驱动
-- [ ] I2C 温度传感器
-- [ ] PWM 风扇控制
-- [ ] TACH 转速读取
-- [ ] 看门狗集成
-- [ ] 错误恢复机制
-- [ ] 日期时间同步
-
----
-
-## 🚀 开发路线图
-
-### Phase 1: UI 完善（当前阶段）
-
-**目标**: 在桌面环境完成 UI 开发
-- [x] 创建 Slint 组件
-- [x] 实现模拟硬件
-- [x] 数据绑定和更新
-- [ ] 完善动画效果
-- [ ] 性能优化
-
-**测试**: 桌面环境 `cargo run`
-
-### Phase 2: 硬件驱动
-
-**目标**: 实现真机硬件接口
-- [ ] I2C 温度传感器驱动
-- [ ] LEDC PWM 输出
-- [ ] GPIO 转速读取
-- [ ] CPU 温度读取
-
-**测试**: 真机烧录，硬件回环测试
-
-### Phase 3: 集成测试
-
-**目标**: 完整功能验证
-- [ ] 24/7 稳定性测试
-- [ ] 温度控制精度测试
-- [ ] 性能和功耗测试
-- [ ] 错误恢复测试
-
-**测试**: 长期运行，极端环境
-
-### Phase 4: 生产优化
-
-**目标**: 生产环境部署
-- [ ] 看门狗集成
-- [ ] OTA 更新支持
-- [ ] 日志和监控
-- [ ] 配置文件支持
-
----
-
-## ⚡ 性能目标
-
-| 指标 | 目标 | 实测 | 状态 |
-|------|------|------|------|
-| 帧率 | 30fps | - | 待测 |
-| CPU 占用 | < 50% | - | 待测 |
-| 内存占用 | < 500KB | - | 待测 |
-| 启动时间 | < 3s | - | 待测 |
-| 功耗 | < 500mW | - | 待测 |
-
----
-
-## 🐛 已知问题
-
-1. **Slint 圆环进度条**: 需要用 `Path` 手动绘制，SVG 中的 `stroke-dasharray` 无法直接移植
-2. **辉光滤镜**: Slint 不支持 SVG `filter`，需要用 `drop-shadow` 或其他方式模拟
-3. **CRT 动画**: 需要手动管理动画状态，Slint 的 `states` 机制有限制
-
----
-
-## 📝 开发日志
-
-### 2024-12-XX
-
-- ✅ 创建 Slint UI 定义
-- ✅ 实现 Rust 后端框架
-- ✅ 设计硬件抽象层
-- ✅ 实现模拟硬件用于开发
-
----
-
-## 🤝 贡献指南
-
-1. **UI 开发**: 修改 `fan_control.slint`
-2. **逻辑开发**: 修改 `src/main.rs`
-3. **硬件驱动**: 实现 `TemperatureSensor`/`FanController` trait
-4. **测试**: 添加单元测试和集成测试
-
----
-
-## 📄 许可证
-
-MIT License
-
----
-
-## 👥 作者
-
-- **Kiro** - 硬件工程师
-- **Claude** - AI 助手
-
----
-
-## 🔗 相关资源
-
-- [Slint 官方文档](https://slint.dev/docs)
-- [ESP-IDF 文档](https://docs.espressif.com/projects/esp-idf/)
-- [EVE Online UI 参考](https://www.eveonline.com/)
-
----
-
-**准备就绪！等待硬件到货后进行真机测试！** 🚀
+镜像生成时校验 SHA256/MD5 和分区边界。打包不执行烧录，也不标记 `hardware_verified=true`。历史发布记录位于 `docs/releases/`，旧代码草稿位于 `docs/legacy/`。

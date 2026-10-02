@@ -1,0 +1,202 @@
+// SPDX-License-Identifier: Apache-2.0
+// Settings App(M2 框架): 官方列表行规格 + 风扇数据卡
+// 官方行规格(scene_common settings_list_row): 行高 68+8, 标签 24px, 值 22px 右对齐, › 26px
+// 生成的 settings 场景用 list 控件 item_height=100, 本页取 76 步距紧凑版(适合单页)
+
+import { Palette } from "palette.slint";
+
+// 列表行: 456×68 r20 @x12
+component Row inherits Rectangle {
+    in property <string> title;
+    in property <string> value;
+    in property <bool> navigable: false;
+    callback clicked;
+    width: 456px;
+    height: 68px;
+    border-radius: 20px;
+    background: Palette.card;
+
+    // Explicit columns keep the status value and chevron visible even when
+    // the value is a longer word such as Unavailable.
+    Text {
+        x: 24px; y: 0px; width: 200px; height: 68px;
+        text: root.title; font-size: 24px; color: Palette.text;
+        vertical-alignment: center;
+    }
+    Text {
+        x: 240px; y: 0px; width: 168px; height: 68px;
+        text: root.value; font-size: 22px; color: Palette.text-2nd;
+        horizontal-alignment: right; vertical-alignment: center;
+    }
+    Text {
+        x: 420px; y: 0px; width: 24px; height: 68px;
+        text: root.navigable ? "›" : ""; font-size: 26px; color: Palette.text-dim;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// 风扇数据卡(官方 Env/TOF 卡风格): 占位数据由 Rust 驱动
+export component FanCard inherits Rectangle {
+    in property <bool> available: false;
+    in property <bool> rpm-valid: false;
+    in property <bool> temperature-valid: false;
+    in property <int> rpm: 0;
+    in property <int> duty: 0;
+    in property <int> temperature: 0;
+    width: 456px;
+    height: 152px;
+    border-radius: 40px;
+    background: Palette.hub-card;
+
+    Text {
+        x: 24px;
+        y: 16px;
+        width: 200px;
+        height: 28px;
+        text: "FAN";
+        font-size: 16px;
+        color: Palette.text-2nd;
+    }
+    Text {
+        x: 16px;
+        y: 44px;
+        width: 220px;
+        height: 84px;
+        text: root.rpm-valid ? root.rpm : "--";
+        font-size: 64px;
+        color: Palette.text;
+        horizontal-alignment: center;
+    }
+    Text {
+        x: 236px;
+        y: 100px;
+        width: 60px;
+        height: 28px;
+        text: "RPM";
+        font-size: 20px;
+        color: Palette.text-2nd;
+    }
+    Text {
+        x: 300px;
+        y: 44px;
+        width: 130px;
+        height: 40px;
+        text: root.available ? root.duty + "%" : "Unavailable";
+        font-size: root.available ? 32px : 18px;
+        color: Palette.accent;
+        horizontal-alignment: right;
+    }
+    Text {
+        x: 300px;
+        y: 100px;
+        width: 130px;
+        height: 28px;
+        text: root.temperature-valid ? root.temperature + " °C" : "-- °C";
+        font-size: 22px;
+        color: Palette.text-2nd;
+        horizontal-alignment: right;
+    }
+}
+
+export component AppSettings inherits Rectangle {
+    in property <int> rpm;
+    in property <int> duty;
+    in property <int> temperature;
+    in property <int> brightness;
+    in property <bool> wlan-on;
+    in property <bool> fan-available: false;
+    in property <bool> rpm-valid: false;
+    in property <bool> temperature-valid: false;
+
+    callback back-requested();
+    callback brightness-requested();
+    callback status-requested(int);
+
+    width: 480px;
+    height: 480px;
+    background: Palette.screen-bg;
+
+    // 页头(官方子页规格: 96×64 返回热区 + 居中 24px 标题)
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 96px;
+        height: 64px;
+        Text {
+            x: 24px;
+            y: 8px;
+            width: 48px;
+            height: 48px;
+            text: "‹";
+            font-size: 36px;
+            color: Palette.text-2nd;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea {
+            clicked => {
+                root.back-requested();
+            }
+        }
+    }
+    Text {
+        x: 0px;
+        y: 0px;
+        width: 480px;
+        height: 64px;
+        text: "Settings";
+        font-size: 24px;
+        color: Palette.text-2nd;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    // 风扇数据卡
+    FanCard {
+        x: 12px;
+        y: 72px;
+        rpm: root.rpm;
+        duty: root.duty;
+        temperature: root.temperature;
+        available: root.fan-available;
+        rpm-valid: root.rpm-valid;
+        temperature-valid: root.temperature-valid;
+    }
+
+    // 列表(行步距 76)
+    Row {
+        x: 12px;
+        y: 240px;
+        title: "Brightness";
+        value: root.brightness + "%";
+        navigable: true;
+        clicked => {
+            root.brightness-requested();
+        }
+    }
+    Row {
+        x: 12px;
+        y: 316px;
+        title: "WLAN";
+        value: "Unavailable";
+        navigable: true;
+        clicked => {
+            root.status-requested(0);
+        }
+    }
+    Row {
+        x: 12px;
+        y: 392px;
+        title: "About";
+        value: "Mosaic";
+        navigable: true;
+        clicked => {
+            root.status-requested(7);
+        }
+    }
+}

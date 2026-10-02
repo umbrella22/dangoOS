@@ -1,0 +1,76 @@
+// v19 reference for pixel comparisons; intentionally retains full-height paths.
+// Join the measured samples directly, with a fixed 15..70°C vertical scale.
+export component ReferenceTemperatureCurve inherits Rectangle {
+    in property <[float]> samples: [];
+    in property <color> accent: #409EFF;
+    in property <color> warning: #E8A13A;
+    in property <color> surface: #F8FAFC;
+    in property <color> edge: #E4EBF2;
+
+    private property <length> pad: 8px;
+    private property <length> plot-width: self.width - 2 * pad;
+    private property <length> plot-height: self.height - 2 * pad;
+    private property <length> step: plot-width / max(1, samples.length - 1);
+    private property <length> threshold-y: pad + plot-height * (1.0 - 45.0 / 55.0);
+
+    background: root.surface;
+    border-width: 1px;
+    border-color: root.edge;
+
+    pure function sample-y(value: float) -> float {
+        return (root.plot-height / 1px) * (1.0 - clamp((value - 15.0) / 55.0, 0.0, 1.0));
+    }
+
+    Rectangle {
+        x: root.pad;
+        y: root.threshold-y;
+        width: root.plot-width;
+        height: 1px;
+        background: root.warning;
+    }
+
+    Text {
+        x: parent.width - root.pad - self.width;
+        y: root.threshold-y - 12px;
+        text: "60°C";
+        color: root.warning;
+        font-family: "Noto Sans SC";
+        font-weight: 600;
+        font-size: 8px;
+    }
+
+    // Keep each path's raster area as narrow as a single sample interval.
+    for sample[i] in root.samples: Path {
+        private property <float> start-x: i * root.step / 1px;
+        // Integer mask bounds plus stroke padding keep fractional endpoints joined.
+        private property <float> mask-x: floor(self.start-x) - 2;
+        visible: i + 1 < root.samples.length;
+        x: root.pad + self.mask-x * 1px;
+        y: root.pad;
+        width: (ceil(self.start-x + root.step / 1px) - self.mask-x + 2) * 1px;
+        height: root.plot-height;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        fit: fill;
+        stroke: root.accent;
+        stroke-width: 2px;
+        stroke-line-cap: round;
+        fill: transparent;
+
+        MoveTo { x: start-x - mask-x; y: root.sample-y(sample); }
+        LineTo {
+            x: start-x - mask-x + root.step / 1px;
+            y: root.sample-y(root.samples[min(i + 1, root.samples.length - 1)]);
+        }
+    }
+
+    // A single reading is a point; subsequent readings form the curve.
+    if root.samples.length > 0: Rectangle {
+        x: root.pad + (root.samples.length - 1) * root.step - self.width / 2;
+        y: root.pad + root.sample-y(root.samples[root.samples.length - 1]) * 1px - self.height / 2;
+        width: 4px;
+        height: 4px;
+        border-radius: 2px;
+        background: root.accent;
+    }
+}
