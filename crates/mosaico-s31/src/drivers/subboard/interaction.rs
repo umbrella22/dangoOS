@@ -25,8 +25,9 @@ use super::touch_key::{self, TouchKey};
 use crate::drivers::touch_sens;
 use log::{info, warn};
 
-/// Samples between periodic touch logs (25 Hz sampling -> 5 s).
-const TOUCH_LOG_EVERY: u16 = 125;
+/// Samples between periodic touch logs (25 Hz sampling -> 60 s). Edges are
+/// always logged.
+const TOUCH_LOG_EVERY: u16 = 1500;
 
 /// One sample of an active Interaction board.
 #[derive(Clone, Copy, Debug)]

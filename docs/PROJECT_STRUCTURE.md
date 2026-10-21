@@ -90,13 +90,15 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
         └── drivers/             外设驱动
             ├── display.rs       CO5300 QSPI + DMA（display/packing.rs：窗口打包）
             ├── touch.rs         CST9220（touch/protocol.rs：报告解码）
+            ├── touch_sens.rs    S31 电容触摸外设（寄存器级，交互板按键）
             ├── imu.rs           BMI270 + BMM150
             ├── battery.rs       BQ27220
             ├── subboard/        左右扩展槽
             │   ├── mod.rs       槽位探测、模块分类、交互板仲裁
-            │   ├── interaction.rs  一侧交互板的引脚（LDR/PIR/双键）
+            │   ├── interaction.rs  一侧交互板的引脚（LDR/PIR/双触摸键）
             │   ├── descriptor.rs   EEPROM 描述符解析（纯逻辑，host 测试）
-            │   └── signal.rs    去抖与 LDR 换算（纯逻辑，host 测试）
+            │   ├── signal.rs    去抖与 LDR 换算（纯逻辑，host 测试）
+            │   └── touch_key.rs 触摸键判定与基线跟踪（纯逻辑，host 测试）
             ├── shared_i2c.rs    I2C0 / I2C1 异步互斥
             ├── geometry.rs      面板尺寸与窗口类型
             ├── memory.rs        稳定地址的像素内存
