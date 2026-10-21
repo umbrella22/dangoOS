@@ -1,70 +1,114 @@
-# Crate 与源码结构
+# 源码结构
 
-桌面和固件共享控制计算与 Slint 组件；各自的入口负责组装运行环境。固件显示驱动负责 PSRAM 帧渲染与 QSPI GRAM 整帧刷新，UI 层只写渲染缓冲。
+仓库只有一个 crate：`crates/mosaico-s31`。它同时是
 
-## 运行路径
+- **库**（`src/lib.rs`，`mosaico_s31`）：`no_std + alloc`，能在电脑上 `cargo test`；
+- **固件**（`src/main.rs`，`mosaico-s31-fw`）：只为 `riscv32imafc-unknown-none-elf` 构建。
 
-```mermaid
-flowchart LR
-    Desktop[fan-desktop：Slint Timer] --> Core[fan-core：控制策略]
-    Firmware[fan-firmware：主循环] --> Core
-    Desktop --> UI[fan-ui：FanControlUI]
-    Firmware --> UI
-    UI --> Renderer[固件 Slint 软件渲染器]
-    Renderer --> FB[PSRAM 帧缓冲]
-    FB --> Flush[present：LE→BE 换序 + 内部 RAM 暂存]
-    Flush --> DMA[SPI DMA → QSPI → CO5300 GRAM]
-    Touch[CST9220] --> Firmware
-    Firmware --> PWM[RMT 风扇 PWM]
+规则很简单：**不碰硬件的代码放库里，碰硬件的放固件里**。库里的东西都有 host 测试；
+固件只做外设驱动和任务编排。
+
+## 一帧的数据流
+
+```text
+触摸 / IMU / 磁力计 / 电量 / 模块按键
+        │  tasks::input、tasks::sensors（固件）
+        ▼
+behavior::Runtime ── affect（传感器→情绪）+ personality（点按阶梯）→ Expression + 马达
+        │  tasks::ui 每 5 ms 驱动（固件）
+        ▼
+ui::fox_widget::FoxControl ── 表情、入场、脉冲
+        ▼
+fox::FoxAnimator → fox::Scene → fox::FoxRenderer ── 写入 ui::canvas_pool 的空闲槽
+        ▼
+tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers::display → CO5300
 ```
 
-桌面窗口由 Slint 桌面后端显示。图中的 PSRAM、DMA 和面板路径只存在于固件。
+渲染管线的细节见 [FOX_RENDER_PIPELINE.md](FOX_RENDER_PIPELINE.md)。
 
 ## 目录
 
 ```text
 .
-├── Cargo.toml / Cargo.lock       统一依赖和发布优化
-├── .cargo/config.toml           命令别名及 MCU 链接配置
-├── rust-toolchain.toml          Rust 工具链与交叉编译目标
-├── crates/
-│   ├── fan-core/
-│   │   ├── src/{lib,fan}.rs     无平台依赖的控制计算
-│   │   └── tests/fan_policy.rs  温度曲线与功率契约测试
-│   ├── fan-ui/
-│   │   ├── build.rs             编译 Slint 布局
-│   │   ├── src/{lib,boot}.rs    组件、尺寸及共享启动动画时序
-│   │   ├── ui/                  方屏布局及启动页
-│   │   └── assets/fonts/        两种字重的字体子集
-│   ├── fan-desktop/
-│   │   └── src/
-│   │       ├── main.rs          桌面入口
-│   │       ├── app.rs           UI 回调和 Timer
-│   │       └── simulation/      模拟设备与应用状态
-│   └── fan-firmware/
-│       ├── src/
-│       │   ├── main.rs          no_std 入口、应用元数据、panic 复位
-│       │   ├── app.rs           硬件版本自检、外设初始化
-│       │   ├── board.rs         Mosaico v1.2 引脚、扩展槽与 eFuse 版本检测
-│       │   ├── platform.rs      Slint 平台、触摸事件、渲染和主循环
-│       │   └── drivers/         display.rs(CO5300) / touch.rs(CST9220) / fan.rs
-│       └── assets/boot/         已验证的 bootloader 和分区表
-├── scripts/                     检查与打包
-├── releases/                    本地生成的交付包（Git 忽略）
-└── docs/                        架构、开发、发布说明及历史参考
+├── Cargo.toml / Cargo.lock      workspace（唯一成员 crates/mosaico-s31）
+├── .cargo/config.toml           cargo fw 别名、交叉编译工具链路径
+├── rust-toolchain.toml          stable + riscv32imafc 目标
+├── lvgl.rev                     ../lv_binding_rust 的已测版本
+├── assets/fox-dango/            角色素材与 Python 管线（生成 src/fox/data.rs、fox.bin）
+├── scripts/
+│   ├── check.sh                 不需要板子的全部检查
+│   ├── test-drivers.sh          纯驱动模块的 rustc --test
+│   ├── flash-app.sh             构建并只写 main_app（0x210000）
+│   └── check-lvgl-pin.sh        检查 lv_binding_rust 版本
+├── docs/
+│   ├── FOX_RENDER_PIPELINE.md   渲染管线学习笔记
+│   ├── MOSAICO_V12_HARDWARE.md  引脚、电源、扩展槽
+│   ├── ASSET_REQUESTS.md        素材规格
+│   ├── plans/                   RFC 与执行记录（历史，含 grok-ball 阶段）
+│   └── legacy/                  风扇 / Slint 时代的文档
+└── crates/mosaico-s31/
+    ├── examples/
+    │   ├── preview.rs           16 表情在 480x480 LVGL host 显示上的预览
+    │   └── splash_preview.rs    启动页与入场动画的 PPM 帧
+    └── src/
+        ├── lib.rs               库入口：模块表与常用 re-export
+        ├── behavior/            “狐狸怎么想”
+        │   ├── mod.rs           Expression（16 个表情）
+        │   ├── affect.rs        传感器事件 → 情绪 / 表情 / 马达（摇晃、光线、PIR、磁铁、电量…）
+        │   ├── personality.rs   触摸 → 点按阶梯（好奇 → 疑惑 → 不耐烦 → 生气）
+        │   ├── runtime.rs       合并两者：紧急情绪 > 触摸反应 > 情绪表情 > 静息
+        │   └── tests/           按场景分的时间线测试
+        ├── fox/                 “狐狸长什么样、怎么动”
+        │   ├── mod.rs           Img、FoxPose、Expression → 姿势映射
+        │   ├── data.rs, fox.bin 生成的调色板与 RLE 图像
+        │   ├── scene.rs         Scene / Layer / Warp：一帧要画什么
+        │   ├── animate.rs       FoxAnimator：表情 + 时间 → Scene
+        │   ├── render.rs        FoxRenderer：Scene → RGB565
+        │   ├── entrance.rs      开机下落、压扁、小跳
+        │   └── math.rs          无 libm 的 sin / exp / 反平方根
+        ├── ui/                  LVGL 屏幕树
+        │   ├── mod.rs           MosaicoApp（启动页 → 狐狸）
+        │   ├── fox_widget.rs    FoxControl（共享状态）与 FoxWidget（LVGL 自定义控件）
+        │   ├── canvas_pool.rs   两槽画布：渲染与 DMA 的所有权交接
+        │   └── splash/          ikaros 字标（当前关闭）
+        ├── telemetry/           延迟与显示计数器（串口统计行用）
+        ├── main.rs              固件入口：上电、外设初始化、启动任务
+        ├── board.rs             v1.2 引脚表与板版本检查
+        ├── console.rs           USB CDC-ACM 日志队列与输出泵
+        ├── tasks/               Embassy 任务，每个独占自己的硬件
+        │   ├── plane.rs         上屏（中断执行器）
+        │   ├── ui.rs            LVGL + behavior 运行时 + 渲染
+        │   ├── input.rs         触摸读取
+        │   ├── sensors.rs       IMU、磁力计、电量、模块槽
+        │   └── haptic.rs        马达（RMT 生成 PWM）
+        └── drivers/             外设驱动
+            ├── display.rs       CO5300 QSPI + DMA（display/packing.rs：窗口打包）
+            ├── touch.rs         CST9220（touch/protocol.rs：报告解码）
+            ├── imu.rs           BMI270 + BMM150
+            ├── battery.rs       BQ27220
+            ├── module.rs        右侧模块槽
+            ├── shared_i2c.rs    I2C0 / I2C1 异步互斥
+            ├── geometry.rs      面板尺寸与窗口类型
+            ├── memory.rs        稳定地址的像素内存
+            └── lvgl_port.rs     无头 LVGL 显示（只为创建对象）
 ```
 
-## 边界与状态
+## 依赖方向
 
-| 边界 | 传递的数据 | 规则 |
-| --- | --- | --- |
-| 控制计算 | 摄氏温度、占空比 | `fan-core` 不引用 Slint、HAL 或时钟；自动曲线保留现有取整行为 |
-| UI 绑定 | 属性和档位回调 | `fan-ui` 不依赖具体设备；桌面 UI 访问位于事件循环线程 |
-| 帧刷新 | PSRAM 帧缓冲字节 | `present()` 换序进内部 RAM 暂存后 DMA 整帧写 GRAM；刷新期间主循环阻塞 |
-| 触摸输入 | TouchState 下/抬 | I2C 错误与坏报文不产生抬手事件，由心跳汇总 |
+- `behavior::{affect, personality}` 不依赖任何其他模块，是纯状态机。
+  `behavior::runtime` 是唯一的胶水：它把合并后的表情和姿态写进 `ui::fox_widget::FoxControl`。
+- `fox` 只依赖 `behavior::Expression`。
+- `ui` 依赖 `behavior` 和 `fox`。
+- `tasks` 依赖库里的一切，加上 `drivers`。
+- 库永远不依赖固件（`tasks`、`drivers`、`board`、`console`）。需要设备时钟之类的东西时，
+  由固件注入（例如 `fox_widget::install_mono_us`）。
 
-固件启动即读取 eFuse 硬件版本（v1.1/v1.2 才放行），随后按官方 BSP 时序开 VCC_PW 轨、初始化 CO5300 与 CST9220。GRAM 面板自扫描，无需帧界同步；`present()` 期间触摸不轮询。
+## 测试在哪里
 
-状态保存在内存中；当前应用没有保存档位、温度历史或界面设置到 Flash 的流程。触摸控制器未检出时，启动日志记录状态，显示和主循环继续运行。
+| 范围 | 命令 |
+| --- | --- |
+| 库（behavior、fox、ui、telemetry） | `cargo test -p mosaico-s31 --offline` |
+| 纯驱动模块（触摸解码、窗口打包、几何） | `./scripts/test-drivers.sh` |
+| 全部（含示例和固件构建） | `./scripts/check.sh` |
 
-QSPI 线序、厂商初始化序列和 GRAM 刷新路径集中在 `drivers/display.rs`；扩展槽引脚与模块生态定义集中在 `board.rs` 的 `subboard` 模块。共享 UI 或控制策略不处理这些细节。硬件真相来源见 [Mosaico v1.2 硬件文档](MOSAICO_V12_HARDWARE.md)，运行日志判读见 [固件说明](../crates/fan-firmware/README.md)。
+固件 bin 本身设置了 `test = false`，因为它只能为 RISC-V 目标编译。

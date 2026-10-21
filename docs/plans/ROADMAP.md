@@ -1,5 +1,9 @@
 # 执行顺序（单一事实来源）
 
+> 2026-10-21：本文档是历史记录。`crates/grok-ball` 已移除，行为逻辑并入
+> `crates/mosaico-s31/src/behavior/`，角色换成狐狸团子；当前结构见
+> [PROJECT_STRUCTURE.md](../PROJECT_STRUCTURE.md)。
+
 > 日期：2026-10-20。本文件只回答“先做什么、后做什么、什么可以并行”。
 > 详细契约仍以各 RFC 为准；本文件不改变任何 RFC 的验收门槛。
 > 目标 MVP：grok-ball 首屏 + 传感器表情 + 触觉反馈，在 S31 真机上跑通。

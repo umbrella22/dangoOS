@@ -1,8 +1,9 @@
 # 狐狸团子（fox-dango）角色素材
 
-替换 grok-ball 程序化小球的新形象。目前完成：18 个表情的静态姿势、14 个表情的
+固件的角色形象（取代了早期的 grok-ball 矢量小球）。18 个表情的静态姿势、14 个表情的
 局部补丁（眨眼 / 嘴型 / 耳朵 / 视线 / 螺旋眼）、8 个表情的独立符号精灵，以及描述
-这一切的 `device/manifest.json`。固件还没有接入。
+这一切的 `device/manifest.json`。固件已接入：`crates/mosaico-s31/src/fox/`。
+整条管线的讲解见 [docs/FOX_RENDER_PIPELINE.md](../../docs/FOX_RENDER_PIPELINE.md)。
 
 | 目录 | 内容 | 是否入库 |
 | --- | --- | --- |
@@ -27,7 +28,7 @@ python3 assets/fox-dango/tools/fox_anim.py    # preview/animation_parts.*
 
 ## 表情映射
 
-顺序与 `BallExpression` 一致，最后两项是 `docs/ASSET_REQUESTS.md` 里的 P0 / 可选项。
+顺序与 `behavior::Expression` 一致，最后两项（annoyed、charging）是额外姿势。
 
 | 文件 | 表情 | 说明 |
 | --- | --- | --- |
@@ -165,13 +166,9 @@ python3 assets/fox-dango/tools/fox_anim.py    # preview/animation_parts.*
 
 `tools/fox_anim.py` 就是这个流程的参考实现，`preview/animation_parts.mp4` 是它的输出。
 
-## 固件接入要点（下一步）
+## 固件实现
 
-- 新增 `sprite` 渲染路径：RLE 解码 → 128 色调色板查表 → 行/列映射 → 写入
-  canvas pool 槽位。没有多边形覆盖率计算，预计比现在约 18 ms 的矢量光栅快
-  很多，但要实测。
-- `ball_plane` 改成 352×336 的固定窗口。整帧上传约 236 KB，是现在 240×240 的
-  2 倍左右，上传时间也会相应变长。呼吸会改动所有行，必要时可以把呼吸降到 10 fps，
-  眨眼这类只改局部的帧只传补丁所在的行。
-- grok-ball 引擎继续负责状态机、时序和物理参数（pop、跳跃、抖动），
-  只把“画什么”从矢量换成精灵。
+- `fox/render.rs`：RLE 解码 → 索引缓冲 → 最近邻形变 → 128 色调色板查表，写入
+  canvas pool 槽位。真机约 10 ms/帧（带符号约 15 ms），比原矢量光栅（约 19 ms）快。
+- `tasks/plane.rs`：352×336 固定窗口，面板原点 (64, 88)，每帧 11 块 32 行 DMA。
+- `behavior/` 负责状态机与时序，`fox/animate.rs` 负责“怎么动”，只把画什么换成了精灵。
