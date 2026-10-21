@@ -4,8 +4,9 @@
 //! the IDF sequence (`esp_driver_touch_sens/hw_ver3` plus the S31
 //! `touch_sensor_ll.h`): clock and reset, one sample configuration, the
 //! hardware benchmark filter, then the FSM timer scanning the enabled
-//! channels continuously. Software reads the smooth data and the benchmark
-//! and decides presses itself (`subboard::touch_key`).
+//! channels continuously. Software reads the smooth data and keeps its own
+//! baseline (`subboard::touch_key`); the hardware threshold stays at its
+//! maximum so the hardware benchmark never freezes.
 //!
 //! Channel `n` is `GPIO(6 + n)` (`touch_sensor_channel.h`). The pins must be
 //! floating with their input buffer off, which is the state
@@ -63,6 +64,8 @@ pub const THRESHOLD_UNSET: u16 = u16::MAX;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Reading {
     pub smooth: u16,
+    /// Hardware benchmark, for diagnostics.
+    #[allow(dead_code)]
     pub benchmark: u16,
 }
 
@@ -264,14 +267,4 @@ fn read_data(ch: u8, kind: u8) -> u16 {
         13 => sens.status_13().read().pad13_data().bits(),
         _ => 0,
     }
-}
-
-/// Hardware active mask (bit `n` = channel `n`), for logs.
-pub fn active_mask() -> u16 {
-    // SAFETY: read-only status register.
-    unsafe { LP_TOUCH::steal() }
-        .chn_status()
-        .read()
-        .pad_active()
-        .bits()
 }

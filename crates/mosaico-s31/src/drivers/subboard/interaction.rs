@@ -236,21 +236,18 @@ where
         if touch.warmup > 0 {
             touch.warmup -= 1;
             if touch.warmup == 0 {
-                if r.iter().all(|r| touch_key::plausible(r.benchmark)) {
-                    for (&ch, r) in touch.channels.iter().zip(&r) {
-                        touch_sens::set_threshold(ch, touch_key::hardware_threshold(r.benchmark));
-                    }
+                if r.iter().all(|r| touch_key::plausible(r.smooth)) {
                     info!(
-                        "touch keys ready: L bm={} press>+{} R bm={} press>+{}",
-                        r[0].benchmark,
-                        touch_key::press_delta(r[0].benchmark),
-                        r[1].benchmark,
-                        touch_key::press_delta(r[1].benchmark)
+                        "touch keys ready: L {} press>+{} R {} press>+{}",
+                        r[0].smooth,
+                        touch_key::press_delta(r[0].smooth.into()),
+                        r[1].smooth,
+                        touch_key::press_delta(r[1].smooth.into())
                     );
                 } else {
                     warn!(
-                        "touch keys implausible (L {}/{} R {}/{}), using GPIO keys",
-                        r[0].smooth, r[0].benchmark, r[1].smooth, r[1].benchmark
+                        "touch keys implausible (L {} R {}), using GPIO keys",
+                        r[0].smooth, r[1].smooth
                     );
                     touch_sens::stop();
                     self.key_mode = self.gpio_keys();
@@ -260,20 +257,19 @@ where
         }
         let before = [touch.keys[0].pressed(), touch.keys[1].pressed()];
         let held = [
-            touch.keys[0].update(r[0].smooth, r[0].benchmark),
-            touch.keys[1].update(r[1].smooth, r[1].benchmark),
+            touch.keys[0].update(r[0].smooth),
+            touch.keys[1].update(r[1].smooth),
         ];
         touch.log_countdown = touch.log_countdown.saturating_sub(1);
         if held != before || touch.log_countdown == 0 {
             touch.log_countdown = TOUCH_LOG_EVERY;
             info!(
-                "touch L {}/{} R {}/{} held={:?} hw={:#06x}",
+                "touch L {}/{} R {}/{} held={:?}",
                 r[0].smooth,
-                r[0].benchmark,
+                touch.keys[0].baseline(),
                 r[1].smooth,
-                r[1].benchmark,
-                held,
-                touch_sens::active_mask()
+                touch.keys[1].baseline(),
+                held
             );
         }
         (held[0], held[1])
