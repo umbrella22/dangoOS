@@ -1848,6 +1848,9 @@ impl AffectEngine {
     }
 
     fn on_module_inserted(&mut self, at: u64, source: EventSource, kind: ModuleKind) {
+        // The sensor task re-learns the magnetometer baselines after a module
+        // change and reports no release for a magnet attached at that time.
+        self.magnetic_contacted = false;
         match self.slot_present(source) {
             Some(present) if !*present => *present = true,
             _ => return,
@@ -1885,6 +1888,7 @@ impl AffectEngine {
     }
 
     fn on_module_removed(&mut self, at: u64, source: EventSource, kind: ModuleKind) {
+        self.magnetic_contacted = false;
         match self.slot_present(source) {
             Some(present) if *present => *present = false,
             _ => return,

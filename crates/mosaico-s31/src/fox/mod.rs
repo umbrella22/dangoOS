@@ -20,7 +20,7 @@ pub mod data;
 pub mod entrance;
 
 mod animate;
-mod math;
+pub(crate) mod math;
 mod render;
 mod scene;
 

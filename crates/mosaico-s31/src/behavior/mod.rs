@@ -12,6 +12,7 @@
 //!   fixed priority so a touch reaction is not overwritten by ambient noise.
 
 pub mod affect;
+pub mod magnet;
 pub mod personality;
 pub mod runtime;
 

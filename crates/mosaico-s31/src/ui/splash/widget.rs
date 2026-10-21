@@ -140,7 +140,14 @@ impl CustomWidget for SplashWidget {
             .creates
             .set(self.control.creates.get().saturating_add(1));
 
-        match CustomObject::new(parent, canvas) {
+        // SAFETY: `canvas` was just created as a direct child of `parent` and is live;
+        // this is the only handle for it, it is returned from `create`, and
+        // the widget keeps no pointer to it.
+        // `unused_unsafe`: `CustomObject::new` became `unsafe` after the
+        // pinned lv_binding_rust revision; this compiles against both.
+        #[allow(unused_unsafe)]
+        let object = unsafe { CustomObject::new(parent, canvas) };
+        match object {
             Ok(object) => Ok(object),
             Err(error) => {
                 // SAFETY: the canvas is live and has not been handed to the

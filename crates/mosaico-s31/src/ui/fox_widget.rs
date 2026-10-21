@@ -492,7 +492,14 @@ impl CustomWidget for FoxWidget {
             }
         }
 
-        match CustomObject::new(parent, canvas) {
+        // SAFETY: `canvas` was just created as a direct child of `parent` and is live;
+        // this is the only handle for it, it is returned from `create`, and
+        // `delete` clears `self.canvas` before the reconciler frees it.
+        // `unused_unsafe`: `CustomObject::new` became `unsafe` after the
+        // pinned lv_binding_rust revision; this compiles against both.
+        #[allow(unused_unsafe)]
+        let object = unsafe { CustomObject::new(parent, canvas) };
+        match object {
             Ok(object) => {
                 self.pool = Some(pool);
                 self.shown = shown;

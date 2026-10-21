@@ -46,11 +46,10 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channe
 use embassy_time::{Duration, Ticker};
 use log::{info, warn};
 use mosaico_s31::behavior::affect::{EventKind, EventSource, SensorEvent};
+use mosaico_s31::behavior::magnet::{MagReading, MagneticClassifier, MagneticEvent};
 
 use crate::drivers::battery::Bq27220;
-use crate::drivers::imu::{
-    self, Bmi270, Bmm150, ImuSample, MagSample, MagneticClassifier, MagneticEvent,
-};
+use crate::drivers::imu::{self, Bmi270, Bmm150, ImuSample, MagSample};
 use crate::drivers::subboard::{self, Slot, Subboard};
 
 /// `SensorEvent` queue depth (RFC 0005 section 3.5).
@@ -70,6 +69,9 @@ pub static SENSOR_EDGE_DROPS: AtomicU32 = AtomicU32::new(0);
 
 /// 50 Hz base tick.
 const TICK_MS: u64 = 20;
+/// Wait after a module change before re-learning the magnetometer baselines,
+/// so the hand that inserted it has moved away.
+const MAG_RECALIBRATE_SETTLE_MS: u64 = 800;
 /// BMI270 output period (50 Hz ODR), used to back-date FIFO samples.
 const IMU_SAMPLE_MS: u64 = 20;
 /// BMM150 / module-input polls every second tick (25 Hz).
@@ -139,6 +141,9 @@ pub async fn sensor_task(mut subboard: Subboard) {
     let mut battery = Bq27220::probe().await;
 
     let mut classifiers = [MagneticClassifier::new(), MagneticClassifier::new()];
+    let mut mag_calibrated = [false; 2];
+    // A module carries its own magnets; re-learn the baseline once it sits.
+    let mut mag_recalibrate_at: Option<u64> = None;
     let mut last_mag = [None::<MagSample>; 2];
     let mut ticker = Ticker::every(Duration::from_millis(TICK_MS));
     let mut tick: u32 = 0;
@@ -266,7 +271,21 @@ pub async fn sensor_task(mut subboard: Subboard) {
                         bmm_samples = bmm_samples.saturating_add(1);
                         let at = now_ms();
                         last_mag[index] = Some(sample);
-                        match classifiers[index].update(&sample, at) {
+                        let reading = MagReading {
+                            x_ut: sample.x_ut,
+                            y_ut: sample.y_ut,
+                            magnitude_ut: sample.magnitude_ut,
+                        };
+                        let event = classifiers[index].update(&reading, at);
+                        if classifiers[index].is_calibrated() && !mag_calibrated[index] {
+                            info!(
+                                "sensor mag[{index}] baseline {:.1}uT (rejected windows: {})",
+                                classifiers[index].baseline_ut(),
+                                classifiers[index].rejections()
+                            );
+                        }
+                        mag_calibrated[index] = classifiers[index].is_calibrated();
+                        match event {
                             Some(MagneticEvent::Approach { .. }) => publish(SensorEvent {
                                 at_ms: at,
                                 source: EventSource::Bmm150,
@@ -376,6 +395,7 @@ pub async fn sensor_task(mut subboard: Subboard) {
         // ---- Expansion slots: 250 ms presence scan ----
         if now >= next_scan_ms {
             for change in subboard.scan().await.into_iter().flatten() {
+                mag_recalibrate_at = Some(now.saturating_add(MAG_RECALIBRATE_SETTLE_MS));
                 publish(SensorEvent {
                     at_ms: now_ms(),
                     source: match change.slot {
@@ -390,6 +410,13 @@ pub async fn sensor_task(mut subboard: Subboard) {
                 });
             }
             next_scan_ms = now.saturating_add(subboard::SCAN_PERIOD_MS);
+        }
+
+        if mag_recalibrate_at.is_some_and(|due| now >= due) {
+            mag_recalibrate_at = None;
+            for classifier in &mut classifiers {
+                classifier.recalibrate();
+            }
         }
 
         // ---- Persistent [scan] summary every 10 s ----
