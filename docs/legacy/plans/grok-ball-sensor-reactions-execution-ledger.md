@@ -3,7 +3,7 @@
 > Implementation status: **H0 complete; H1.1/H1.2 device complete; H1.3 target build; H2 complete; H3 tap-only + fixed ball plane accepted (drag removed by product decision)**.
 > Implementation authorization: user requested parallel coding toward the execution order on 2026-10-20.
 
-Plan: [Grok-Ball Sensor Reactions](grok-ball-sensor-reactions-plan.md).
+Plan: [Grok-Ball Sensor Reactions](../../plans/grok-ball-sensor-reactions-plan.md).
 
 ## Current handoff
 

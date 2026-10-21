@@ -5,7 +5,7 @@
 > R1 passed the async QSPI/two-frame presentation, GPIO6/async-I2C input, LVGL `ui_task` and the 100-touch firmware P95 gate.
 > R1 interface freeze: [r1-runtime-design.md](r1-runtime-design.md).
 
-Plan: [Platform Runtime](platform-runtime-plan.md).
+Plan: [Platform Runtime](../../plans/platform-runtime-plan.md).
 
 ## Current handoff
 

@@ -1,6 +1,6 @@
 # 历史参考
 
-该目录保存风扇控制 / Slint 时代的代码草稿、设计与发布记录，**不参与 Cargo 构建**。
+该目录保存风扇控制 / Slint 时代与 grok-ball 时代的代码草稿、设计与发布记录，**不参与 Cargo 构建**。
 
 | 路径 | 内容 |
 | --- | --- |
@@ -9,6 +9,7 @@
 | `PROJECT_COMPLETE.md`、`PROJECT_SUMMARY.md`、`VARIANT_SUMMARY.md` | 历史设计及进度记录 |
 | `MOSAICO_UI_DESIGN.md`、`MOSAICO_UI_ROADMAP.md`、`MOSAICO_UI_REVIEW.md`、`mosaico-ui-preview.html`、`eve-fan-control-ultimate.html` | Slint 版 Mosaic UI 的设计、路线图与验收 |
 | `TREE_SHAKING.md` | fan crates 的 feature 边界 |
+| `plans/` | grok-ball 时代的执行顺序（`ROADMAP-2026-10-20.md`）、RFC 0003 及其账本、RFC 0004/0005 账本、R1 运行时设计稿；其中的 `cargo -p grok-ball` 门命令已失效 |
 | `releases/` | fan-control v14–v22 发布说明（app 写在 `0x20000`，与现在的 `0x210000` 不同） |
 
 这些记录保留原内容，其中的构建命令、目录路径、烧录地址和“完成”状态不代表当前实现。

@@ -6,7 +6,7 @@
 > Baseline: the validated single-threaded `mosaico-s31` prototype is archived at
 > `archive/crates-pre-grok-ball-20261020/mosaico-s31`; the workspace contains the
 > host-testable `grok-ball` crate.
-> Related plans: [RFC 0003 Grok-Ball First Screen](grok-ball-first-screen-plan.md)
+> Related plans: [RFC 0003 Grok-Ball First Screen](../legacy/plans/grok-ball-first-screen-plan.md)
 > (device integration waits for R1), [RFC 0004 Grok-Ball Sensor Reactions](grok-ball-sensor-reactions-plan.md)
 > (device integration waits for R1/R1.5), [Execution order](ROADMAP.md).
 > Implementation authorization: **not granted by authoring this RFC.**

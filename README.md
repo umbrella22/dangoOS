@@ -94,5 +94,5 @@ for the stats line.
 - [Fox render pipeline](docs/FOX_RENDER_PIPELINE.md) (Chinese)
 - [Development, checks, flashing](docs/DEVELOPMENT.md)
 - [Mosaico v1.2 hardware notes](docs/MOSAICO_V12_HARDWARE.md)
-- [Execution order](docs/plans/ROADMAP.md) and the RFCs in `docs/plans/` (history, grok-ball era)
+- [Current state and remaining work](docs/plans/ROADMAP.md); RFCs in `docs/plans/`, archived plans and ledgers in `docs/legacy/plans/`
 - [Legacy fan/Slint material](docs/legacy/README.md)

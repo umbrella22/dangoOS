@@ -6,12 +6,13 @@
 > - 反应层已实现并有 host 测试：`behavior/affect.rs`（摇晃、轻拍、光线、PIR、KEY_L/KEY_R、磁铁、电量、模块插拔），测试在 `behavior/tests/`。
 > - 模块驱动已改为左右槽自适应：`drivers/subboard/`。交互板插左（`0x50`）或插右（`0x51`）都能用；同时只读一块；相机固定按左槽报告。`ModuleInserted/ModuleRemoved` 现在带 `ModuleKind`，反应跟随模块类型而不是槽位。下文 §2.2、§7 里"交互板只在右槽、相机只在左槽"的假设已经放宽，规则见 [硬件文档 §7.2.1](../MOSAICO_V12_HARDWARE.md)。
 > - 2026-10-21 真机试用后调慢了交互板相关表情：按键、光线、PIR 和插拔序列的停留时间加长（下文表格已同步），并加了 1.2 s 最短停留——光线、PIR、磁铁这类被动传感器不能在 1.2 s 内用另一来源的反应顶掉刚出现的表情；按键、触摸、摇晃和同一来源的后续反应不受限。常量在 `behavior/affect.rs`，测试直接引用这些常量。
-> - 仍未完成：交互板 LDR/PIR/按键在真机上的逐项验收；WS2812 心情灯；SI12T 触摸键模式；IR 发射（本 RFC 原本就不使用）。
+> - 磁力计实现见 §4.6 前的当前说明。真机已验收：马达、相机插拔、磁铁贴上/拿开、LDR、PIR。
+> - 仍未完成：WS2812 心情灯；SI12T 触摸键模式；IR 发射（本 RFC 原本就不使用）。
 
 > Original status (2026-10-20): Draft implementation plan; no implementation work package is complete.
 > Plan ID: `mosaico-grok-ball-reactions-v1`; revision: `1`.
 > Baseline date: `2026-10-20` UTC.
-> Related plans: [RFC 0003 Grok-Ball First Screen](grok-ball-first-screen-plan.md), [RFC 0002 Mosaico UI Layer](mosaico-ui-layer-plan.md).
+> Related plans: [RFC 0003 Grok-Ball First Screen](../legacy/plans/grok-ball-first-screen-plan.md), [RFC 0002 Mosaico UI Layer](mosaico-ui-layer-plan.md).
 > Hardware baseline: official `esp-mosaico-claw` board configuration and `esp-mosaico-bsp` Interaction module; Interaction module in the right slot, camera in the left slot.
 > Implementation authorization: granted later by the user; see the current status above.
 
@@ -262,6 +263,13 @@ PIR pulses shorter than 200 ms are ignored. The sensor is sampled; the absence t
 KEY_L and KEY_R are the right-slot `GPIO11` and `GPIO10` in GPIO mode. SI12T touch mode uses the same logical keys and is deferred until the GPIO path is stable.
 
 ### 4.6 BMM150
+
+> 当前实现（2026-10-21）：没有移植官方分类器。官方 `mosaico_mag_classifier.c` 做的是拼板之间的边缘吸附检测
+> （轴饱和 + 固定阈值），不处理接近距离和模块磁铁。`behavior/magnet.rs` 的 `MagneticClassifier`
+> 只借用它的校准思路：开机取 8 个安静样本（跨度 ≤ 12 µT）作基线，磁场还在变就拒绝并继续等；
+> 任一槽位插拔后 800 ms 重新校准。事件按 |b| 相对基线的增量判定：接近 25 µT、接触 80 µT（2 票）、
+> 释放回到 35 µT 内（3 票），另有旋转和方向变化。主板自身连接器磁铁使静态场约 550 / 1700 µT，
+> 所以不能用绝对阈值。下表的反应映射仍然有效。
 
 The official `mosaico_interaction` classifier produces approach, contact, release, edge-change, orbit CW/CCW and orientation events. The first version uses these events with confidence gating.
 

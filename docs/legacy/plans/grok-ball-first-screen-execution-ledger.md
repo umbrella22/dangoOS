@@ -10,7 +10,7 @@ Plan: [Grok-Ball First Screen](grok-ball-first-screen-plan.md).
 - G2.1 is target-build complete; the first pending action is the **G2.1 device run** (combined with R1.5).
 - G0.1–G0.3 and G1.1–G1.2 are complete; G2 is blocked on the R1 async pipeline; G3 is not started.
 - R0/R1 are external pipeline dependencies; RFC 0005 (Platform Runtime) is written and R0 is in progress.
-- Execution order across RFC 0002, RFC 0003, RFC 0004 and RFC 0005 is recorded in [ROADMAP.md](ROADMAP.md).
+- Execution order across RFC 0002, RFC 0003, RFC 0004 and RFC 0005 is recorded in [ROADMAP.md](../../plans/ROADMAP.md).
 - Evidence collected after authoring is recorded in the gate table and the evidence section below.
 - `lv_binding_rust` baseline: `f8b13a48ab027bc4e2be6b884a323407336ed792` plus the local `LV_FONT_MONTSERRAT_48=1` change.
 - `esp-32` baseline: `684e150`. The validated `crates/mosaico-s31` prototype is archived at `archive/crates-pre-grok-ball-20261020/mosaico-s31` and is not a workspace member.

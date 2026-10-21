@@ -4,7 +4,7 @@
 > Plan ID: `mosaico-grok-ball-v1`; revision: `1`.
 > Baseline date: `2026-10-20` UTC.
 > Baselines: `lv_binding_rust` at `f8b13a48ab027bc4e2be6b884a323407336ed792` plus the local `LV_FONT_MONTSERRAT_48=1` configuration change; `esp-32` at `684e150`; the validated `crates/mosaico-s31` prototype is archived at `archive/crates-pre-grok-ball-20261020/mosaico-s31`.
-> Related plans: [RFC 0002 Mosaico UI Layer](mosaico-ui-layer-plan.md) (implemented), [RFC 0004 Grok-Ball Sensor Reactions](grok-ball-sensor-reactions-plan.md), [RFC 0001 Configurable Rust Component Library](component-library-development-plan.md), [Execution order](ROADMAP.md).
+> Related plans: [RFC 0002 Mosaico UI Layer](../../plans/mosaico-ui-layer-plan.md) (implemented), [RFC 0004 Grok-Ball Sensor Reactions](../../plans/grok-ball-sensor-reactions-plan.md), [RFC 0001 Configurable Rust Component Library](../../plans/component-library-development-plan.md), [Execution order](../../plans/ROADMAP.md).
 > External dependency: the RTOS pipeline track R0/R1 described in section 3; it will be specified by RFC 0005 (Platform Runtime) and is not yet written.
 > Implementation authorization: **not granted by authoring this RFC.**
 

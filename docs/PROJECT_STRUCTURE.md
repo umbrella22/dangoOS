@@ -58,6 +58,7 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
         ├── behavior/            “狐狸怎么想”
         │   ├── mod.rs           Expression（18 个表情）
         │   ├── affect.rs        传感器事件 → 情绪 / 表情 / 马达（摇晃、光线、PIR、磁铁、电量…）
+        │   ├── magnet.rs        磁力计基线学习与接近/接触/旋转分类
         │   ├── personality.rs   触摸 → 点按阶梯（好奇 → 疑惑 → 不耐烦 → 生气）
         │   ├── runtime.rs       合并两者：紧急情绪 > 触摸反应 > 情绪表情 > 静息
         │   └── tests/           按场景分的时间线测试
