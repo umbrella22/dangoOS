@@ -9,7 +9,8 @@
 //!   and glare poses. A reaction lights it with its colour and a smooth
 //!   pattern (breathing, a chasing comet, alternating halves or a rainbow)
 //!   for [`SHOW_MS`], then fades out over [`FADE_MS`] even if the
-//!   expression stays. No hard strobes or random flicker.
+//!   expression stays. Only Angry strobes, as a joke; nothing flickers at
+//!   random.
 //! - A change of expression cross-fades from the last frame over
 //!   [`CROSSFADE_MS`], so the strip never jumps.
 //! - Brightness follows the room: full [`MAX_LEVEL`] in daylight, down to
@@ -93,6 +94,8 @@ enum Pattern {
     Wobble { period_ms: u32 },
     /// Even and odd LEDs swap between `a` and `b`.
     Alternate { period_ms: u32 },
+    /// Hard on/off in `a`; off time shows `b`.
+    Strobe { period_ms: u32, on_pct: u32 },
     /// A colour wheel scrolling across the strip.
     Rainbow { period_ms: u32 },
     /// LEDs off.
@@ -149,7 +152,16 @@ const fn style(expression: Expression) -> Style {
             },
             1.0,
         ),
-        Angry => (Rgb::new(255, 10, 0), Rgb::OFF, breathe(420, 0.2), 1.0),
+        // The one strobe: a cartoon tantrum.
+        Angry => (
+            Rgb::new(255, 10, 0),
+            Rgb::new(40, 0, 0),
+            Strobe {
+                period_ms: 160,
+                on_pct: 50,
+            },
+            1.0,
+        ),
         Satisfied => (Rgb::new(255, 70, 140), Rgb::OFF, breathe(2000, 0.35), 0.85),
         Listening => (Rgb::new(40, 120, 255), Rgb::OFF, breathe(1600, 0.3), 0.8),
         Thinking => (
@@ -307,6 +319,10 @@ fn pattern_frame(expression: Expression, style: Style, t: u64) -> Frame {
                 *led = if (i % 2 == 0) ^ flip { a } else { b };
             }
         }
+        Pattern::Strobe { period_ms, on_pct } => {
+            let on = phase(t, period_ms) * 100.0 < on_pct as f32;
+            frame = [if on { a } else { b }; LED_COUNT];
+        }
         Pattern::Rainbow { period_ms } => {
             let p = phase(t, period_ms);
             for (i, led) in frame.iter_mut().enumerate() {
@@ -389,6 +405,15 @@ mod tests {
             .unwrap();
         assert!(peak > 0);
         assert!(peak as f32 <= MAX_LEVEL as f32 * MIN_AMBIENT_SCALE + 1.0);
+    }
+
+    #[test]
+    fn angry_strobes() {
+        let mut light = MoodLight::new();
+        light.set_expression(Expression::Angry, 0);
+        let on = light.frame(CROSSFADE_MS + 20)[0].r;
+        let off = light.frame(CROSSFADE_MS + 100)[0].r;
+        assert!(on > off * 3, "on={on} off={off}");
     }
 
     #[test]
