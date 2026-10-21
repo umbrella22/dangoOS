@@ -18,7 +18,7 @@ G0/H0/G1/R0/R1/G2 与 H1 已在真机验收；H2（传感器→表情→马达�
   2026-10-21 实测约 3 分钟无复位：`ball_plane on interrupt executor (FROM_CPU_INTR1, priority 2)`、`2 canvas slots`；
   `ras` 18.9–20.0 ms（p50 19.4，抖动前约 18 ms）、`tx=6` ms、`fps=18–19`、`drop=0`、`q=0/32`。触摸手感和表情切换待人工验收。
 - 狐狸团子角色已替换上屏：`crates/mosaico-s31/src/fox`（128 色调色板行 RLE 精灵 + 表情播放器，352×336 画布，面板原点 (64,88)），素材由 `assets/fox-dango/tools/fox_pack.py` 从 `assets/fox-dango/device` 生成。
-  镜像 `target/mosaico-s31-fox.bin`（1,612,656 B，SHA-256 `dd32016e...`）。2026-10-21 实测无复位：`chunks=11`、`ras` 10.1–15.0 ms（p50 10.4，带符号部件时约 15）、`tx=13–14` ms、`fps=18–20`、`drop=0`。
+  镜像 `target/mosaico-s31-fox2.bin`（1,598,800 B，SHA-256 `6e57a83d...`，调色板改为中位切分 + k-means、平坦区保边模糊与去噪点，消除脸部白点）。2026-10-21 实测无复位：`chunks=11`、`ras` 10.1–15.0 ms（p50 10.4，带符号部件时约 15）、`tx=13–14` ms、`fps=18–20`、`drop=0`。
 - 缺失美术素材清单见 [docs/ASSET_REQUESTS.md](docs/ASSET_REQUESTS.md)。
 - 详细顺序见 [docs/plans/ROADMAP.md](docs/plans/ROADMAP.md)。
 

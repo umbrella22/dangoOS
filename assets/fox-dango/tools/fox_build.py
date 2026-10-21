@@ -70,15 +70,108 @@ def load_all(extra=(), geom=None):
 def quantize(ims):
     """Shared palette over every image; returns RGB565-exact images and the palette."""
     keys = list(ims)
+    ims = {k: smooth_flat(ims[k]) for k in keys}
     mosaic = Image.new('RGB', (CANVAS_W * len(keys), CANVAS_H))
     for i, k in enumerate(keys):
         mosaic.paste(ims[k], (i * CANVAS_W, 0))
-    pal = mosaic.quantize(COLORS, method=Image.Quantize.MAXCOVERAGE)
+    # Median cut follows pixel population, so the large pale skin and fur areas
+    # get a real gradient (about 20 tones) instead of the 3 that max coverage
+    # gave them; k-means refines the cut boxes.
+    pal = palette_565(mosaic)
+    rgb = np.asarray(pal.getpalette()[:COLORS * 3], dtype=np.int32).reshape(-1, 3)
+    near = ((rgb[:, None, :] - rgb[None, :, :]) ** 2).sum(-1) <= DESPECKLE_DIST ** 2
     q = {}
     for k in keys:
-        idx = ims[k].quantize(palette=pal, dither=Image.Dither.NONE)
-        q[k] = Image.fromarray(to565(np.asarray(idx.convert('RGB'))))
+        idx = np.asarray(ims[k].quantize(palette=pal, dither=Image.Dither.NONE))
+        idx = despeckle(idx, near)
+        q[k] = Image.fromarray(to565(rgb[idx].astype(np.uint8)))
     return q, pal
+
+
+def palette_565(mosaic):
+    """COLORS palette entries that stay distinct after RGB565 rounding.
+
+    Median cut entries often collapse onto the same RGB565 value, which wasted a
+    quarter of the palette. Ask for more cut boxes until COLORS distinct RGB565
+    colours exist, then keep the most used ones.
+    """
+    n = COLORS
+    while True:
+        q = mosaic.quantize(n, method=Image.Quantize.MEDIANCUT, kmeans=3)
+        raw = np.asarray(q.getpalette()[:n * 3], dtype=np.uint8).reshape(-1, 3)
+        c565 = to565(raw).astype(np.int32)
+        keys = (c565[:, 0] << 16) | (c565[:, 1] << 8) | c565[:, 2]
+        counts = np.bincount(np.asarray(q).ravel(), minlength=n)
+        use = {}
+        for i in range(len(raw)):
+            use[keys[i]] = use.get(keys[i], 0) + counts[i]
+        if len(use) >= COLORS or n >= 256:
+            break
+        n += COLORS - len(use)
+    top = sorted(use, key=lambda k: -use[k])[:COLORS]
+    flat = []
+    for k in top:
+        flat += [(k >> 16) & 255, (k >> 8) & 255, k & 255]
+    flat += [0, 0, 0] * (256 - len(top))
+    pal = Image.new('P', (1, 1))
+    pal.putpalette(flat)
+    return pal
+
+
+def smooth_flat(im, radius=1.5, edge=18.0):
+    """Blur only low-contrast areas (skin, fur), keeping line art crisp.
+
+    The masters carry fine texture noise; quantized as is it turns into speckle.
+    Pixels whose luminance range over the blur window is below `edge` take a Gaussian-blurred
+    value, blended in smoothly between edge/2 and edge.
+    """
+    from PIL import ImageFilter
+    a = np.asarray(im, dtype=np.float32)
+    lum = Image.fromarray(np.asarray(im.convert('L')))
+    # The range window covers the blur's support, so a pixel is only blurred
+    # when nothing it would mix with (eye highlights, line art) differs.
+    win = 2 * int(np.ceil(2 * radius)) + 1
+    rng = (np.asarray(lum.filter(ImageFilter.MaxFilter(win)), np.float32)
+           - np.asarray(lum.filter(ImageFilter.MinFilter(win)), np.float32))
+    w = np.clip((edge - rng) / (edge / 2), 0, 1)[..., None]
+    b = np.asarray(im.filter(ImageFilter.GaussianBlur(radius)), dtype=np.float32)
+    return Image.fromarray(np.round(a * (1 - w) + b * w).astype(np.uint8))
+
+
+DESPECKLE_DIST = 24   # RGB distance below which two palette entries count as one tone
+DESPECKLE_MARGIN = 6  # votes (of 25) a neighbour tone needs over the pixel's own tone
+DESPECKLE_PASSES = 3
+
+
+def despeckle(idx, near):
+    """Flatten quantization speckle inside smooth regions.
+
+    Pale skin sits between two close palette entries, so source noise flips
+    single pixels between them and the panel shows white dots. For every pixel
+    count, over its 5x5 window, the votes of each palette entry that is close in
+    colour to the pixel's own; if some close entry beats the pixel's own entry by
+    DESPECKLE_MARGIN the pixel takes it. Line art and real edges involve distant
+    colours, so they never vote and stay sharp.
+    """
+    h, w = idx.shape
+    idx = idx.astype(np.int32)
+    for _ in range(DESPECKLE_PASSES):
+        pad = np.pad(idx, 2, mode='edge')
+        votes = np.zeros((h, w, COLORS), np.int16)
+        rows, cols = np.mgrid[0:h, 0:w]
+        for dy in range(5):
+            for dx in range(5):
+                n = pad[dy:dy + h, dx:dx + w]
+                np.add.at(votes, (rows, cols, n), 1)
+        votes = np.where(near[idx], votes, 0)
+        best = votes.argmax(-1)
+        own = np.take_along_axis(votes, idx[..., None], -1)[..., 0]
+        top = votes.max(-1)
+        changed = top >= own + DESPECKLE_MARGIN
+        if not changed.any():
+            break
+        idx = np.where(changed, best, idx)
+    return idx
 
 
 def panel(img, offset=(0, 0)):
