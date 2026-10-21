@@ -8,12 +8,13 @@ G0/H0/G1/R0/R1/G2 与 H1 已在真机验收；H2（传感器→表情→马达�
 
 - `grok-ball`：110 个 host 测试。
 - `lvgl-ui`：51 个测试（含 10 个自定义控件测试）。
-- `mosaico-s31`：球体首屏 + 启动页/出场动画 + 交互运行时 + R1 异步显示/输入 + 传感器与电量任务 + USB-OTG HS CDC；44 个 host 测试。
+- `mosaico-s31`：球体首屏 + 启动页/出场动画 + 交互运行时 + R1 异步显示/输入 + 传感器与电量任务 + USB-OTG HS CDC；51 个 host 测试。
 - R0 真机证据：CDC、心跳、整帧 480×480、黑底+三色带、触摸。
 - R1 真机证据：100 次触摸 P50 29–33ms、P95 36–41ms、76 秒无复位。
 - G2 真机证据：球体 240×240，6 状态点按切换；100 次标签触摸 P50 28–29ms、P95 30ms、20–21fps；全屏透明触摸层，只有球体 240×240/8 块被重绘。
 - H1.2：两颗 BMM150 在主板 I2C0 `0x11/0x12`，chip ID `0x32`，20Hz；模块 `interact(0x16)`；IMU 35–46Hz。
 - 当前镜像：`target/mosaico-s31-h3-fixed4.bin`（945,920 B，SHA-256 `367b148b...`，固定球平面、无拖拽）；G2/R0/R1 验证镜像仍在 `target/`。
+- `h3-fixed4` 之后的提交（表情优先级、canvas 双缓冲、ball_plane 中断执行器）已通过 host 测试和目标构建，**待真机验证**。
 - 缺失美术素材清单见 [docs/ASSET_REQUESTS.md](docs/ASSET_REQUESTS.md)。
 - 详细顺序见 [docs/plans/ROADMAP.md](docs/plans/ROADMAP.md)。
 

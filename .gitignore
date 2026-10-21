@@ -3,3 +3,5 @@
 /archive/
 .DS_Store
 cargo-espflash.toml
+# Local debug logs
+/.dbg/

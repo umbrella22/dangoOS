@@ -1,7 +1,7 @@
 [workspace]
-# The validated mosaico-s31 prototype is archived under
-# archive/crates-pre-grok-ball-20261020/. The grok-ball crate is the shared
-# host-testable core; the platform crate is added by the R0 work package.
+# grok-ball is the shared host-testable core; mosaico-s31 is the ESP32-S31
+# firmware and host preview crate. The pre-grok-ball prototype is archived
+# under archive/crates-pre-grok-ball-20261020/ (not a member).
 members = ["crates/grok-ball", "crates/mosaico-s31"]
 default-members = ["crates/grok-ball"]
 resolver = "2"
@@ -12,6 +12,8 @@ edition = "2021"
 authors = ["Kiro", "Claude", "GLM"]
 
 [workspace.dependencies]
+# Sibling checkout; the tested revision is pinned in lvgl.rev
+# (scripts/check-lvgl-pin.sh).
 lvgl = { path = "../lv_binding_rust/lvgl", default-features = false, features = ["alloc", "unsafe_no_autoinit"] }
 lvgl-ui = { path = "../lv_binding_rust/lvgl-ui", default-features = false, features = ["alloc", "no-autoinit"] }
 log = "0.4"

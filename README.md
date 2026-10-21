@@ -10,7 +10,7 @@ screen is a Rust port of the MIT-licensed grok-ball engine.
 | Path | Responsibility |
 | --- | --- |
 | `crates/grok-ball` | `no_std` data, ball engine, RGB565 rasterizer, sensor affect engine, touch personality, character skins and sprite playback; 110 host tests |
-| `crates/mosaico-s31` | S31 firmware: R0 `esp-rtos`/Embassy task skeleton, ported display/touch drivers, and the `BallWidget` host preview |
+| `crates/mosaico-s31` | S31 firmware: `esp-rtos`/Embassy tasks, CO5300/CST9220/sensor drivers, runtime arbiter (affect + personality), `BallWidget` with a two-slot canvas pool, and the host previews |
 | `../lv_binding_rust/lvgl-ui` | Declarative `App`/`Node`/`Ui` layer plus `CustomWidget` and `Ui::tick` |
 | `archive/crates-pre-grok-ball-20261020` | Archived single-threaded S31 prototype; not a workspace member |
 | `archive/crates-pre-s31-20261019` | Archived Slint/fan crates; not a workspace member |
@@ -23,7 +23,7 @@ Run from the repository root:
 # Host core: data parity, engine, raster, affect timelines
 cargo test -p grok-ball --offline
 
-# Six 320x320 PPM frames (Idle/Listening/Thinking/Speaking/Happy/Error)
+# Six 320x320 PPM frames from the grok-ball core (Idle/Listening/Thinking/Speaking/Happy/Error)
 cargo run -p grok-ball --example states --offline
 
 # 16-expression BallWidget preview on a 480x480 host display
@@ -60,21 +60,49 @@ If the crates.io index is slow, prefix the commands with
   input, LVGL `ui_task`. 100-touch firmware metric: P50 29–33 ms, P95 36–41 ms,
   max 101 ms, zero queue drops, 76-second run without reset. Verified image
   `target/mosaico-s31-r1.bin`, 764,448 bytes, SHA-256 `e362f5a9...`.
-- **G2 complete on hardware:** the grok-ball first screen runs on the R1
-  pipeline: 240×240 canvas, tap cycles the six AI states, firmware P95 30 ms,
-  20 fps, canvas damage 8 chunks / ~16 ms. The touch layer is a full-screen
-  transparent clickable `Obj`: a tap anywhere cycles the ball, while only the
-  240×240 ball area is redrawn.
+- **G2 complete on hardware:** the grok-ball first screen on a fixed 240×240
+  ball plane at the panel centre, firmware P95 30 ms, 20 fps. (At G2 a tap
+  cycled the six AI states; that demo binding has since been replaced, see
+  below.)
 - **H1.2 sensor hardware online:** both BMM150s on main I2C0 `0x11/0x12`
   (chip ID `0x32`, 20 Hz, ~556 µT), right-slot module `interact(0x16)`, IMU
   35–46 Hz, zero edge drops.
 - **Pending:** H2 AffectEngine + RMT haptics, IMU 50 Hz tuning, G3 optional full
   catalog/effects, and the later Hub/C3/voice/Lua work.
 
-The current firmware is the ball + sensor image
-`target/mosaico-s31-g2-r15.bin` (905,200 bytes, SHA-256 `2e8e3e48...`); it
-shows the ball, cycles the six AI states on tap, and logs both magnetometers,
-the module and the IMU.
+## Current firmware behavior
+
+- Touch goes to the grok-ball personality engine (tap ladder, grab, drag), and
+  sensor events drive the affect engine. `runtime::merge_expression` decides
+  the shown expression: urgent affect (Error, Panic) > personality reaction >
+  affect expression > resting expression. Haptics follow the same order.
+- Display: LVGL only hosts the widget lifecycle and never renders the screen.
+  `BallWidget` rasterizes into a two-slot canvas pool on the UI task;
+  `ball_plane_task` uploads the newest slot over async QSPI from a priority-2
+  interrupt executor. `ui::SHOW_SPLASH` must stay `false` on this path
+  (compile-time check).
+- The latest device image is `target/mosaico-s31-h3-fixed4.bin` (fixed ball
+  plane, see [QUICKSTART](QUICKSTART.md)). Later commits (expression
+  priority, canvas pool, interrupt executor) build and pass host tests but
+  still need a hardware run.
+
+## Build environment
+
+- `../lv_binding_rust` is a path dependency. The tested revision is recorded
+  in `lvgl.rev`; `scripts/check-lvgl-pin.sh` warns if the sibling checkout
+  differs or is dirty.
+- `.cargo/config.toml` sets the Espressif C toolchain (`CC_…`, `AR_…`),
+  `LIBCLANG_PATH` and `LVGL_SYSROOT` for the author's machine. Cargo's `[env]`
+  does not override variables that are already set, so on another machine
+  export your own values (for example in your shell profile) instead of
+  editing the file:
+
+  ```bash
+  export ESP_TOOLS=$HOME/esp-tools/riscv32-esp-elf
+  export CC_riscv32imafc_unknown_none_elf=$ESP_TOOLS/bin/riscv32-esp-elf-gcc
+  export AR_riscv32imafc_unknown_none_elf=$ESP_TOOLS/bin/riscv32-esp-elf-ar
+  export LVGL_SYSROOT=$ESP_TOOLS/riscv32-esp-elf
+  ```
 
 ## Firmware flash path
 
@@ -84,11 +112,11 @@ Build the image, then write only the `main_app` region:
 cargo build -p mosaico-s31 --release --target riscv32imafc-unknown-none-elf
 espflash save-image --chip esp32s31 \
   target/riscv32imafc-unknown-none-elf/release/mosaico-s31-fw \
-  target/mosaico-s31-r0.bin
+  target/mosaico-s31-fw.bin
 
 esptool --chip esp32s31 --port <PORT> --baud 115200 \
   --before no-reset --after hard-reset \
-  write_flash 0x210000 target/mosaico-s31-r0.bin
+  write_flash 0x210000 target/mosaico-s31-fw.bin
 ```
 
 Verified images:

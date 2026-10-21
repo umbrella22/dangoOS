@@ -1,22 +1,31 @@
-# mosaico-s31 — R0 platform skeleton
+# mosaico-s31 — ESP32-S31 firmware
 
 ESP-Mosaico v1.2 (ESP32-S31) firmware crate for the RFC 0005 platform
-runtime. R0 runs one `esp-rtos` + Embassy executor with three tasks:
+runtime, plus host previews of the ball widget. The library half
+(`src/lib.rs`) is host-testable; the firmware binary is `mosaico-s31-fw`.
 
-| Task | R0 behavior |
-| --- | --- |
-| `ui_task` | 1 s heartbeat log. LVGL is **not** initialized and must not be touched in R0. |
-| `display_task` | Clears the full 480x480 framebuffer to black, draws a 480x120 three-band color bar (red/green/blue) on top, transfers the full frame through the archived CO5300 QSPI `write_chunk` path, logs the transfer time, then idles. |
-| `input_task` | Polls the CST9220 every 5 ms; logs the first point of each touch and each release. GPIO6 interrupt is R1. |
+## Tasks
+
+`esp-rtos` + Embassy with two executors on core 0:
+
+| Task | Executor | Behavior |
+| --- | --- | --- |
+| `ball_plane_task` | interrupt (FROM_CPU_INTR1, priority 2) | Sole owner of the CO5300. Takes the newest canvas-pool slot and uploads it at the panel centre in 32-row async QSPI DMA chunks; animation frames wait for TE, touch-tagged frames skip it. |
+| `ui_task` | thread | Sole owner of LVGL. Every 5 ms: drain sensors and touch into the runtime arbiter, advance `BallWidget` (raster into a free pool slot), hand the frame to the plane, log stats once per second. LVGL never renders the screen. |
+| `input_task` | thread | Sole owner of the CST9220. GPIO6 edge + 5 ms fallback, async I2C reads into a bounded queue. |
+| `sensor_task` | thread | BMI270, two BMM150, right-slot Interaction module; bounded `SensorEvent` channel. |
+| `haptic_task` | thread | Motor patterns on GPIO8 via RMT-generated 5 kHz PWM. |
+
+Key modules: `runtime` (affect + personality merge, `merge_expression`),
+`ball_widget` (LVGL custom widget), `canvas_pool` (two-slot lease pool shared
+by the widget and the plane), `ball_plane`, `display_stats` (telemetry
+atomics), `lvgl_port` (headless LVGL display registration).
 
 The console is a USB-OTG HS CDC-ACM device. `log` records are formatted into
 fixed 160-byte records and queued through a bounded
 `embassy_sync::channel::Channel`; a pump writes them to the CDC port once the
-host opens it. `esp-println` is no longer used for application logs: its
+host opens it. `esp-println` is not used for application logs: its
 `jtag-serial` path is not wired to the USB-C connector on this board.
-The crate also carries the archived (unused on the R0 hot path)
-`framebuffer`, `input_queue` and `memory` modules so R1 can build on them
-without re-porting.
 
 ## Hardware truth (unchanged from the archived prototype)
 
@@ -58,9 +67,8 @@ cargo build -p mosaico-s31 --release --target riscv32imafc-unknown-none-elf
 ```
 
 If the crates.io index is unreachable but the dependencies are already in the
-local Cargo cache, prefix the commands with `CARGO_NET_OFFLINE=true`. The R0
-build in this workspace used that switch because `index.crates.io` timed out;
-`static.crates.io` and GitHub were reachable.
+local Cargo cache, prefix the commands with `CARGO_NET_OFFLINE=true` (or pass
+`--offline`).
 
 The existing `.cargo/config.toml` provides the Espressif RISC-V C toolchain,
 `LVGL_SYSROOT` and the `linkall.x` linker argument. The target runner is
@@ -101,7 +109,7 @@ cargo run -p mosaico-s31 --release --target riscv32imafc-unknown-none-elf
 The banner and task heartbeats no longer depend on `ESP_LOG`; the logger
 accepts levels up to `Info` unconditionally.
 
-## Flash command (documented only — not run in this work package)
+## Flash command
 
 Build the app image with the official `main_app` region as the target:
 
@@ -118,39 +126,13 @@ esptool --chip esp32s31 --port <PORT> --baud 115200 \
 Only `0x210000` is written. The bootloader, partition table and `vibe_mode`
 at `0x20000` are left untouched.
 
-## R0 gate
+## Bring-up history
 
-Exit gate `P-R0` from RFC 0005:
-
-1. `cargo build -p mosaico-s31 --release --target riscv32imafc-unknown-none-elf`
-   passes.
-2. On the device, the console prints the banner and all three task heartbeats
-   for at least 60 seconds without a watchdog reset.
-3. The display task clears and transfers the full 480x480 frame (black field
-   with the three-band color bar) and logs its transfer time.
-4. A touch logs its first point and the release logs a second line.
-5. No LVGL initialization is required or performed.
-
-### Verified in this run (host/build only)
-
-- `cargo check` and `cargo build --release` for
-  `riscv32imafc-unknown-none-elf`.
-- The pinned esp-hal/esp-rtos/Embassy dependency graph resolves to one esp-hal.
-- The ported driver sources are present and the pin/panel/touch constants match
-  `docs/MOSAICO_V12_HARDWARE.md`.
-- `Usb::new_hs(peripherals.USB_HS)` and `USB_HS` compile for `esp32s31`.
-
-### Still requires the board
-
-- CDC-ACM enumeration as `/dev/cu.usbmodem*` while the app runs.
-- Console banner, `ui_task` heartbeats, full-frame transfer time and
-  touch/release lines over that CDC port.
-- Full-frame `display_task` transfer time.
-- Touch/release logs from the actual CST9220.
-- 60-second no-watchdog run.
-
-The target build is **not** device acceptance; `P-R0` remains open until the
-board run is recorded in the RFC 0005 ledger.
+R0 (console, heartbeats, full-frame transfer, touch logs), R1 (async QSPI,
+GPIO6 input, LVGL `ui_task`) and G2 (ball first screen) were accepted on
+hardware; the measurements are in the root README and the RFC 0005 ledger.
+The R0/R1 full-screen presenter (`display_task`, `present`, `pointer_port`)
+was removed once the fixed ball plane replaced it.
 
 ## Module provenance
 
@@ -165,14 +147,14 @@ Ported without register-sequence changes from
 - `src/input_queue.rs`
 - `src/memory.rs`
 
-R0 does not include the archived `lvgl_port.rs`, `pointer_port.rs`,
-`touch_input.rs` or `ui.rs`; they belong to later R1/R2 work.
+`lvgl_port.rs` started from the archived port and is now a headless LVGL
+display registration.
 
 ## BallWidget and host preview (G1.2)
 
 The crate now also exposes a `no_std` + `alloc` library target
-(`mosaico_s31`) with the host-buildable `ball_widget` module. The R0 binary is
-unchanged and the ESP dependencies stay under
+(`mosaico_s31`) with the host-buildable `ball_widget` module. The ESP
+dependencies stay under
 `[target.'cfg(target_os = "none")'.dependencies]`; only `lvgl`, `lvgl-ui` and
 `grok-ball` are normal dependencies.
 
@@ -180,9 +162,9 @@ unchanged and the ESP dependencies stay under
 
 | Hook | Behavior |
 | --- | --- |
-| `create` | Allocates `Box<[u16; 320 * 320]>`, creates `lv_canvas_create` as a direct child, calls `lv_canvas_set_buffer(..., LV_COLOR_FORMAT_RGB565)` and `lv_obj_center`. |
-| `update` | Advances `BallEngine` by `elapsed_ms` on every tick, applies an expression change from `BallControl`, rasterizes when 33 ms elapsed or the control is dirty, then calls `CustomObject::invalidate()` only for a rendered frame. |
-| `delete` | Accounts the deletion; the canvas buffer drops with the widget. |
+| `create` | Leaks a two-slot `CanvasPool` of 240×240 RGB565 frames, creates `lv_canvas_create` as a direct child and publishes a black first frame. In plane mode the LVGL canvas is hidden and frames go to `ball_plane_task` via `BallControl::take_frame`. |
+| `update` | Advances `BallEngine` by `elapsed_ms` on every tick, applies an expression change from `BallControl`, and rasterizes on its 50 ms cadence (or immediately after a touch) into a free pool slot. If no slot is free the frame stays due. In LVGL mode it swaps the canvas buffer and invalidates. |
+| `delete` | Accounts the deletion. The pool is `'static`; slots are released when their leases drop. |
 
 Application code keeps the mounted instance and changes it through a shared
 handle, because a later `Node::custom` descriptor with the same key is
