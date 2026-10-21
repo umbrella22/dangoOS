@@ -10,15 +10,17 @@
 //!    events, so a tap ladder, a grab and a drag are decided with timestamps
 //!    from the input task and rendered by the same code on host and device.
 //! 3. **The merged frame** — the arbiter pushes one expression and one pose into
-//!    the [`BallControl`] per UI loop. Priority is:
+//!    the [`BallControl`] per UI loop. Priority is (see [`merge_expression`]):
 //!
 //!    ```text
-//!    personality reaction  >  affect expression  >  resting expression
+//!    urgent affect (Error, Panic)  >  personality reaction
+//!                                  >  affect expression  >  resting expression
 //!    ```
 //!
-//!    A held ball must keep struggling even while the affect engine still shows
-//!    a poke from before the grab, and a scream from a hard shake must survive
-//!    the tap that follows it.
+//!    A tap answers with its own reaction even while the affect engine still
+//!    shows a poke from before it, but a system error or the scream from a hard
+//!    shake must survive the tap that follows it. The haptic arbitration below
+//!    uses the same order, so what the user sees and feels always agree.
 //!
 //! Haptics from both engines are collected here; the caller forwards them to
 //! [`crate::haptic::play`], which owns the 150 ms rate limit and the hardware.
@@ -162,7 +164,7 @@ impl BallRuntime {
     /// dirty the canvas on every iteration and burn the whole raster budget on
     /// sub-pixel changes nobody can see.
     fn publish(&mut self) {
-        let merged = self.persona.expression.unwrap_or(self.affect_expression);
+        let merged = merge_expression(self.persona.expression, self.affect_expression);
         self.merged = merged;
         self.control.set_expression(merged);
 
@@ -200,6 +202,28 @@ impl BallRuntime {
         self.pending_len = 0;
         best
     }
+}
+
+/// Affect expressions that no touch reaction may cover.
+///
+/// `Error` is a system state the user must see; `Panic` is the shake scream
+/// whose haptic already outranks every touch buzz in [`priority`].
+fn is_urgent(expression: BallExpression) -> bool {
+    matches!(expression, BallExpression::Error | BallExpression::Panic)
+}
+
+/// Merge the personality reaction with the affect expression.
+///
+/// Urgent affect states win; otherwise an active personality reaction wins;
+/// otherwise the affect engine's (possibly resting) expression shows.
+pub fn merge_expression(
+    persona: Option<BallExpression>,
+    affect: BallExpression,
+) -> BallExpression {
+    if is_urgent(affect) {
+        return affect;
+    }
+    persona.unwrap_or(affect)
 }
 
 /// Mirror of the haptic table's priority: Error > Panic > everything else.
@@ -359,6 +383,65 @@ mod tests {
         // Both layers have expired: the resting face returns.
         runtime.tick(1_100 + 40 + 220 + 2_000);
         assert_eq!(runtime.expression(), BallExpression::Idle);
+    }
+
+    fn accel(runtime: &mut BallRuntime, at_ms: u64, az_mg: i16) {
+        runtime.on_sensor(SensorEvent {
+            at_ms,
+            source: EventSource::Imu,
+            kind: EventKind::Accel {
+                ax_mg: 0,
+                ay_mg: 0,
+                az_mg,
+            },
+        });
+    }
+
+    #[test]
+    fn a_shake_panic_survives_the_tap_that_follows_it() {
+        let control = BallControl::new(BallExpression::Idle);
+        let mut runtime = BallRuntime::new(0, Rc::clone(&control));
+
+        // Two large peaks within 200 ms: the affect engine panics.
+        accel(&mut runtime, 950, 2_500);
+        accel(&mut runtime, 1_000, 2_500);
+        runtime.tick(1_000);
+        assert_eq!(runtime.expression(), BallExpression::Panic);
+
+        // A tap during the scream must not cover it.
+        tap(&mut runtime, 1_100);
+        runtime.tick(1_100 + 40 + 220);
+        assert_eq!(
+            runtime.expression(),
+            BallExpression::Panic,
+            "an urgent affect state outranks a touch reaction"
+        );
+    }
+
+    #[test]
+    fn an_error_survives_a_tap() {
+        let control = BallControl::new(BallExpression::Idle);
+        let mut runtime = BallRuntime::new(0, Rc::clone(&control));
+        runtime.on_sensor(SensorEvent {
+            at_ms: 1_000,
+            source: EventSource::System,
+            kind: EventKind::Activity(BallExpression::Error),
+        });
+        runtime.tick(1_000);
+        assert_eq!(runtime.expression(), BallExpression::Error);
+
+        tap(&mut runtime, 1_100);
+        runtime.tick(1_100 + 40 + 220);
+        assert_eq!(runtime.expression(), BallExpression::Error);
+    }
+
+    #[test]
+    fn merge_order_matches_the_haptic_order() {
+        use BallExpression as E;
+        assert_eq!(merge_expression(Some(E::Curious), E::Error), E::Error);
+        assert_eq!(merge_expression(Some(E::Angry), E::Panic), E::Panic);
+        assert_eq!(merge_expression(Some(E::Curious), E::Puzzled), E::Curious);
+        assert_eq!(merge_expression(None, E::Tired), E::Tired);
     }
 
     #[test]
