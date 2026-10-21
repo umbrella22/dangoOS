@@ -113,6 +113,16 @@ pub enum EventSource {
     System,
 }
 
+/// The slot modules the engine reacts to. The reaction follows the module,
+/// not the slot: an Interaction board plays the same sequence on either side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModuleKind {
+    /// Official Interaction board (`board_type 0x16`).
+    Interaction,
+    /// Official camera (`board_type 0x07`, left slot only).
+    Camera,
+}
+
 /// The payload of one sensor event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventKind {
@@ -155,9 +165,9 @@ pub enum EventKind {
         confidence: u8,
     },
     /// A module was inserted in the slot named by [`SensorEvent::source`].
-    ModuleInserted,
+    ModuleInserted(ModuleKind),
     /// A module was removed from the slot named by [`SensorEvent::source`].
-    ModuleRemoved,
+    ModuleRemoved(ModuleKind),
     /// BQ27220 state of charge, `0..=100`.
     BatteryLevel(u8),
     /// External voice/LLM Activity input. Accepts `Listening`, `Thinking`,
@@ -313,13 +323,13 @@ const BMM_ORBIT_MS: u64 = 1_200;
 const BMM_EDGE_MS: u64 = 1_500;
 const BMM_CONFIDENCE_MIN: u8 = 50;
 
-const MODULE_RIGHT_INSERT_SURPRISED_MS: u64 = 500;
-const MODULE_RIGHT_INSERT_CURIOUS_MS: u64 = 1_500;
-const MODULE_RIGHT_INSERT_HAPPY_MS: u64 = 1_200;
-const MODULE_RIGHT_REMOVE_SURPRISED_MS: u64 = 400;
-const MODULE_RIGHT_REMOVE_CONFUSED_MS: u64 = 2_000;
-const MODULE_LEFT_INSERT_CURIOUS_MS: u64 = 1_500;
-const MODULE_LEFT_REMOVE_CONFUSED_MS: u64 = 1_500;
+const INTERACTION_INSERT_SURPRISED_MS: u64 = 500;
+const INTERACTION_INSERT_CURIOUS_MS: u64 = 1_500;
+const INTERACTION_INSERT_HAPPY_MS: u64 = 1_200;
+const INTERACTION_REMOVE_SURPRISED_MS: u64 = 400;
+const INTERACTION_REMOVE_CONFUSED_MS: u64 = 2_000;
+const CAMERA_INSERT_CURIOUS_MS: u64 = 1_500;
+const CAMERA_REMOVE_CONFUSED_MS: u64 = 1_500;
 
 const HAPTIC_RATE_LIMIT_MS: u64 = 150;
 
@@ -568,8 +578,8 @@ impl AffectEngine {
             EventKind::MagneticRelease => self.on_magnetic_release(at),
             EventKind::MagneticOrbit => self.on_magnetic_orbit(at),
             EventKind::MagneticEdge { confidence } => self.on_magnetic_edge(at, confidence),
-            EventKind::ModuleInserted => self.on_module_inserted(at, event.source),
-            EventKind::ModuleRemoved => self.on_module_removed(at, event.source),
+            EventKind::ModuleInserted(kind) => self.on_module_inserted(at, event.source, kind),
+            EventKind::ModuleRemoved(kind) => self.on_module_removed(at, event.source, kind),
             EventKind::BatteryLevel(percent) => self.on_battery_level(at, percent),
             EventKind::Activity(expression) => self.on_activity(at, expression),
         }
@@ -1674,82 +1684,81 @@ impl AffectEngine {
     // Module slot
     // -----------------------------------------------------------------------
 
-    fn on_module_inserted(&mut self, at: u64, source: EventSource) {
+    /// Slot presence flag for `source`, or `None` for a non-slot source.
+    fn slot_present(&mut self, source: EventSource) -> Option<&mut bool> {
         match source {
-            EventSource::ModuleRight => {
-                if self.module_right_present {
-                    return;
-                }
-                self.module_right_present = true;
+            EventSource::ModuleLeft => Some(&mut self.module_left_present),
+            EventSource::ModuleRight => Some(&mut self.module_right_present),
+            _ => None,
+        }
+    }
+
+    fn on_module_inserted(&mut self, at: u64, source: EventSource, kind: ModuleKind) {
+        match self.slot_present(source) {
+            Some(present) if !*present => *present = true,
+            _ => return,
+        }
+        match kind {
+            ModuleKind::Interaction => {
                 let steps = [
                     ModuleStep {
                         expression: Expression::Surprised,
                         reason: ReactionReason::ModuleInsert,
-                        duration_ms: MODULE_RIGHT_INSERT_SURPRISED_MS,
+                        duration_ms: INTERACTION_INSERT_SURPRISED_MS,
                     },
                     ModuleStep {
                         expression: Expression::Curious,
                         reason: ReactionReason::ModuleInsert,
-                        duration_ms: MODULE_RIGHT_INSERT_CURIOUS_MS,
+                        duration_ms: INTERACTION_INSERT_CURIOUS_MS,
                     },
                     ModuleStep {
                         expression: Expression::Happy,
                         reason: ReactionReason::ModuleInsert,
-                        duration_ms: MODULE_RIGHT_INSERT_HAPPY_MS,
+                        duration_ms: INTERACTION_INSERT_HAPPY_MS,
                     },
                 ];
                 self.start_module_sequence(at, &steps, HapticPattern::ModuleInsert);
             }
-            EventSource::ModuleLeft => {
-                if self.module_left_present {
-                    return;
-                }
-                self.module_left_present = true;
+            ModuleKind::Camera => {
                 let steps = [ModuleStep {
                     expression: Expression::Curious,
                     reason: ReactionReason::ModuleInsert,
-                    duration_ms: MODULE_LEFT_INSERT_CURIOUS_MS,
+                    duration_ms: CAMERA_INSERT_CURIOUS_MS,
                 }];
                 self.start_module_sequence(at, &steps, HapticPattern::ModuleInsert);
             }
-            _ => {}
         }
     }
 
-    fn on_module_removed(&mut self, at: u64, source: EventSource) {
-        match source {
-            EventSource::ModuleRight => {
-                if !self.module_right_present {
-                    return;
-                }
-                self.module_right_present = false;
+    fn on_module_removed(&mut self, at: u64, source: EventSource, kind: ModuleKind) {
+        match self.slot_present(source) {
+            Some(present) if *present => *present = false,
+            _ => return,
+        }
+        match kind {
+            ModuleKind::Interaction => {
                 let steps = [
                     ModuleStep {
                         expression: Expression::Surprised,
                         reason: ReactionReason::ModuleRemove,
-                        duration_ms: MODULE_RIGHT_REMOVE_SURPRISED_MS,
+                        duration_ms: INTERACTION_REMOVE_SURPRISED_MS,
                     },
                     ModuleStep {
                         expression: Expression::Confused,
                         reason: ReactionReason::ModuleRemove,
-                        duration_ms: MODULE_RIGHT_REMOVE_CONFUSED_MS,
+                        duration_ms: INTERACTION_REMOVE_CONFUSED_MS,
                     },
                 ];
                 self.start_module_sequence(at, &steps, HapticPattern::ModuleRemove);
             }
-            EventSource::ModuleLeft => {
-                if !self.module_left_present {
-                    return;
-                }
-                self.module_left_present = false;
+            ModuleKind::Camera => {
                 let steps = [ModuleStep {
                     expression: Expression::Confused,
                     reason: ReactionReason::ModuleRemove,
-                    duration_ms: MODULE_LEFT_REMOVE_CONFUSED_MS,
+                    duration_ms: CAMERA_REMOVE_CONFUSED_MS,
                 }];
                 self.start_module_sequence(at, &steps, HapticPattern::ModuleRemove);
             }
-            _ => {}
         }
     }
 

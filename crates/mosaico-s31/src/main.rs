@@ -4,7 +4,7 @@
 //! modules:
 //!
 //! - [`board`]: the v1.2 pin map and board-revision check.
-//! - [`drivers`]: panel, touch, sensors, fuel gauge, module slot, LVGL port.
+//! - [`drivers`]: panel, touch, sensors, fuel gauge, expansion slots, LVGL port.
 //! - [`tasks`]: the Embassy tasks (see below).
 //! - [`console`]: the USB CDC-ACM log console.
 //! - The host-testable library (`mosaico_s31`): behaviour, fox, UI, telemetry.
@@ -22,10 +22,10 @@
 //!     slot and hands each new frame to the plane.
 //!   - `tasks::input`: exclusively owns the CST9220. GPIO6 falling edges plus a
 //!     5 ms fallback trigger async I2C report reads into a bounded queue.
-//!   - `tasks::sensors`: polls the BMI270, the BMM150 pair and the right-slot
-//!     Interaction module, then publishes `SensorEvent` values into a bounded
+//!   - `tasks::sensors`: polls the BMI270, the BMM150 pair and both expansion
+//!     slots (Interaction board on either side), then publishes `SensorEvent` values into a bounded
 //!     capacity-64 channel. It shares I2C0 with touch through
-//!     `drivers::shared_i2c`; the sub-board EEPROM uses the separate I2C1.
+//!     `drivers::shared_i2c`; the slot EEPROMs use the separate I2C1.
 //!   - `tasks::haptic`: non-blocking motor patterns on GPIO8. esp-hal has no
 //!     S31 LEDC driver at this revision, so RMT TX generates the equivalent
 //!     5 kHz PWM in hardware.
@@ -72,7 +72,7 @@ use esp_hal::{
 use esp_rtos::embassy::InterruptExecutor;
 use log::{info, warn};
 
-use crate::drivers::{display, module, shared_i2c, touch};
+use crate::drivers::{display, shared_i2c, subboard, touch};
 use crate::tasks::{haptic, input, plane, sensors, ui};
 
 #[unsafe(no_mangle)]
@@ -174,7 +174,7 @@ async fn main(spawner: Spawner) {
     }
 
     // v1.2 subboard bus (I2C1, SDA=GPIO0/SCL=GPIO1, internal pull-ups). It is
-    // separate from I2C0, so the 250 ms module scan cannot contend with touch.
+    // separate from I2C0, so the 250 ms slot scan cannot contend with touch.
     let subboard_i2c = I2c::new(
         peripherals.I2C1,
         esp_hal::i2c::master::Config::default().with_frequency(Rate::from_khz(400)),
@@ -185,22 +185,31 @@ async fn main(spawner: Spawner) {
     .into_async();
     shared_i2c::install_subboard_async(subboard_i2c);
 
-    // Right-slot EEPROM address select: GPIO39 high -> 0x51 (BSP subboard.c).
-    let _right_slot_addr_select =
-        Output::new(peripherals.GPIO39, Level::High, OutputConfig::default());
-
-    // Interaction module inputs: LDR GPIO46/ADC1_CH4, PIR GPIO5, KEY_L GPIO11,
-    // KEY_R GPIO10. Only the GPIO/ADC setup happens here; sampling is R1.5.
-    let module = module::ModuleWatcher::new(module::ModulePins::new(
-        peripherals.GPIO46,
-        peripherals.ADC1,
-        peripherals.GPIO5,
-        peripherals.GPIO11,
-        peripherals.GPIO10,
-    ));
-    spawner.spawn(sensors::sensor_task(module).unwrap());
+    // Expansion slots: EEPROM address pins (left GPIO14 low -> 0x50, right
+    // GPIO39 high -> 0x51) and the Interaction board pins of each side. The
+    // pins stay high-impedance until a slot's EEPROM reports an Interaction
+    // board (see `drivers::subboard`).
+    let subboard = subboard::Subboard::new(
+        peripherals.GPIO14,
+        peripherals.GPIO39,
+        subboard::InteractionPort::new(
+            peripherals.GPIO53,
+            peripherals.ADC2,
+            peripherals.GPIO4,
+            peripherals.GPIO13,
+            peripherals.GPIO12,
+        ),
+        subboard::InteractionPort::new(
+            peripherals.GPIO46,
+            peripherals.ADC1,
+            peripherals.GPIO5,
+            peripherals.GPIO11,
+            peripherals.GPIO10,
+        ),
+    );
+    spawner.spawn(sensors::sensor_task(subboard).unwrap());
     info!(
-        "R1.5 sensor task spawned (BMI270/BMM150 on I2C0, module EEPROM 0x51 on I2C1, queue={})",
+        "sensor task spawned (BMI270/BMM150 on I2C0, slot EEPROMs 0x50/0x51 on I2C1, queue={})",
         sensors::SENSOR_QUEUE_CAPACITY
     );
 

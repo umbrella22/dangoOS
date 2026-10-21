@@ -1,4 +1,4 @@
-//! R1.5 sensor task.
+//! Sensor task.
 //!
 //! ```text
 //! startup:          raw I2C scan of I2C0 + I2C1 -> bus/address map
@@ -7,7 +7,7 @@
 //!   ├─ every 2 ticks: BMM150 data-ready read         -> magnetic edges
 //!   ├─ every 2 ticks: Interaction LDR/PIR/KEY_L/KEY_R -> light/presence/key edges
 //!   ├─ every 5 s:     BQ27220 state of charge        -> BatteryLevel event
-//!   └─ every 250 ms:  right-slot EEPROM probe        -> module insert/remove
+//!   └─ every 250 ms:  left/right slot EEPROM probe   -> module insert/remove
 //! ```
 //!
 //! The task owns the sensor *protocol*, not the bus: every transaction goes
@@ -49,7 +49,7 @@ use mosaico_s31::behavior::affect::{EventKind, EventSource, SensorEvent};
 
 use crate::drivers::battery::Bq27220;
 use crate::drivers::imu::{self, Bmi270, Bmm150, MagSample, MagneticClassifier, MagneticEvent};
-use crate::drivers::module::{ModuleWatcher, ScanEvent};
+use crate::drivers::subboard::{self, Slot, Subboard};
 
 /// `SensorEvent` queue depth (RFC 0005 section 3.5).
 pub const SENSOR_QUEUE_CAPACITY: usize = 64;
@@ -81,10 +81,10 @@ const STATS_PERIOD_MS: u64 = 1_000;
 const SCAN_SUMMARY_PERIOD_MS: u64 = 10_000;
 
 #[embassy_executor::task]
-pub async fn sensor_task(mut module: ModuleWatcher) {
+pub async fn sensor_task(mut subboard: Subboard) {
     info!(
-        "sensor_task: IMU 50 Hz, BMM150 25 Hz poll, module {} ms scan (queue={})",
-        crate::drivers::module::SCAN_PERIOD_MS,
+        "sensor_task: IMU 50 Hz, BMM150 25 Hz poll, slot {} ms scan (queue={})",
+        subboard::SCAN_PERIOD_MS,
         SENSOR_QUEUE_CAPACITY
     );
 
@@ -94,7 +94,7 @@ pub async fn sensor_task(mut module: ModuleWatcher) {
     imu::scan_buses().await;
 
     // Sensor bring-up is asynchronous and never fatal: the task keeps the
-    // module watcher and the remaining devices running if one probe fails.
+    // slot scanner and the remaining devices running if one probe fails.
     let mut imu = Bmi270::probe().await;
     if let Some(device) = &mut imu {
         if let Err(error) = device.configure().await {
@@ -283,9 +283,9 @@ pub async fn sensor_task(mut module: ModuleWatcher) {
             }
         }
 
-        // ---- Interaction module inputs: 25 Hz, offset from the BMM poll ----
+        // ---- Interaction board inputs: 25 Hz, offset from the BMM poll ----
         if tick % SLOW_DIVIDER == 0 {
-            if let Some(inputs) = module.poll_inputs() {
+            if let Some(inputs) = subboard.poll_inputs() {
                 let at = now_ms();
                 publish(SensorEvent {
                     at_ms: at,
@@ -355,22 +355,23 @@ pub async fn sensor_task(mut module: ModuleWatcher) {
             next_battery_ms = now.saturating_add(BATTERY_PERIOD_MS);
         }
 
-        // ---- Right-slot module: 250 ms presence scan ----
+        // ---- Expansion slots: 250 ms presence scan ----
         if now >= next_scan_ms {
-            match module.scan().await {
-                ScanEvent::InteractionInserted => publish(SensorEvent {
+            for change in subboard.scan().await.into_iter().flatten() {
+                publish(SensorEvent {
                     at_ms: now_ms(),
-                    source: EventSource::ModuleRight,
-                    kind: EventKind::ModuleInserted,
-                }),
-                ScanEvent::InteractionRemoved => publish(SensorEvent {
-                    at_ms: now_ms(),
-                    source: EventSource::ModuleRight,
-                    kind: EventKind::ModuleRemoved,
-                }),
-                ScanEvent::None => {}
+                    source: match change.slot {
+                        Slot::Left => EventSource::ModuleLeft,
+                        Slot::Right => EventSource::ModuleRight,
+                    },
+                    kind: if change.inserted {
+                        EventKind::ModuleInserted(change.kind)
+                    } else {
+                        EventKind::ModuleRemoved(change.kind)
+                    },
+                });
             }
-            next_scan_ms = now.saturating_add(crate::drivers::module::SCAN_PERIOD_MS);
+            next_scan_ms = now.saturating_add(subboard::SCAN_PERIOD_MS);
         }
 
         // ---- Persistent [scan] summary every 10 s ----
@@ -386,21 +387,14 @@ pub async fn sensor_task(mut module: ModuleWatcher) {
             last_imu_samples = imu_samples;
             last_bmm_samples = bmm_samples;
 
-            let module_state = if !module.present() {
-                "absent"
-            } else if module.interact_active() {
-                "interact"
-            } else {
-                "other"
-            };
-            let board_type = module.board_type().unwrap_or(0);
+            let slots = subboard.status();
             let mag_count = mags.iter().filter(|device| device.is_some()).count();
             let first_mag = last_mag.iter().flatten().next().copied();
             let mag_ut = first_mag.map(|sample| sample.magnitude_ut).unwrap_or(0.0);
             let mag_raw = first_mag.map(|sample| sample.raw).unwrap_or([0; 3]);
 
             info!(
-                "sensor: imu={imu_hz}Hz bmm={bmm_hz}Hz q={} drops={} edrops={} mod={module_state}(0x{board_type:02X}) mags={mag_count} mag={mag_ut:.1}uT raw=[{},{},{}] ierr={imu_errors} iskip={imu_skips} berr={bmm_errors} bskip={bmm_empty}",
+                "sensor: imu={imu_hz}Hz bmm={bmm_hz}Hz q={} drops={} edrops={} slots=[{slots}] mags={mag_count} mag={mag_ut:.1}uT raw=[{},{},{}] ierr={imu_errors} iskip={imu_skips} berr={bmm_errors} bskip={bmm_empty}",
                 SENSOR_EVENTS.len(),
                 SENSOR_DROPS.load(Ordering::Relaxed),
                 SENSOR_EDGE_DROPS.load(Ordering::Relaxed),
@@ -527,8 +521,8 @@ fn is_edge(kind: EventKind) -> bool {
             | EventKind::MagneticRelease
             | EventKind::MagneticOrbit
             | EventKind::MagneticEdge { .. }
-            | EventKind::ModuleInserted
-            | EventKind::ModuleRemoved
+            | EventKind::ModuleInserted(_)
+            | EventKind::ModuleRemoved(_)
     )
 }
 

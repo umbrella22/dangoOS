@@ -1,8 +1,8 @@
-//! H0 module timelines: right-slot Interaction insertion/removal sequences,
-//! left-slot camera reactions, duplicate suppression, and overlay return.
+//! H0 module timelines: Interaction insertion/removal sequences on either
+//! slot, camera reactions, duplicate suppression, and overlay return.
 
 use crate::behavior::affect::{
-    AffectEngine, EventKind, EventSource, HapticPattern, ReactionReason, SensorEvent,
+    AffectEngine, EventKind, EventSource, HapticPattern, ModuleKind, ReactionReason, SensorEvent,
 };
 use crate::behavior::Expression;
 
@@ -14,12 +14,20 @@ fn module(at_ms: u64, source: EventSource, kind: EventKind) -> SensorEvent {
     }
 }
 
+/// The usual layout: Interaction on the right, camera on the left.
+fn usual_kind(source: EventSource) -> ModuleKind {
+    match source {
+        EventSource::ModuleLeft => ModuleKind::Camera,
+        _ => ModuleKind::Interaction,
+    }
+}
+
 fn inserted(at_ms: u64, source: EventSource) -> SensorEvent {
-    module(at_ms, source, EventKind::ModuleInserted)
+    module(at_ms, source, EventKind::ModuleInserted(usual_kind(source)))
 }
 
 fn removed(at_ms: u64, source: EventSource) -> SensorEvent {
-    module(at_ms, source, EventKind::ModuleRemoved)
+    module(at_ms, source, EventKind::ModuleRemoved(usual_kind(source)))
 }
 
 fn button(at_ms: u64, kind: EventKind) -> SensorEvent {
@@ -178,4 +186,37 @@ fn insertion_while_angry_is_ignored() {
     assert_eq!(during_angry.haptic, None);
 
     assert_eq!(engine.tick(10_200).state.expression, Expression::Idle);
+}
+
+#[test]
+fn interaction_in_the_left_slot_plays_the_interaction_sequence() {
+    let mut engine = AffectEngine::new(0);
+
+    let kind = EventKind::ModuleInserted(ModuleKind::Interaction);
+    engine.on_event(module(100, EventSource::ModuleLeft, kind));
+    assert_eq!(engine.tick(100).state.expression, Expression::Surprised);
+    assert_eq!(engine.tick(600).state.expression, Expression::Curious);
+    assert_eq!(engine.tick(2_100).state.expression, Expression::Happy);
+    assert_eq!(engine.tick(3_300).state.expression, Expression::Idle);
+
+    let kind = EventKind::ModuleRemoved(ModuleKind::Interaction);
+    engine.on_event(module(4_000, EventSource::ModuleLeft, kind));
+    assert_eq!(engine.tick(4_000).state.expression, Expression::Surprised);
+    assert_eq!(engine.tick(4_400).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(6_400).state.expression, Expression::Idle);
+}
+
+#[test]
+fn each_slot_tracks_its_own_presence() {
+    let mut engine = AffectEngine::new(0);
+
+    let insert = EventKind::ModuleInserted(ModuleKind::Interaction);
+    engine.on_event(module(100, EventSource::ModuleRight, insert));
+    assert_eq!(engine.tick(3_300).state.expression, Expression::Idle);
+
+    // A second board on the other side is a new insertion, not a duplicate.
+    engine.on_event(module(4_000, EventSource::ModuleLeft, insert));
+    let second = engine.tick(4_000);
+    assert_eq!(second.state.expression, Expression::Surprised);
+    assert_eq!(second.haptic, Some(HapticPattern::ModuleInsert));
 }
