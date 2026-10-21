@@ -1,0 +1,2 @@
+# edit of source/idle.png
+Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Change only the ear on the viewer's left: it flicks, tilted outward about 15 degrees with the tip slightly bent. The other ear stays exactly the same. Nothing else changes. Do not add any text or new elements.

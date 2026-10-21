@@ -1,0 +1,2 @@
+# edit of source/panic.png
+Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Remove only the blue sweat drops flying around the head and the small curved motion lines next to the paws. Keep the tears at the eyes. Nothing else changes.

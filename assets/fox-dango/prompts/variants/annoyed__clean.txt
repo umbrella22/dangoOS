@@ -1,0 +1,2 @@
+# edit of source/annoyed.png
+Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Remove only the small grey sigh puff next to the mouth; fill with what is behind it. Nothing else changes.

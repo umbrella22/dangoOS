@@ -1,0 +1,2 @@
+# edit of source/confused.png
+Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Remove only the small sweat drops around the head; fill with the black background or the hair/skin that is behind them. Nothing else changes.

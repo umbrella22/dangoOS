@@ -1,18 +1,29 @@
 # 狐狸团子（fox-dango）角色素材
 
-替换 grok-ball 程序化小球的新形象。目前完成：18 个表情的静态姿势、480 屏量化
-预览、眨眼补丁验证和一段设备等效的动画原型。固件还没有接入。
+替换 grok-ball 程序化小球的新形象。目前完成：18 个表情的静态姿势、14 个表情的
+局部补丁（眨眼 / 嘴型 / 耳朵 / 视线 / 螺旋眼）、8 个表情的独立符号精灵，以及描述
+这一切的 `device/manifest.json`。固件还没有接入。
 
 | 目录 | 内容 | 是否入库 |
 | --- | --- | --- |
-| `source/` | 1254×1254 高清原稿（黑底），19 张：18 个表情 + `idle_blink` | 否（约 21 MB，`.gitignore`） |
-| `device/` | 352×336 设备画布，共享 128 色调色板、无抖动、RGB565 精确色 | 是 |
-| `preview/` | `expressions_480.png` 全表情屏幕预览；`animation_prototype.gif/.mp4` 动画原型 | 是 |
-| `prompts/` | 每张图的生成提示词（`gpt-image-2.5-sunburst`，以 `idle` 为底图做 edit） | 是 |
-| `tools/` | `fox_build.py`（量化 + 预览）、`fox_anim.py`（动画原型） | 是 |
+| `source/` | 1254×1254 高清原稿（黑底）：18 个表情 + `variants/` 下 26 张对齐编辑（`<表情>__<部位>.png`） | 否（`.gitignore`） |
+| `device/poses/` | 18 张 352×336 底图。带符号的表情这里放的是去掉符号的干净版 | 是 |
+| `device/parts/<表情>/` | 补丁和符号精灵（RGBA，透明处 alpha=0） | 是 |
+| `device/manifest.json` | 画布、128 色 RGB565 调色板、每个部件的类型和位置、动画参数 | 是 |
+| `preview/` | `expressions_480.png` 全表情（含符号）；`parts_sheet.png` 部件框（绿=补丁，品红=精灵）；`animation_parts.mp4/.gif` 九宫格动画 | 是 |
+| `prompts/` | 生成提示词：姿势在根目录，对齐编辑在 `variants/` | 是 |
+| `tools/` | `fox_build.py`（几何 / 调色板 / 全表情预览）、`fox_parts.py`（差分出部件，写 `device/`）、`fox_anim.py`（只用 `device/` 合成动画） | 是 |
 
-重新生成：`python3 assets/fox-dango/tools/fox_build.py && python3 assets/fox-dango/tools/fox_anim.py`
-（需要 numpy、pillow、scipy；MP4 需要 ffmpeg）。
+重新生成：
+
+```sh
+python3 assets/fox-dango/tools/fox_parts.py   # device/ + preview/parts_sheet.png
+python3 assets/fox-dango/tools/fox_build.py   # preview/expressions_480.png
+python3 assets/fox-dango/tools/fox_anim.py    # preview/animation_parts.*
+```
+
+需要 numpy、pillow、scipy；MP4 需要 ffmpeg。所有 PNG 都只用调色板里的 128 种颜色，
+转换脚本按 RGB565 值查回索引即可，不会有未命中。
 
 ## 表情映射
 
@@ -45,8 +56,51 @@
 - 全部表情共享一张 128 色调色板，不抖动。64 色会丢掉皮肤的粉调；
   Floyd–Steinberg 抖动在头发上会产生颗粒，而且缩放时颗粒会闪。
   平涂风格不抖动反而最干净。
-- 存储：8 bit 索引 + 字节 RLE，18 个姿势合计约 535 KiB flash（单张最大约 36 KiB），
-  外加 128×2 B 调色板。原始 RGB565 是每张 231 KiB。
+- 存储：8 bit 索引 + 字节 RLE（每行独立、(长度, 索引) 两字节一段），
+  18 张底图约 569 KiB（单张最大约 40 KiB），73 个部件约 88 KiB，合计约 660 KiB flash，
+  外加 128×2 B 调色板。精灵用索引 255 表示透明。原始 RGB565 是每张 231 KiB。
+
+## manifest 格式
+
+```jsonc
+{
+  "canvas": [352, 336],
+  "palette_rgb565": [/* 128 项 */],
+  "poses": {
+    "charging": {
+      "file": "poses/charging.png", "label": "充电 Charging",
+      "hints": { "breath_ms": 3000, "blink": [2500, 6000], "symbols": "spark[0] (bolt): bob 4 px; ..." },
+      "parts": {
+        "blink": [{ "kind": "patch",  "file": "parts/charging/blink_0.png", "x": 93, "y": 214, "w": 68, "h": 64 }, ...],
+        "spark": [{ "kind": "sprite", "over": "bg", "file": "parts/charging/spark_0.png", "x": 152, "y": 28, "w": 48, "h": 70 }, ...]
+      }
+    }
+  }
+}
+```
+
+- `patch`：不透明矩形，直接覆盖底图同一位置。
+- `sprite`：带透明的符号。`over: "bg"` 在黑底上，可以随意移动、闪烁、淡出；
+  `over: "body"` 压在角色身上（怒筋、头发上的汗滴），底图下面是干净的，所以缩放 / 移开也不会露馅。
+- `frame`：只有 Confused 的螺旋眼有，1–3 是旋转帧，0 就是底图本身。
+
+## 部件清单
+
+| 表情 | 补丁 | 符号精灵 |
+| --- | --- | --- |
+| Idle | blink ×2、gaze_left ×2、gaze_right ×2、ear_flick | — |
+| Sleep | — | z ×3（上浮淡出） |
+| Curious / Surprised / Tired | blink ×2 | — |
+| Puzzled | blink ×2 | question（上下浮动） |
+| Confused | spiral 3 帧 × 2 眼 | sweat ×3（闪烁） |
+| Panic | blink ×2 | sweat ×6（向外飞出）、tremble ×6（爪边抖动线） |
+| Angry | blink ×2 | anger_mark（放大缩小脉动） |
+| Listening | blink ×2、ear_turn | — |
+| Thinking | blink ×2 | dot ×3（依次亮起） |
+| Speaking | blink ×2、mouth_closed、mouth_wide | — |
+| Annoyed | blink ×2 | sigh（飘出淡出） |
+| Charging | blink ×2 | spark ×11，`spark_0` 是闪电（浮动），其余是火花（闪烁） |
+| Happy / Satisfied / Error / Dying | — | —（眼睛本来就是闭的或不需要眨） |
 
 ## 动画方案
 
@@ -54,20 +108,13 @@
 
 ### L0 姿势（静态，每个表情一张）
 
-就是 `device/` 里的 18 张。切换表情 = 换一张 RLE 姿势。
+就是 `device/poses/` 里的 18 张。切换表情 = 换一张 RLE 姿势。
 
 ### L1 局部补丁（对齐编辑 + 自动差分）
 
 用底图做“只改某个部位”的编辑，模型基本能保持其余像素不动。
-`fox_anim.py` 对原稿做差分、开运算去噪、取最大的两个连通块，自动得到补丁框。
-已经验证眨眼：补丁 163×69 px，RGB565 原始约 22 KiB，RLE 后更小。
-同样的方法可以做：
-
-- 眨眼（每个睁眼表情一张闭眼补丁，必要时再加半闭帧）
-- Speaking 的 3 个嘴型（跟随音量切换）
-- Confused 螺旋眼的 2–3 个旋转帧
-- Listening / Idle 的耳朵抖动帧
-- 视线漂移（瞳孔左右各一帧）
+`fox_parts.py` 对原稿做差分、开运算去噪、按部位保留最大的 1–2 个连通块，自动得到补丁框，
+清单见上面的“部件清单”。Confused 的螺旋眼是程序旋转出来的 3 帧（最近邻，颜色不变）。
 
 ### L2 程序化形变（整张姿势，零素材）
 
@@ -101,11 +148,22 @@
 | Annoyed | 一次叹气压扁 + 气团上浮 |
 | Charging | 闪电上下浮动、火花闪烁 |
 
-### L3 叠加粒子
+### L3 符号精灵
 
-问号、三个点、汗滴、Zzz、闪电、怒筋现在是画进姿势里的，所以只能跟着整体动。
-要让它们独立动，需要再出一版“去掉符号”的姿势，把符号做成小精灵单独叠加
-（每个几百字节到几 KiB）。
+带符号的表情各出了一版“去掉符号”的干净底图（`<表情>__clean`），Sleep 反过来出了一版
+“加上 Zzz”的。两者差分就是符号本身，每个连通块一个精灵，几百字节到 2 KiB。
+淡出用 4×4 Bayer 点阵丢像素，不做 alpha 混合，索引渲染每像素一次比较就够。
+
+### 每帧合成顺序（固件照这个做）
+
+1. 解码底图 RLE 到工作缓冲（索引）
+2. 叠 `patch`（眨眼 / 嘴型 / 耳朵 / 视线 / 螺旋帧）
+3. 叠 `over: "body"` 的精灵（会跟着身体一起形变）
+4. 整体最近邻形变（呼吸、pop、跺脚、抖动）
+5. 叠 `over: "bg"` 的精灵（各自位移、闪烁、淡出，不跟着形变）
+6. 调色板查表成 RGB565 送屏
+
+`tools/fox_anim.py` 就是这个流程的参考实现，`preview/animation_parts.mp4` 是它的输出。
 
 ## 固件接入要点（下一步）
 

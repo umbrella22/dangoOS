@@ -1,0 +1,2 @@
+# edit of source/thinking.png
+Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Remove only the three small dots above the head; fill with the black background. Nothing else changes.
