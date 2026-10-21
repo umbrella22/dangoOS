@@ -7,7 +7,7 @@
 //!   register sequence are ported from
 //!   `archive/crates-pre-s31-20261019/fan-firmware/src/drivers/imu/protocol.rs`
 //!   (Bosch BMI270 SensorAPI v2.86.1). The blob is copied beside this file
-//!   (`bmi270-config.bin`, SHA-256
+//!   (`src/assets/bmi270-config.bin`, SHA-256
 //!   `2d75e68e343a13ff99be98261dfbd99d9e8c6f267da9e3c5aeb883276ad178db`).
 //! - The official BSP `components/esp-mosaico-bsp/onboard/sensors.c` requires
 //!   the configuration load, `bmi2_get_sensor_data` reads and the BMM150
@@ -48,7 +48,7 @@ use log::{info, warn};
 use crate::drivers::shared_i2c;
 
 /// Unmodified Bosch `bmi270_config_file` (8192 bytes).
-const BMI270_CONFIG: &[u8; 8192] = include_bytes!("bmi270-config.bin");
+const BMI270_CONFIG: &[u8; 8192] = include_bytes!("../assets/bmi270-config.bin");
 
 const BMI270_CHIP_ID: u8 = 0x24;
 const BMM150_CHIP_ID: u8 = 0x32;
