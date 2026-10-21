@@ -26,6 +26,18 @@
 //!
 //! The LVGL splash therefore cannot be shown on this path; the compile-time
 //! check below keeps `ui::SHOW_SPLASH` from silently freezing the boot screen.
+//!
+//! # Hub pages (RFC 0006)
+//!
+//! The fox is the home page. The launcher and the native apps are LVGL
+//! pages: on them this task runs `lv_timer_handler`, which renders into the
+//! display port's PSRAM shadow, and submits the damaged rectangle to the
+//! same plane. Touch first goes through [`EdgeGestures`]: edge swipes switch
+//! pages, everything else goes to the fox on Home and to LVGL elsewhere.
+//!
+//! Off Home the runtime keeps running, so the mood lights still react to
+//! modules and sensors; haptics play only on Home, and only when enabled in
+//! Settings. A finished countdown buzzes and opens the timer page.
 
 use alloc::rc::Rc;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -36,20 +48,24 @@ use lvgl::sys;
 use lvgl_ui::Ui;
 use mosaico_s31::behavior::personality::PointerSample;
 use mosaico_s31::behavior::{Expression, Runtime};
+use mosaico_s31::behavior::affect::HapticPattern;
 use mosaico_s31::fox::entrance;
+use mosaico_s31::hub::gesture::{EdgeGestures, Route};
+use mosaico_s31::hub::{AppId, Page};
 use mosaico_s31::telemetry::{display as display_stats, latency};
 use mosaico_s31::ui::fox_widget::{self, FoxControl};
 use mosaico_s31::ui::splash::SplashControl;
-use mosaico_s31::ui::{theme, MosaicoApp, Screen, SHOW_SPLASH};
+use mosaico_s31::ui::{theme, AppMsg, MosaicoApp, Screen, SHOW_SPLASH};
 
 use super::{
     haptic,
     input::{INPUT, INPUT_CAPACITY},
     lights,
-    plane::{PlaneJob, PlaneUi},
+    plane::{self, Frame, PlaneJob, PlaneUi},
     sensors::SENSOR_EVENTS,
 };
-use crate::drivers::lvgl_port::DisplayPort;
+use crate::drivers::geometry::{HEIGHT, WIDTH};
+use crate::drivers::lvgl_port::{self, DisplayPort};
 
 const _: () = assert!(
     !SHOW_SPLASH,
@@ -69,6 +85,9 @@ const DRAIN_MAX: usize = 32;
 /// larger backlog is left for the next loop so the UI never stalls on sensors.
 const SENSOR_DRAIN_MAX: u32 = 24;
 
+/// Sensors page refresh period.
+const SENSORS_REFRESH_MS: u64 = 200;
+
 /// Number of one-second UI stats intervals processed since boot.
 pub static HEARTBEATS: AtomicU32 = AtomicU32::new(0);
 
@@ -82,10 +101,9 @@ pub async fn ui_task(mut plane: PlaneUi) {
     lvgl::init();
     unsafe { sys::lv_tick_set_cb(Some(tick_ms)) };
 
-    // LVGL needs a registered display to create objects, even though this
-    // path never renders through it.
+    // The fox never renders through LVGL; hub pages do (see the module docs).
     // SAFETY: this is the only task that calls LVGL.
-    let _display_port = unsafe { DisplayPort::new() };
+    let mut port = unsafe { DisplayPort::new() };
 
     // The widget's profiling counters need a microsecond clock; the widget
     // also runs on the host, so the firmware installs the device clock here.
@@ -128,6 +146,13 @@ pub async fn ui_task(mut plane: PlaneUi) {
     let mut pending_touch: Option<u64> = None;
     let mut last_shown = Expression::Idle;
     let mut last_screen = app.screen();
+    let mut gestures = EdgeGestures::new();
+    let mut last_page = app.page();
+    let mut settings = app.hub().settings;
+    let mut last_sensors_refresh = 0u64;
+    let mut last_timer_second = u32::MAX;
+    // The next fox frame must clear what the previous page left around it.
+    let mut clear_on_fox = false;
 
     loop {
         // Wall-clock animation step. The loop period is a floor, not a fixed
@@ -146,8 +171,10 @@ pub async fn ui_task(mut plane: PlaneUi) {
         // frame is part of this one. The channel is bounded and the producer
         // drops the oldest non-edge event, so this loop always terminates.
         let mut sensor_count = 0u32;
+        let mut sensors_changed = false;
         while let Ok(event) = SENSOR_EVENTS.try_receive() {
             sensor_count = sensor_count.saturating_add(1);
+            sensors_changed |= app.hub_mut().snapshot.observe(&event);
             runtime.on_sensor(event);
             if sensor_count >= SENSOR_DRAIN_MAX {
                 break;
@@ -160,20 +187,73 @@ pub async fn ui_task(mut plane: PlaneUi) {
         // ---- pointer queue -> personality engine ----
         // Every event is delivered in order: collapsing would swallow the press
         // edge of a tap that starts and ends inside one 5 ms loop.
+        // Edge swipes go to the shell; the rest to the fox (Home) or LVGL.
         while let Ok(event) = INPUT.try_receive() {
-            let was_pressed = press_state;
-            press_state = event.pressed;
-            // Only a press the runtime actually acted on is tagged: a touch
-            // swallowed by the boot hold-off must not become a latency sample.
-            let acted = runtime.on_pointer(PointerSample {
+            let sample = PointerSample {
                 at_ms: (event.at_us / 1000).max(now_ms),
                 x: event.x as i32,
                 y: event.y as i32,
                 pressed: event.pressed,
-            });
-            if event.pressed && !was_pressed && acted && pending_touch.is_none() {
-                pending_touch = Some(event.at_us);
+            };
+            match gestures.feed(sample) {
+                Route::Gesture(gesture) => {
+                    if let Err(error) = ui.post(AppMsg::Gesture(gesture)) {
+                        warn!("ui_task: gesture post rejected: {error}");
+                    }
+                }
+                Route::Held => {}
+                Route::Pass if app.page() == Page::Home => {
+                    let was_pressed = press_state;
+                    press_state = event.pressed;
+                    // Only a press the runtime actually acted on is tagged: a
+                    // touch swallowed by the hold-off must not become a
+                    // latency sample.
+                    let acted = runtime.on_pointer(sample);
+                    if event.pressed && !was_pressed && acted && pending_touch.is_none() {
+                        pending_touch = Some(event.at_us);
+                    }
+                }
+                Route::Pass => {
+                    lvgl_port::set_pointer(sample.x, sample.y, sample.pressed);
+                }
             }
+        }
+
+        // ---- hub clock, countdown and live pages ----
+        app.hub_mut().now_ms = now_ms;
+        if app.hub_mut().countdown.poll(now_ms) {
+            info!("hub: countdown finished");
+            if app.hub().settings.haptics {
+                haptic::play(HapticPattern::Surprised);
+            }
+            app.go(Page::App(AppId::Timer));
+            ui.mark_dirty();
+        }
+        match app.page() {
+            Page::App(AppId::Timer) => {
+                let second = app.hub().countdown.display_seconds(now_ms);
+                if second != last_timer_second {
+                    last_timer_second = second;
+                    ui.mark_dirty();
+                }
+            }
+            Page::App(AppId::Sensors)
+                if sensors_changed
+                    && now_ms.saturating_sub(last_sensors_refresh) >= SENSORS_REFRESH_MS =>
+            {
+                last_sensors_refresh = now_ms;
+                ui.mark_dirty();
+            }
+            Page::App(AppId::Settings) => {
+                let uptime_s = now_ms / 1000;
+                if app.hub().about.uptime_s != uptime_s {
+                    let about = &mut app.hub_mut().about;
+                    about.uptime_s = uptime_s;
+                    about.free_kib = (esp_alloc::HEAP.free() / 1024) as u32;
+                    ui.mark_dirty();
+                }
+            }
+            _ => {}
         }
 
         // ---- queued UI messages ----
@@ -186,10 +266,40 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
             last_screen = app.screen();
         }
+        if app.page() != last_page {
+            info!("hub: {:?} -> {:?}", last_page, app.page());
+            gestures.reset_pass();
+            lvgl_port::set_pointer(0, 0, false);
+            if app.page() == Page::Home {
+                // The entrance replays; a finger still on the glass from the
+                // swipe must not interrupt it.
+                runtime.ignore_touch_until(now_ms + entrance::TOTAL_MS);
+                port.discard_damage();
+                clear_on_fox = true;
+            } else {
+                port.invalidate_all();
+            }
+            last_timer_second = u32::MAX;
+            last_page = app.page();
+        }
+        let current = app.hub().settings;
+        if current != settings {
+            if current.brightness != settings.brightness {
+                plane::set_brightness(current.brightness);
+            }
+            if current.lights != settings.lights {
+                lights::set_enabled(current.lights);
+            }
+            settings = current;
+        }
 
         // ---- merged expression and haptics ----
+        // The fox keeps living off Home (lights still react); it only buzzes
+        // where it can be seen.
         if let Some(pattern) = runtime.tick(now_ms) {
-            haptic::play(pattern);
+            if settings.haptics && app.page() == Page::Home {
+                haptic::play(pattern);
+            }
         }
         lights::show(runtime.expression());
 
@@ -197,12 +307,33 @@ pub async fn ui_task(mut plane: PlaneUi) {
         if let Err(error) = ui.tick(elapsed_ms) {
             warn!("ui_task: Ui::tick rejected: {error}");
         }
-        if let Some(canvas) = control.take_frame() {
-            plane.submit(PlaneJob {
-                canvas,
-                size: plane_size,
-                touch_at_us: pending_touch.take(),
-            });
+        if app.page() == Page::Home {
+            if let Some(canvas) = control.take_frame() {
+                plane.submit(PlaneJob {
+                    canvas: Frame::Pool(canvas),
+                    size: plane_size,
+                    at: None,
+                    damage: None,
+                    clear_outside: core::mem::take(&mut clear_on_fox),
+                    touch_at_us: pending_touch.take(),
+                });
+            }
+        } else if !port.is_busy() {
+            ui.timer_handler();
+            // Callbacks fired by the timer handler only queue messages.
+            if let Err(error) = ui.drain(&mut app, DRAIN_MAX) {
+                warn!("ui_task: Ui::drain rejected: {error}");
+            }
+            if let Some((screen, damage)) = port.take_frame() {
+                plane.submit(PlaneJob {
+                    canvas: Frame::Screen(screen),
+                    size: (WIDTH as u16, HEIGHT as u16),
+                    at: Some((0, 0)),
+                    damage: Some(damage),
+                    clear_outside: false,
+                    touch_at_us: None,
+                });
+            }
         }
 
         if last_stats.elapsed() >= STATS_PERIOD {

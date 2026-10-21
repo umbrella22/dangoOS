@@ -11,6 +11,7 @@
 | [RFC 0003: Grok-Ball First Screen (archived)](../legacy/plans/grok-ball-first-screen-plan.md) | G0–G2 complete on hardware; G3 optional | Rust/LVGL port of the MIT grok-ball engine; six AI states; 240×240 device canvas; full-screen transparent Obj touch layer; only the ball redraws; P95 30 ms / 20 fps | [Execution ledger](../legacy/plans/grok-ball-first-screen-execution-ledger.md) |
 | [RFC 0004: Grok-Ball Sensor Reactions](grok-ball-sensor-reactions-plan.md) | Implemented and accepted on device (motor, camera/magnet, LDR, PIR); WS2812 mood light implemented (right slot); capacitive keys open; IR deferred | Interaction module in either slot, BMI270, BMM150 (both online), touch, keys and RMT haptics | [Execution ledger](../legacy/plans/grok-ball-sensor-reactions-execution-ledger.md) |
 | [RFC 0005: Platform Runtime](platform-runtime-plan.md) | Complete; IMU on BMI270 FIFO at 50 Hz | `esp-rtos` + Embassy task skeleton, USB-OTG HS CDC console, async two-frame display/input, P95 gate, sensor task | [Execution ledger](../legacy/plans/platform-runtime-execution-ledger.md) |
+| [RFC 0006: Hub Shell, Native Apps and Lua](hub-shell-plan.md) | H0 (host) done; H1 firmware in progress; Lua L0–L2 after H2 | Fox as home page, launcher, edge gestures, Settings / Sensors / Timer on LVGL through the plane, official-compatible Lua 5.5 app layer | In the plan (section on stages) |
 
 ## RFC 0002 compatibility report
 

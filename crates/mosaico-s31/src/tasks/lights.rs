@@ -48,6 +48,8 @@ const T1L: u16 = 4;
 static EXPRESSION: AtomicU8 = AtomicU8::new(0);
 static AMBIENT: AtomicU8 = AtomicU8::new(u8::MAX);
 static ATTACHED: AtomicBool = AtomicBool::new(false);
+/// Settings switch: when false the ring shows black (RFC 0006).
+static ENABLED: AtomicBool = AtomicBool::new(true);
 /// Key presses: low byte counts left presses, next byte right presses.
 static SPARKS: AtomicU32 = AtomicU32::new(0);
 
@@ -72,6 +74,12 @@ pub fn spark(side: Side) {
         Side::Right => 8,
     };
     SPARKS.fetch_add(1 << shift, Ordering::Relaxed);
+}
+
+/// Turn the mood lights on or off (Settings). Off writes black frames, so
+/// the ring goes dark at once; the engine keeps running underneath.
+pub fn set_enabled(enabled: bool) {
+    ENABLED.store(enabled, Ordering::Relaxed);
 }
 
 /// Whether an Interaction board is the active one in the right slot.
@@ -121,7 +129,10 @@ pub async fn lights_task(mut channel: LightChannel) {
         }
         seen_sparks = sparks;
 
-        let frame = light.frame(now);
+        let mut frame = light.frame(now);
+        if !ENABLED.load(Ordering::Relaxed) {
+            frame.iter_mut().for_each(|led| *led = Default::default());
+        }
         let attached = ATTACHED.load(Ordering::Relaxed);
         if attached != was_attached {
             info!("lights: {}", if attached { "on" } else { "off (no board)" });

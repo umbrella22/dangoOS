@@ -23,6 +23,7 @@ extern crate alloc;
 
 pub mod behavior;
 pub mod fox;
+pub mod hub;
 pub mod telemetry;
 pub mod ui;
 

@@ -23,6 +23,8 @@
 
 pub mod canvas_pool;
 pub mod fox_widget;
+pub mod hub_font;
+pub mod hub_view;
 pub mod splash;
 
 use alloc::rc::Rc;
@@ -31,6 +33,8 @@ use core::cell::Cell;
 use lvgl_ui::{App, Color, Key, Node, Style, Theme};
 
 use crate::behavior::Expression;
+use crate::hub::gesture::SystemGesture;
+use crate::hub::{AppId, Hub, Page};
 use crate::fox::entrance;
 use fox_widget::{FoxControl, FoxWidget};
 use splash::{SplashControl, SplashWidget};
@@ -80,6 +84,22 @@ pub enum AppMsg {
     SplashDone,
     /// Advance through the six AI states (host preview and tests).
     Next,
+    /// A launcher tile was tapped.
+    Open(AppId),
+    /// A system edge gesture (from the UI task, not LVGL).
+    Gesture(SystemGesture),
+    /// Settings: panel brightness, percent.
+    Brightness(i32),
+    /// Settings: interaction-board lights.
+    Lights(bool),
+    /// Settings: vibration motor.
+    Haptics(bool),
+    /// Timer: select a preset (index into `PRESETS_MIN`).
+    TimerPreset(usize),
+    /// Timer: start, pause or resume.
+    TimerToggle,
+    /// Timer: back to the full preset.
+    TimerReset,
 }
 
 /// First-screen application.
@@ -87,6 +107,7 @@ pub struct MosaicoApp {
     control: Rc<FoxControl>,
     splash: Rc<SplashControl>,
     screen: Cell<Screen>,
+    hub: Hub,
 }
 
 impl MosaicoApp {
@@ -105,6 +126,7 @@ impl MosaicoApp {
             } else {
                 Screen::Fox
             }),
+            hub: Hub::new(),
         }
     }
 
@@ -123,6 +145,32 @@ impl MosaicoApp {
             splash::TOTAL_MS + entrance::TOTAL_MS
         } else {
             entrance::TOTAL_MS
+        }
+    }
+
+    /// Hub state (page, settings, app state).
+    pub fn hub(&self) -> &Hub {
+        &self.hub
+    }
+
+    /// Mutable hub state, for the UI task (clock, sensors, about).
+    pub fn hub_mut(&mut self) -> &mut Hub {
+        &mut self.hub
+    }
+
+    /// The page on screen.
+    pub fn page(&self) -> Page {
+        self.hub.page
+    }
+
+    /// Change page. Coming back to the fox replays its entrance.
+    pub fn go(&mut self, page: Page) {
+        if page == self.hub.page {
+            return;
+        }
+        self.hub.page = page;
+        if page == Page::Home && self.screen.get() == Screen::Fox {
+            self.control.start_entrance();
         }
     }
 
@@ -147,6 +195,26 @@ impl App for MosaicoApp {
                 self.control
                     .set_expression(next_ai_state(self.control.expression()));
             }
+            AppMsg::Open(app) => {
+                if self.hub.page == Page::Launcher {
+                    self.go(Page::App(app));
+                }
+            }
+            AppMsg::Gesture(gesture) => {
+                if self.screen.get() == Screen::Fox {
+                    let next = self.hub.page.after(gesture);
+                    self.go(next);
+                }
+            }
+            AppMsg::Brightness(percent) => self.hub.settings.set_brightness(percent),
+            AppMsg::Lights(on) => self.hub.settings.lights = on,
+            AppMsg::Haptics(on) => self.hub.settings.haptics = on,
+            AppMsg::TimerPreset(index) => self.hub.countdown.select(index),
+            AppMsg::TimerToggle => {
+                let now = self.hub.now_ms;
+                self.hub.countdown.toggle(now);
+            }
+            AppMsg::TimerReset => self.hub.countdown.reset(),
         }
     }
 
@@ -161,14 +229,24 @@ impl App for MosaicoApp {
                     Node::custom(SplashWidget::new(Rc::clone(&self.splash)))
                         .key(Key::Named("splash-widget")),
                 ),
-            Screen::Fox => Node::obj()
+            Screen::Fox => match self.hub.page {
+                Page::Home => self.fox_view(theme),
+                Page::Launcher => hub_view::launcher(),
+                Page::App(app) => hub_view::app(&self.hub, app),
+            },
+        }
+    }
+}
+
+impl MosaicoApp {
+    fn fox_view(&self, theme: &Theme) -> Node<AppMsg> {
+        Node::obj()
                 .key(Key::Named("fox-root"))
                 .style(Style::screen(theme))
                 .child(
                     Node::custom(FoxWidget::new(Rc::clone(&self.control)))
                         .key(Key::Named("fox-widget")),
-                ),
-        }
+                )
     }
 }
 
