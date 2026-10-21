@@ -335,10 +335,10 @@ impl Display<Async> {
         self.record_transfer_result(result)
     }
 
-    /// Upload one window from a tightly packed square canvas.
+    /// Upload one window from a tightly packed canvas.
     ///
-    /// The dedicated ball plane keeps its own 240x240 buffer, so the source
-    /// stride is `canvas_side`, not the panel width. `dst` is the panel
+    /// The dedicated ball plane keeps its own character-sized buffer, so the source
+    /// stride is the canvas width, not the panel width. `dst` is the panel
     /// window and must be 4-pixel aligned in x with a 4-multiple width (the
     /// plane quantizes the drag offset to 4 px). `src` is the matching window
     /// inside the canvas. The height must fit [`MAX_CHUNK_ROWS`].
@@ -346,10 +346,10 @@ impl Display<Async> {
         &mut self,
         dst: DirtyRect,
         src: DirtyRect,
-        canvas_side: u16,
+        canvas_size: (u16, u16),
         canvas: &[u16],
     ) -> Result<(), esp_hal::spi::Error> {
-        let byte_count = self.prepare_canvas(dst, src, canvas_side, canvas);
+        let byte_count = self.prepare_canvas(dst, src, canvas_size, canvas);
         self.send_prepared(dst, byte_count).await
     }
 
@@ -363,9 +363,10 @@ impl Display<Async> {
         &mut self,
         dst: DirtyRect,
         src: DirtyRect,
-        canvas_side: u16,
+        canvas_size: (u16, u16),
         canvas: &[u16],
     ) -> usize {
+        let (canvas_w, canvas_h) = canvas_size;
         if dst.is_empty() {
             return 0;
         }
@@ -373,9 +374,9 @@ impl Display<Async> {
         assert!(src.is_valid(), "canvas source outside panel: {src:?}");
         assert_eq!(dst.width(), src.width(), "canvas window/source width");
         assert_eq!(dst.height(), src.height(), "canvas window/source height");
-        assert!(src.x1 < canvas_side && src.y1 < canvas_side, "canvas source outside side");
+        assert!(src.x1 < canvas_w && src.y1 < canvas_h, "canvas source outside canvas");
         assert!(
-            canvas.len() >= canvas_side as usize * canvas_side as usize,
+            canvas.len() >= canvas_w as usize * canvas_h as usize,
             "canvas buffer too short",
         );
         assert!(
@@ -387,7 +388,7 @@ impl Display<Async> {
 
         packing::pack_rgb565(
             canvas,
-            (canvas_side, canvas_side),
+            (canvas_w, canvas_h),
             (src.x0, src.y0, src.x1, src.y1),
             MAX_CHUNK_ROWS,
             self.staging.as_mut_slice(),

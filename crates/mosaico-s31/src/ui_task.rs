@@ -49,7 +49,7 @@ use crate::{
     sensor_task::SENSOR_EVENTS,
     ui::{theme, BallApp, Screen, SHOW_SPLASH},
 };
-use mosaico_s31::ball_widget::BallControl;
+use mosaico_s31::ball_widget::{BallControl, Character};
 use mosaico_s31::runtime::BallRuntime;
 use mosaico_s31::splash_widget::SplashControl;
 
@@ -97,8 +97,9 @@ pub async fn ui_task(mut plane: ball_plane::PlaneUi) {
     let mut ui = Ui::new(&display, theme()).expect("LVGL UI creation failed");
     let control = BallControl::new(BallExpression::Idle);
     // Must precede the mount: the widget hides its native canvas and leaves
-    // both pool slots to the renderer.
+    // both pool slots to the renderer, and the pool is sized for the fox.
     control.set_plane_mode(true);
+    control.set_character(Character::Fox);
     let splash = SplashControl::new();
     let mut app = BallApp::new(Rc::clone(&control), Rc::clone(&splash));
     ui.mount(&app).expect("initial UI mount failed");
@@ -112,12 +113,15 @@ pub async fn ui_task(mut plane: ball_plane::PlaneUi) {
     // during boot must not interrupt the drop.
     runtime.ignore_touch_until(boot_ms + BallApp::touch_hold_off_ms());
 
+    let (canvas_w, canvas_h) = control.canvas_size();
     info!(
-        "ui_task: plane path, ball {}x{} @ {}ms, 2 canvas slots",
-        mosaico_s31::ball_widget::CANVAS_SIZE,
-        mosaico_s31::ball_widget::CANVAS_SIZE,
+        "ui_task: plane path, {:?} {}x{} @ {}ms, 2 canvas slots",
+        control.character(),
+        canvas_w,
+        canvas_h,
         mosaico_s31::ball_widget::FRAME_INTERVAL_MS,
     );
+    let plane_size = (canvas_w as u16, canvas_h as u16);
 
     let mut press_state = false;
     let mut last_stats = Instant::now();
@@ -199,6 +203,7 @@ pub async fn ui_task(mut plane: ball_plane::PlaneUi) {
         if let Some(canvas) = control.take_frame() {
             plane.submit(PlaneJob {
                 canvas,
+                size: plane_size,
                 touch_at_us: pending_touch.take(),
             });
         }

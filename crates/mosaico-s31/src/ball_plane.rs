@@ -47,10 +47,10 @@ use crate::{
     latency,
 };
 
-/// Panel-side edge of the ball canvas.
-pub const BALL_SIDE: u16 = mosaico_s31::ball_widget::CANVAS_SIZE as u16;
-/// Top-left of the fixed canvas on the panel.
-pub const BALL_ORIGIN: i32 = (WIDTH as i32 - BALL_SIDE as i32) / 2;
+/// Vertical offset of the character canvas below the panel centre. The fox
+/// is bottom-anchored in its canvas with headroom for hops; 16 px down keeps
+/// the visual centre of the face on the panel centre.
+const FOX_DROP_PX: u16 = 16;
 /// Longest wait for a TE edge before transferring anyway.
 const TE_TIMEOUT: Duration = Duration::from_millis(30);
 /// Rows per transfer chunk; 32 rows is the proven CO5300 burst at 80 MHz.
@@ -58,10 +58,12 @@ const CHUNK_ROWS: u16 = 32;
 const LOG_EVERY_FRAMES: u32 = 120;
 const FPS_WINDOW_US: u64 = 1_000_000;
 
-/// One canvas upload. The canvas is always at [`BALL_ORIGIN`].
+/// One canvas upload. The rectangle is fixed per character.
 pub struct PlaneJob {
     /// Exclusive read access to the rendered frame for the whole upload.
     pub canvas: ReadLease,
+    /// Canvas width and height in pixels.
+    pub size: (u16, u16),
     /// Touch timestamp of the press this frame responds to, if any.
     pub touch_at_us: Option<u64>,
 }
@@ -195,27 +197,29 @@ async fn run_plane(
             TOUCH_FRAMES.fetch_add(1, Ordering::Relaxed);
         }
 
+        let (canvas_w, canvas_h) = job.size;
+        let (origin_x, origin_y) = origin(job.size);
         let mut y = 0u16;
-        while y < BALL_SIDE {
-            let y2 = (y + CHUNK_ROWS - 1).min(BALL_SIDE - 1);
+        while y < canvas_h {
+            let y2 = (y + CHUNK_ROWS - 1).min(canvas_h - 1);
             let dst = DirtyRect {
-                x0: BALL_ORIGIN as u16,
-                y0: BALL_ORIGIN as u16 + y,
-                x1: BALL_ORIGIN as u16 + BALL_SIDE - 1,
-                y1: BALL_ORIGIN as u16 + y2,
+                x0: origin_x,
+                y0: origin_y + y,
+                x1: origin_x + canvas_w - 1,
+                y1: origin_y + y2,
             };
             let src = DirtyRect {
                 x0: 0,
                 y0: y,
-                x1: BALL_SIDE - 1,
+                x1: canvas_w - 1,
                 y1: y2,
             };
             let mut result = panel
-                .write_canvas_async(dst, src, BALL_SIDE, job.canvas.pixels())
+                .write_canvas_async(dst, src, job.size, job.canvas.pixels())
                 .await;
             if result.is_err() {
                 result = panel
-                    .write_canvas_async(dst, src, BALL_SIDE, job.canvas.pixels())
+                    .write_canvas_async(dst, src, job.size, job.canvas.pixels())
                     .await;
             }
             match result {
@@ -272,5 +276,17 @@ async fn run_plane(
                 "ball_plane: frame={frames} chunks={chunks} transfer={elapsed_us}us ok={completed}"
             );
         }
+    }
+}
+
+/// Top-left of a canvas on the panel: centred, square canvases exactly, the
+/// taller-than-wide-headroom fox canvas [`FOX_DROP_PX`] lower.
+fn origin((w, h): (u16, u16)) -> (u16, u16) {
+    let x = (WIDTH as u16 - w) / 2;
+    let y = (WIDTH as u16 - h) / 2;
+    if w == h {
+        (x, y)
+    } else {
+        (x, (y + FOX_DROP_PX).min(WIDTH as u16 - h))
     }
 }

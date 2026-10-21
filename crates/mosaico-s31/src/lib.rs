@@ -24,6 +24,7 @@ pub mod ball_widget;
 pub mod canvas_pool;
 pub mod boot_splash;
 pub mod entrance;
+pub mod fox;
 pub mod input_queue;
 pub mod latency;
 pub mod runtime;
@@ -31,7 +32,7 @@ pub mod splash_font;
 pub mod splash_widget;
 pub mod ui;
 
-pub use ball_widget::{BallControl, BallVisual, BallWidget, FRAME_INTERVAL_MS};
+pub use ball_widget::{BallControl, BallVisual, BallWidget, Character, FRAME_INTERVAL_MS};
 pub use runtime::BallRuntime;
 pub use splash_widget::{SplashControl, SplashWidget};
 pub use ui::{next_ai_state, BallApp, BallMsg, Screen, AI_STATES};

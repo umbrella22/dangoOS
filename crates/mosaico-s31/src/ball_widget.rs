@@ -1,5 +1,9 @@
 //! `BallWidget`: an LVGL canvas driven by the host-testable ball engine.
 //!
+//! The control selects the [`Character`]: the vector ball (240x240) or the
+//! fox-dango sprites (352x336, [`crate::fox`]). The ball engine, entrance, tap
+//! pulse and gaze drive both; only the pixels come from a different renderer.
+//!
 //! The widget renders 240x240 RGB565 frames into a two-slot
 //! [`CanvasPool`](crate::canvas_pool::CanvasPool) at a bounded cadence. Application code controls the mounted instance through a
 //! shared [`BallControl`] handle: `Node::custom` keeps the mounted widget when a
@@ -42,6 +46,26 @@ use lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
 
 use crate::canvas_pool::{CanvasPool, ReadLease};
 use crate::entrance;
+use crate::fox::{FoxAnimator, FoxInput, FoxPose, FoxRenderer};
+
+/// Which character the widget draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Character {
+    /// The procedural grok-ball vector rasterizer (240x240).
+    Ball,
+    /// The fox-dango palette sprites (352x336, see [`crate::fox`]).
+    Fox,
+}
+
+impl Character {
+    /// Canvas width and height in pixels.
+    pub const fn canvas_size(self) -> (usize, usize) {
+        match self {
+            Self::Ball => (CANVAS_SIZE, CANVAS_SIZE),
+            Self::Fox => (crate::fox::W, crate::fox::H),
+        }
+    }
+}
 
 /// Canvas edge in pixels (D-BALL-01 fallback; the rasterizer supports 320).
 pub const CANVAS_SIZE: usize = 240;
@@ -181,6 +205,8 @@ pub struct BallControl {
     /// Canvas pool shared by every widget mounted on this control. Allocated
     /// on the first mount and never freed.
     pool: Cell<Option<&'static CanvasPool>>,
+    /// Character drawn by the widget; fixed once the pool is allocated.
+    character: Cell<Character>,
 }
 
 impl BallControl {
@@ -205,6 +231,7 @@ impl BallControl {
             last_raster_us: Cell::new(0),
             plane_mode: Cell::new(false),
             pool: Cell::new(None),
+            character: Cell::new(Character::Ball),
         })
     }
 
@@ -222,12 +249,32 @@ impl BallControl {
         self.plane_mode.get()
     }
 
+    /// Select the character. Must be called before the widget is mounted:
+    /// the canvas pool is sized for the character on first mount.
+    pub fn set_character(&self, character: Character) {
+        if self.pool.get().is_none() {
+            self.character.set(character);
+            self.mark_urgent();
+        }
+    }
+
+    /// The character the widget draws.
+    pub fn character(&self) -> Character {
+        self.character.get()
+    }
+
+    /// Canvas width and height of the current character.
+    pub fn canvas_size(&self) -> (usize, usize) {
+        self.character.get().canvas_size()
+    }
+
     /// The canvas pool, allocating it on first use.
     pub(crate) fn pool(&self) -> &'static CanvasPool {
         if let Some(pool) = self.pool.get() {
             return pool;
         }
-        let pool = CanvasPool::leak(CANVAS_PIXELS);
+        let (w, h) = self.canvas_size();
+        let pool = CanvasPool::leak(w * h);
         self.pool.set(Some(pool));
         pool
     }
@@ -443,6 +490,9 @@ pub struct BallWidget {
     created: bool,
     /// Canvas object, kept so the widget can invalidate it on the LVGL path.
     canvas: Option<NonNull<lvgl_sys::lv_obj_t>>,
+    /// Fox renderer and expression player, created on mount for
+    /// [`Character::Fox`].
+    fox: Option<(FoxRenderer, FoxAnimator)>,
 }
 
 impl BallWidget {
@@ -459,6 +509,7 @@ impl BallWidget {
             since_frame_ms: 0,
             created: false,
             canvas: None,
+            fox: None,
         }
     }
 }
@@ -472,6 +523,10 @@ impl CustomWidget for BallWidget {
         let expression = self.control.expression();
         self.engine.set_expression(expression);
         self.last_expression = Some(expression);
+        let (canvas_w, canvas_h) = self.control.canvas_size();
+        if self.control.character() == Character::Fox {
+            self.fox = Some((FoxRenderer::new(), FoxAnimator::new(FoxPose::from(expression))));
+        }
 
         // Take (or allocate) the pool before creating the native object so an
         // allocation failure cannot leak a canvas. Publish one black frame so
@@ -506,8 +561,8 @@ impl CustomWidget for BallWidget {
             lvgl_sys::lv_canvas_set_buffer(
                 canvas.as_ptr(),
                 first_ptr.cast(),
-                CANVAS_SIZE as i32,
-                CANVAS_SIZE as i32,
+                canvas_w as i32,
+                canvas_h as i32,
                 lvgl_sys::lv_color_format_t_LV_COLOR_FORMAT_RGB565,
             );
             // The image class derives its size from the source, but the object
@@ -515,7 +570,7 @@ impl CustomWidget for BallWidget {
             // explicitly so the canvas is CANVAS_SIZE regardless of decoder
             // behavior; the alignment style is applied during the same layout
             // pass that positions the object.
-            lvgl_sys::lv_obj_set_size(canvas.as_ptr(), CANVAS_SIZE as i32, CANVAS_SIZE as i32);
+            lvgl_sys::lv_obj_set_size(canvas.as_ptr(), canvas_w as i32, canvas_h as i32);
             lvgl_sys::lv_obj_center(canvas.as_ptr());
             // A canvas is an image object and not clickable by default. The
             // custom node's on_event handler only receives real pointer events
@@ -554,6 +609,7 @@ impl CustomWidget for BallWidget {
 
     fn update(&mut self, object: &mut CustomObject, elapsed_ms: u32) -> Result<(), UiError> {
         self.control.record_update();
+        let (canvas_w, canvas_h) = self.control.canvas_size();
 
         let Some(pool) = self.pool else {
             return Err(UiError::InvalidProperty);
@@ -563,6 +619,9 @@ impl CustomWidget for BallWidget {
         if self.last_expression != Some(expression) {
             self.engine.set_expression(expression);
             self.last_expression = Some(expression);
+            if let Some((_, animator)) = self.fox.as_mut() {
+                animator.set_pose(FoxPose::from(expression));
+            }
             // A new expression is the response the latency gate measures.
             self.control.mark_urgent();
         }
@@ -572,6 +631,9 @@ impl CustomWidget for BallWidget {
         // is a no-op for 0 ms.
         let engine_started = mono_us();
         let mut frame = self.engine.advance(elapsed_ms);
+        if let Some((_, animator)) = self.fox.as_mut() {
+            animator.advance(elapsed_ms);
+        }
         self.control.last_engine_us.set(
             mono_us().saturating_sub(engine_started).min(u32::MAX as u64) as u32,
         );
@@ -659,14 +721,30 @@ impl CustomWidget for BallWidget {
             rotate_deg: 0.0,
         };
         let raster_started = mono_us();
-        let rect = raster::render_sized_with_pose_and_skin(
-            &frame,
-            lease.pixels_mut(),
-            CANVAS_SIZE,
-            QUALITY,
-            pose,
-            self.control.skin(),
-        );
+        let rect = if let Some((renderer, animator)) = self.fox.as_mut() {
+            let scene = animator.scene(FoxInput {
+                scale_x: visual.scale_x,
+                scale_y: visual.scale_y,
+                offset_y: entrance_offset_y as i32,
+                look_x: visual.look_x,
+            });
+            renderer.render(&scene, lease.pixels_mut());
+            DirtyRect {
+                x0: 0,
+                y0: 0,
+                x1: (canvas_w - 1) as u16,
+                y1: (canvas_h - 1) as u16,
+            }
+        } else {
+            raster::render_sized_with_pose_and_skin(
+                &frame,
+                lease.pixels_mut(),
+                CANVAS_SIZE,
+                QUALITY,
+                pose,
+                self.control.skin(),
+            )
+        };
         self.control.last_raster_us.set(
             mono_us().saturating_sub(raster_started).min(u32::MAX as u64) as u32,
         );
@@ -684,8 +762,8 @@ impl CustomWidget for BallWidget {
                     lvgl_sys::lv_canvas_set_buffer(
                         canvas.as_ptr(),
                         shown.as_ptr().cast_mut().cast(),
-                        CANVAS_SIZE as i32,
-                        CANVAS_SIZE as i32,
+                        canvas_w as i32,
+                        canvas_h as i32,
                         lvgl_sys::lv_color_format_t_LV_COLOR_FORMAT_RGB565,
                     );
                 }
