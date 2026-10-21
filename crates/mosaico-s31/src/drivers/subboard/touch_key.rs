@@ -1,6 +1,9 @@
 //! Press detection for one capacitive key from the touch block's smooth
 //! data. Hardware independent so it runs in host tests.
 //!
+//! On the Interaction board a finger adds well over 20 %, while idle noise
+//! on a pad reaches about 2.5 %, hence the 10 % / 5 % levels.
+//!
 //! The baseline is tracked here rather than taken from the hardware
 //! benchmark: that benchmark settles slowly after a reset and freezes once
 //! the data is above its threshold, so an early calibration could leave a
@@ -17,9 +20,9 @@
 //!   current reading becomes the new baseline.
 
 /// Rise over the baseline that counts as a press, in 1/1000.
-pub const PRESS_PERMILLE: u32 = 20;
+pub const PRESS_PERMILLE: u32 = 100;
 /// Rise under which a press releases, in 1/1000.
-pub const RELEASE_PERMILLE: u32 = 10;
+pub const RELEASE_PERMILLE: u32 = 50;
 /// Smallest rise ever treated as a press.
 pub const MIN_PRESS_DELTA: u32 = 40;
 /// Smallest release level.
@@ -133,24 +136,24 @@ mod tests {
     #[test]
     fn press_needs_the_full_rise() {
         let mut k = settled(10_000);
-        assert!(!k.update(10_190));
+        assert!(!k.update(10_990));
         let mut k = settled(10_000);
-        assert!(k.update(10_200));
+        assert!(k.update(11_000));
     }
 
     #[test]
     fn release_uses_the_lower_level() {
         let mut k = settled(10_000);
-        assert!(k.update(10_300));
-        assert!(k.update(10_150), "between the levels stays held");
-        assert!(!k.update(10_090));
+        assert!(k.update(11_500));
+        assert!(k.update(10_600), "between the levels stays held");
+        assert!(!k.update(10_490));
     }
 
     #[test]
     fn baseline_freezes_while_pressed() {
         let mut k = settled(10_000);
         for _ in 0..100 {
-            assert!(k.update(10_400));
+            assert!(k.update(12_000));
         }
         assert_eq!(k.baseline(), 10_000);
         assert!(!k.update(10_000));
@@ -187,8 +190,8 @@ mod tests {
 
     #[test]
     fn small_levels_use_the_floor() {
-        assert_eq!(press_delta(500), MIN_PRESS_DELTA);
-        assert_eq!(release_delta(500), MIN_RELEASE_DELTA);
+        assert_eq!(press_delta(300), MIN_PRESS_DELTA);
+        assert_eq!(release_delta(300), MIN_RELEASE_DELTA);
     }
 
     #[test]

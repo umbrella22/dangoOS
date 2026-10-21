@@ -39,7 +39,9 @@ const POWER_ON_WAIT_TICKS: u16 = 5120;
 const MEASURE_INTERVAL_TICKS: u16 = 4;
 const OUT_AS_CLOCK: u8 = 1;
 const CLOCK_DIV: u8 = 8;
-const CHARGE_TIMES: u16 = 500;
+/// The IDF example uses 500, but a finger then pushes the 16-bit count past
+/// 65535 and it wraps (idle ~36000 at 500). 200 keeps idle near 15000.
+const CHARGE_TIMES: u16 = 200;
 const RC_FILTER_RES: u8 = 3;
 const RC_FILTER_CAP: u8 = 29;
 const DRIVE_HIGH: u8 = 8;
