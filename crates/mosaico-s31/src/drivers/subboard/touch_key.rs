@@ -1,29 +1,31 @@
 //! Press detection for one capacitive key from the touch block's smooth
 //! data. Hardware independent so it runs in host tests.
 //!
-//! On the Interaction board a finger adds well over 20 %, while idle noise
-//! on a pad reaches about 2.5 %, hence the 10 % / 5 % levels.
-//!
 //! The baseline is tracked here rather than taken from the hardware
 //! benchmark: that benchmark settles slowly after a reset and freezes once
 //! the data is above its threshold, so an early calibration could leave a
 //! key held forever.
 //!
 //! - The first reading after warmup becomes the baseline.
-//! - A finger raises the reading. A rise of [`PRESS_PERMILLE`] of the
-//!   baseline presses; falling under [`RELEASE_PERMILLE`] releases. The gap
-//!   stops a hovering finger from chattering.
-//! - While released the baseline follows slow drift upward (1/32 of the gap
-//!   per sample) and drops faster (1/4) when the reading falls below it.
-//!   It freezes while pressed.
+//! - A finger makes the reading swing hard in both directions (on the
+//!   device: idle ~14500, touched anywhere from ~2000 to ~35000). A
+//!   deviation of [`PRESS_PERMILLE`] of the baseline either way presses.
+//! - A press releases after [`RELEASE_QUIET`] consecutive samples within
+//!   [`RELEASE_PERMILLE`], so a swing passing through the baseline does not
+//!   end it.
+//! - While released the baseline follows slow drift (1/32 of the gap per
+//!   sample); it freezes while pressed.
 //! - A press held for [`STUCK_SAMPLES`] is treated as a stale baseline: the
 //!   current reading becomes the new baseline.
+//!
+//! On the Interaction board a finger moves the reading by well over 20 %,
+//! while idle noise on a pad reaches about 2.5 %, hence 10 % / 5 %.
 
-/// Rise over the baseline that counts as a press, in 1/1000.
+/// Deviation from the baseline that counts as a press, in 1/1000.
 pub const PRESS_PERMILLE: u32 = 100;
-/// Rise under which a press releases, in 1/1000.
+/// Deviation under which a press may release, in 1/1000.
 pub const RELEASE_PERMILLE: u32 = 50;
-/// Smallest rise ever treated as a press.
+/// Smallest deviation ever treated as a press.
 pub const MIN_PRESS_DELTA: u32 = 40;
 /// Smallest release level.
 pub const MIN_RELEASE_DELTA: u32 = 20;
@@ -35,18 +37,19 @@ pub const MAX_PLAUSIBLE: u16 = 0xfff0;
 pub const WARMUP_SAMPLES: u8 = 12;
 /// Continuous press that resets the baseline (25 Hz -> 20 s).
 pub const STUCK_SAMPLES: u16 = 500;
+/// Quiet samples that end a press (25 Hz -> 160 ms).
+pub const RELEASE_QUIET: u8 = 4;
 
 /// Baseline fraction bits.
 const FRAC: u32 = 4;
-const RISE_SHIFT: u32 = 5;
-const FALL_SHIFT: u32 = 2;
+const DRIFT_SHIFT: u32 = 5;
 
-/// Rise over `baseline` that counts as a press.
+/// Deviation from `baseline` that counts as a press.
 pub fn press_delta(baseline: u32) -> u32 {
     (baseline * PRESS_PERMILLE / 1000).max(MIN_PRESS_DELTA)
 }
 
-/// Rise under which a press releases.
+/// Deviation under which a press may release.
 pub fn release_delta(baseline: u32) -> u32 {
     (baseline * RELEASE_PERMILLE / 1000).max(MIN_RELEASE_DELTA)
 }
@@ -60,6 +63,7 @@ pub struct TouchKey {
     /// Baseline with `FRAC` fraction bits; 0 until the first reading.
     base: u32,
     pressed: bool,
+    quiet: u8,
     held_samples: u16,
 }
 
@@ -68,6 +72,7 @@ impl TouchKey {
         Self {
             base: 0,
             pressed: false,
+            quiet: 0,
             held_samples: 0,
         }
     }
@@ -88,12 +93,20 @@ impl TouchKey {
             return false;
         }
         let baseline = self.baseline();
-        let rise = reading.saturating_sub(baseline);
-        self.pressed = if self.pressed {
-            rise >= release_delta(baseline)
+        let deviation = reading.abs_diff(baseline);
+        if !self.pressed {
+            if deviation >= press_delta(baseline) {
+                self.pressed = true;
+                self.quiet = 0;
+            }
+        } else if deviation < release_delta(baseline) {
+            self.quiet += 1;
+            if self.quiet >= RELEASE_QUIET {
+                self.pressed = false;
+            }
         } else {
-            rise >= press_delta(baseline)
-        };
+            self.quiet = 0;
+        }
         if self.pressed {
             self.held_samples += 1;
             if self.held_samples >= STUCK_SAMPLES {
@@ -105,9 +118,9 @@ impl TouchKey {
             self.held_samples = 0;
             let target = reading << FRAC;
             if target < self.base {
-                self.base -= (self.base - target) >> FALL_SHIFT;
+                self.base -= (self.base - target) >> DRIFT_SHIFT;
             } else {
-                self.base += (target - self.base) >> RISE_SHIFT;
+                self.base += (target - self.base) >> DRIFT_SHIFT;
             }
         }
         self.pressed
@@ -134,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn press_needs_the_full_rise() {
+    fn press_needs_the_full_deviation() {
         let mut k = settled(10_000);
         assert!(!k.update(10_990));
         let mut k = settled(10_000);
@@ -146,6 +159,9 @@ mod tests {
         let mut k = settled(10_000);
         assert!(k.update(11_500));
         assert!(k.update(10_600), "between the levels stays held");
+        for _ in 0..RELEASE_QUIET - 1 {
+            assert!(k.update(10_490), "release waits for quiet samples");
+        }
         assert!(!k.update(10_490));
     }
 
@@ -156,7 +172,25 @@ mod tests {
             assert!(k.update(12_000));
         }
         assert_eq!(k.baseline(), 10_000);
-        assert!(!k.update(10_000));
+        for _ in 0..RELEASE_QUIET {
+            k.update(10_000);
+        }
+        assert!(!k.pressed());
+    }
+
+    #[test]
+    fn a_drop_also_presses() {
+        let mut k = settled(14_500);
+        assert!(k.update(2_000));
+    }
+
+    #[test]
+    fn a_swing_through_the_baseline_keeps_the_press() {
+        let mut k = settled(14_500);
+        for r in [35_000, 14_400, 2_000, 14_600, 20_000, 7_000] {
+            assert!(k.update(r));
+        }
+        assert_eq!(k.baseline(), 14_500);
     }
 
     #[test]
@@ -169,12 +203,12 @@ mod tests {
     }
 
     #[test]
-    fn baseline_drops_quickly() {
+    fn slow_drift_down_is_followed() {
         let mut k = settled(10_000);
-        for _ in 0..20 {
-            k.update(9_000);
+        for step in 0..400u16 {
+            assert!(!k.update(10_000 - step), "drift must not press");
         }
-        assert!(k.baseline() < 9_050);
+        assert!(k.baseline() < 9_700);
     }
 
     #[test]
