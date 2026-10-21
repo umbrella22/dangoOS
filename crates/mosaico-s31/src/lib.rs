@@ -21,6 +21,7 @@ extern crate alloc;
 extern crate self as mosaico_s31;
 
 pub mod ball_widget;
+pub mod canvas_pool;
 pub mod boot_splash;
 pub mod entrance;
 pub mod input_queue;

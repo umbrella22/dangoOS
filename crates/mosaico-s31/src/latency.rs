@@ -3,39 +3,34 @@
 //! # What is measured
 //!
 //! `ui_task` timestamps every press edge when it drains the input queue and
-//! tags the next presentation frame with it. The tag travels in
-//! `FrameJob::touch_at_us`, so only the frame that the UI
-//! built *after* applying the touch can carry it. [`note_first_pixel`] is
-//! called by `display_task` immediately before the first QSPI chunk of that
-//! tagged job:
+//! tags the next ball-plane job with it. The tag travels in
+//! `PlaneJob::touch_at_us`, so only a frame that the UI rendered *after*
+//! applying the touch can carry it. [`note_first_pixel`] is called by
+//! `ball_plane_task` immediately before the first QSPI chunk of that tagged
+//! job:
 //!
 //! ```text
 //! GPIO6 IRQ -> input_task reads CST9220 -> INPUT channel
 //!   -> ui_task drains + applies the press (Ui::drain)
-//!   -> Ui::tick rasterizes the response + Ui::timer_handler renders/flushes
-//!   -> Presenter::submit(tagged) -> display_task
+//!   -> Ui::tick rasterizes the response into a canvas-pool slot
+//!   -> PlaneUi::submit(tagged) -> ball_plane_task
 //!   -> note_first_pixel(at_us) -> first write_chunk_async()
 //! ```
 //!
 //! This is **touch report read completion -> first QSPI byte**, not panel
 //! photon latency: it excludes the CST9220 scan/IRQ-to-read delay and the
-//! panel's own scan-out, and it includes any wait for a free back frame, the
-//! ball rasterization, LVGL rendering, the flush copy, the presentation
-//! handshake and the first chunk's packing. It is the firmware-side deadline
-//! used by the P95 <= 50 ms gate.
+//! panel's own scan-out, and it includes the ball rasterization, the plane
+//! handoff and the first chunk's packing. Tagged jobs skip the TE wait. It is
+//! the firmware-side deadline used by the P95 <= 50 ms gate.
 //!
 //! # Why the tag matters
 //!
 //! Earlier versions kept one global pending timestamp. A frame that had
 //! already been submitted (for example a ball animation frame rendered before
 //! the press) could consume it, producing samples that did not belong to the
-//! response frame. The tag in `FrameJob` makes the association exact: the
-//! timestamp is consumed by the first job submitted after the press was
-//! applied, and never by an older job.
-//!
-//! If the tagged frame carries no damage, `display_task` sends no QSPI byte and
-//! records no sample; the next frame that actually transfers is not the
-//! response frame, so skipping is the honest behavior.
+//! response frame. The tag in the job makes the association exact. When a
+//! newer job replaces an unsent one, the earliest pending tag moves to the
+//! newer job, so a press is never lost to frame replacement.
 //!
 //! `at_us` comes from [`esp_hal::time::Instant`] in `input_task`, and
 //! [`now_us`] uses the same monotonic clock.
@@ -149,8 +144,8 @@ static SAMPLES: critical_section::Mutex<RefCell<SampleRing>> =
 
 /// Convert the timestamp carried by a tagged frame into one sample.
 ///
-/// Called by `display_task` immediately before the first QSPI chunk of a job
-/// whose `FrameJob::touch_at_us` is set. The stored value is
+/// Called by `ball_plane_task` immediately before the first QSPI chunk of a job
+/// whose `PlaneJob::touch_at_us` is set. The stored value is
 /// the elapsed microseconds divided by 1000 (saturating at `u32::MAX`).
 #[cfg(target_os = "none")]
 pub fn note_first_pixel(at_us: u64) {

@@ -1,7 +1,7 @@
 //! `BallWidget`: an LVGL canvas driven by the host-testable ball engine.
 //!
-//! The widget owns one 240x240 RGB565 canvas buffer and re-rasterizes it at a
-//! bounded cadence. Application code controls the mounted instance through a
+//! The widget renders 240x240 RGB565 frames into a two-slot
+//! [`CanvasPool`](crate::canvas_pool::CanvasPool) at a bounded cadence. Application code controls the mounted instance through a
 //! shared [`BallControl`] handle: `Node::custom` keeps the mounted widget when a
 //! later `App::view` builds a new descriptor, so the handle is the supported
 //! way to change the expression without remounting.
@@ -16,15 +16,20 @@
 //!
 //! # Lifecycle
 //!
-//! * `create` allocates the buffer, creates the canvas as a direct child of
-//!   the node's parent, installs the buffer and centers the canvas.
+//! * `create` takes the control's canvas pool (allocated once per control and
+//!   leaked, so its buffers are genuinely `'static`), creates the canvas as a
+//!   direct child of the node's parent and centers it.
 //! * `update` advances the engine on every `Ui::tick`, rasterizes on a 50 ms
-//!   cadence (or immediately after a control change) and invalidates the
-//!   native canvas only when a frame was rendered.
-//! * `delete` only accounts the deletion. See [`BallWidget::delete`] for the
-//!   verified buffer/native-object drop order.
+//!   cadence (or immediately after a control change) into a pool
+//!   [`WriteLease`](crate::canvas_pool::WriteLease) and publishes it.
+//!   - LVGL path (host previews/tests): the widget itself takes the published
+//!     frame, points the native canvas at it and invalidates it.
+//!   - Plane path (device): the UI task takes the frame with
+//!     [`BallControl::take_frame`] and hands the lease to the upload task. The
+//!     native canvas is hidden and never drawn.
+//! * `delete` only accounts the deletion: the pool outlives every widget, so
+//!   no LVGL object can ever point at freed pixels.
 
-use alloc::boxed::Box;
 use alloc::rc::Rc;
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -35,6 +40,7 @@ use grok_ball::types::BallExpression;
 use lvgl::sys as lvgl_sys;
 use lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
 
+use crate::canvas_pool::{CanvasPool, ReadLease};
 use crate::entrance;
 
 /// Canvas edge in pixels (D-BALL-01 fallback; the rasterizer supports 320).
@@ -169,11 +175,12 @@ pub struct BallControl {
     last_engine_us: Cell<u32>,
     /// Microseconds spent in the software rasterizer on the last tick.
     last_raster_us: Cell<u32>,
-    /// When true, the LVGL object is never moved or invalidated; the caller
-    /// uploads the canvas through the dedicated ball plane instead.
+    /// When true, the LVGL object is hidden and never invalidated; the caller
+    /// uploads frames through the dedicated ball plane instead.
     plane_mode: Cell<bool>,
-    /// Address of the 240x240 canvas buffer, published by `create`.
-    canvas_ptr: Cell<*const u16>,
+    /// Canvas pool shared by every widget mounted on this control. Allocated
+    /// on the first mount and never freed.
+    pool: Cell<Option<&'static CanvasPool>>,
 }
 
 impl BallControl {
@@ -197,15 +204,15 @@ impl BallControl {
             last_engine_us: Cell::new(0),
             last_raster_us: Cell::new(0),
             plane_mode: Cell::new(false),
-            canvas_ptr: Cell::new(core::ptr::null()),
+            pool: Cell::new(None),
         })
     }
 
     /// Route the ball through the dedicated plane instead of LVGL.
     ///
-    /// The canvas still renders through [`BallWidget`], but the LVGL object is
-    /// no longer moved or flushed: the UI task submits
-    /// [`BallControl::canvas_slice`] to the fixed plane.
+    /// Must be set before the widget is mounted. Frames still render through
+    /// [`BallWidget`], but the native canvas is hidden; the UI task collects
+    /// each frame with [`BallControl::take_frame`].
     pub fn set_plane_mode(&self, enabled: bool) {
         self.plane_mode.set(enabled);
     }
@@ -215,24 +222,30 @@ impl BallControl {
         self.plane_mode.get()
     }
 
-    /// Publish the mounted canvas buffer from `BallWidget::create`.
-    pub(crate) fn set_canvas_ptr(&self, ptr: *const u16) {
-        self.canvas_ptr.set(ptr);
+    /// The canvas pool, allocating it on first use.
+    pub(crate) fn pool(&self) -> &'static CanvasPool {
+        if let Some(pool) = self.pool.get() {
+            return pool;
+        }
+        let pool = CanvasPool::leak(CANVAS_PIXELS);
+        self.pool.set(Some(pool));
+        pool
     }
 
-    /// The mounted 240x240 canvas, valid until the widget is unmounted.
+    /// Take the newest rendered frame for the plane upload.
     ///
-    /// # Safety contract
-    ///
-    /// The firmware mounts the ball widget for the whole run and only reads
-    /// this slice while `DISPLAY_ACTIVE` keeps the UI from rasterizing. Host
-    /// tests never call this in plane mode.
-    pub fn canvas_slice(&self) -> &'static [u16] {
-        let ptr = self.canvas_ptr.get();
-        assert!(!ptr.is_null(), "ball canvas is not mounted");
-        // SAFETY: `create` allocated a `Box<[u16; CANVAS_PIXELS]>` and the
-        // widget owns it until unmount; the firmware never unmounts the ball.
-        unsafe { core::slice::from_raw_parts(ptr, CANVAS_PIXELS) }
+    /// Returns `None` when nothing new was rendered or the widget is not
+    /// mounted. Dropping the lease returns the slot to the renderer.
+    pub fn take_frame(&self) -> Option<ReadLease> {
+        if !self.plane_mode.get() {
+            return None;
+        }
+        self.pool.get()?.take_ready()
+    }
+
+    /// Frames the renderer produced that the upload never took.
+    pub fn dropped_frames(&self) -> u32 {
+        self.pool.get().map_or(0, CanvasPool::dropped_frames)
     }
 
     /// Select a new expression and request an immediate redraw.
@@ -420,9 +433,11 @@ impl BallControl {
 pub struct BallWidget {
     engine: BallEngine,
     control: Rc<BallControl>,
-    /// Allocated in `create`, not in `new`, so descriptors built by an
-    /// `App::view` that the reconciler discards do not allocate ~113 KiB.
-    buffer: Option<Box<[u16; CANVAS_PIXELS]>>,
+    /// Pool taken from the control in `create`, not in `new`, so descriptors
+    /// built by an `App::view` that the reconciler discards allocate nothing.
+    pool: Option<&'static CanvasPool>,
+    /// LVGL path only: the frame the native canvas currently displays.
+    shown: Option<ReadLease>,
     last_expression: Option<BallExpression>,
     since_frame_ms: u32,
     created: bool,
@@ -438,7 +453,8 @@ impl BallWidget {
         Self {
             engine: BallEngine::new(),
             control,
-            buffer: None,
+            pool: None,
+            shown: None,
             last_expression: None,
             since_frame_ms: 0,
             created: false,
@@ -457,10 +473,23 @@ impl CustomWidget for BallWidget {
         self.engine.set_expression(expression);
         self.last_expression = Some(expression);
 
-        // Allocate before creating the native object so an allocation failure
-        // cannot leak a canvas. The boxed array address is stable for the
-        // lifetime of the mounted widget.
-        let mut buffer = Box::new([0u16; CANVAS_PIXELS]);
+        // Take (or allocate) the pool before creating the native object so an
+        // allocation failure cannot leak a canvas. Publish one black frame so
+        // the native canvas has valid pixels before the first update.
+        let pool = self.control.pool();
+        let plane = self.control.plane_mode();
+        let mut first = pool.acquire().ok_or(UiError::Allocation)?;
+        first.pixels_mut().fill(0);
+        let first_ptr = first.pixels_mut().as_mut_ptr();
+        first.publish();
+        let shown = if plane {
+            // The plane path never draws the native canvas; release the slot
+            // so both slots are available for double buffering.
+            drop(pool.take_ready());
+            None
+        } else {
+            pool.take_ready()
+        };
 
         // SAFETY: `parent` is a live LVGL object for the duration of `create`.
         let canvas = unsafe { lvgl_sys::lv_canvas_create(parent.raw().as_ptr()) };
@@ -468,15 +497,15 @@ impl CustomWidget for BallWidget {
             return Err(UiError::Allocation);
         };
 
-        // SAFETY: `canvas` was just created as a child of `parent`; `buffer`
-        // stays owned by `self` and outlives the native canvas up to the
-        // deletion path documented on `delete`. The canvas must not be drawn
-        // before the first update, which is guaranteed because rendering only
-        // runs from `Ui::tick` / `lv_timer_handler` after `create` returned.
+        // SAFETY: `canvas` was just created as a child of `parent`. The pool
+        // buffers are leaked and therefore outlive the native canvas. On the
+        // LVGL path `shown` holds the read lease for `first_ptr`, so the
+        // renderer cannot write into the displayed slot; on the plane path the
+        // canvas is hidden below and LVGL never reads its pixels.
         unsafe {
             lvgl_sys::lv_canvas_set_buffer(
                 canvas.as_ptr(),
-                buffer.as_mut_ptr().cast(),
+                first_ptr.cast(),
                 CANVAS_SIZE as i32,
                 CANVAS_SIZE as i32,
                 lvgl_sys::lv_color_format_t_LV_COLOR_FORMAT_RGB565,
@@ -492,10 +521,13 @@ impl CustomWidget for BallWidget {
             // custom node's on_event handler only receives real pointer events
             // when the canvas is clickable.
             lvgl_sys::lv_obj_set_clickable(canvas.as_ptr(), true);
+            if plane {
+                lvgl_sys::lv_obj_add_flag(canvas.as_ptr(), lvgl_sys::lv_obj_flag_t_LV_OBJ_FLAG_HIDDEN);
+            }
         }
 
-        self.control.set_canvas_ptr(buffer.as_ptr());
-        self.buffer = Some(buffer);
+        self.pool = Some(pool);
+        self.shown = shown;
         self.created = true;
         self.canvas = Some(canvas);
         self.control.record_create();
@@ -511,7 +543,8 @@ impl CustomWidget for BallWidget {
                 // SAFETY: the canvas is live, is a direct child of `parent`,
                 // and has not been handed to the reconciler.
                 unsafe { lvgl_sys::lv_obj_delete(canvas.as_ptr()) };
-                self.buffer = None;
+                self.pool = None;
+                self.shown = None;
                 self.canvas = None;
                 self.created = false;
                 Err(error)
@@ -522,9 +555,9 @@ impl CustomWidget for BallWidget {
     fn update(&mut self, object: &mut CustomObject, elapsed_ms: u32) -> Result<(), UiError> {
         self.control.record_update();
 
-        if self.buffer.is_none() {
+        let Some(pool) = self.pool else {
             return Err(UiError::InvalidProperty);
-        }
+        };
 
         let expression = self.control.expression();
         if self.last_expression != Some(expression) {
@@ -601,14 +634,19 @@ impl CustomWidget for BallWidget {
         if !frame_due && !urgent {
             return Ok(());
         }
+
+        // Both slots are busy (one on the wire, one being shown or written):
+        // keep the frame due, and the urgency, for the next tick.
+        let Some(mut lease) = pool.acquire() else {
+            if urgent {
+                self.control.mark_urgent();
+            }
+            return Ok(());
+        };
         self.since_frame_ms = if frame_due {
             self.since_frame_ms % FRAME_INTERVAL_MS
         } else {
             0
-        };
-
-        let Some(buffer) = self.buffer.as_mut() else {
-            return Err(UiError::InvalidProperty);
         };
 
         let pose = CanvasPose {
@@ -623,7 +661,7 @@ impl CustomWidget for BallWidget {
         let raster_started = mono_us();
         let rect = raster::render_sized_with_pose_and_skin(
             &frame,
-            buffer.as_mut_slice(),
+            lease.pixels_mut(),
             CANVAS_SIZE,
             QUALITY,
             pose,
@@ -633,7 +671,25 @@ impl CustomWidget for BallWidget {
             mono_us().saturating_sub(raster_started).min(u32::MAX as u64) as u32,
         );
         self.control.record_render(rect);
+        lease.publish();
         if !self.control.plane_mode() {
+            // Release the previously shown slot, then show the new frame.
+            self.shown = None;
+            self.shown = pool.take_ready();
+            if let (Some(shown), Some(canvas)) = (self.shown.as_ref(), self.canvas) {
+                // SAFETY: `canvas` is the live native canvas created in
+                // `create`; the pool buffer is `'static` and `self.shown`
+                // keeps the renderer out of it until the next frame.
+                unsafe {
+                    lvgl_sys::lv_canvas_set_buffer(
+                        canvas.as_ptr(),
+                        shown.as_ptr().cast_mut().cast(),
+                        CANVAS_SIZE as i32,
+                        CANVAS_SIZE as i32,
+                        lvgl_sys::lv_color_format_t_LV_COLOR_FORMAT_RGB565,
+                    );
+                }
+            }
             object.invalidate();
             self.control.record_invalidation(object.invalidations());
         }
@@ -645,23 +701,10 @@ impl CustomWidget for BallWidget {
         self.created = false;
         self.canvas = None;
 
-        // Buffer drop order, verified in
-        // `lv_binding_rust/lvgl-ui/src/reconciler.rs`:
-        //
-        // 1. `MountedNode::run_delete_hooks` calls `MountedCustom::delete` while
-        //    the native canvas is alive.
-        // 2. `MountedCustom::delete` consumes itself, so the boxed widget (and
-        //    therefore `self.buffer`) is dropped when this hook returns.
-        // 3. Only afterwards does the caller run `lv_obj_delete` on the canvas
-        //    (`delete_subtree`, `delete_root`, replacement and rollback paths).
-        //
-        // Freeing the buffer in step 2 is safe because no LVGL render can run
-        // between step 2 and step 3: both happen synchronously inside one `Ui`
-        // method, rendering only happens from `lv_timer_handler` /
-        // `lv_refr_now`, and the `Ui` busy guard rejects reentrancy from a
-        // widget hook. LVGL's object destructor tears down the canvas image
-        // descriptor and never reads the pixel data. We therefore keep the
-        // normal `Box` ownership instead of leaking it with `ManuallyDrop`.
+        // Nothing to free: the canvas pool belongs to the control and is
+        // leaked, so the native canvas (deleted by the reconciler after this
+        // hook) can never reference freed pixels. Dropping `self.shown` with
+        // the widget returns the displayed slot to the pool.
     }
 }
 

@@ -1,11 +1,25 @@
 //! Fixed-position ball plane: the simplified hybrid display path.
 //!
 //! The ball no longer moves across the panel (drag was dropped by product
-//! decision). LVGL still renders the 240x240 canvas with the ball's expression
-//! and the in-canvas entrance, and this task uploads that fixed canvas at the
-//! panel centre. There is no damage union, no old-position clear, no edge scrub
-//! and no per-move trace: the canvas rectangle never changes, so the square
-//! boundary artifacts cannot occur.
+//! decision). The ball widget renders the 240x240 canvas with the ball's
+//! expression and the in-canvas entrance into a two-slot
+//! [`CanvasPool`](mosaico_s31::canvas_pool::CanvasPool), and this task uploads
+//! the newest frame at the panel centre. There is no damage union, no
+//! old-position clear, no edge scrub and no per-move trace: the canvas
+//! rectangle never changes, so the square boundary artifacts cannot occur.
+//!
+//! # Ownership and overlap
+//!
+//! A [`PlaneJob`] carries a [`ReadLease`]: while this task holds it the
+//! renderer cannot write that slot, and dropping the job at the end of the
+//! upload returns the slot. The renderer draws the next frame into the other
+//! slot at the same time.
+//!
+//! The task runs on a high-priority interrupt executor (see `main.rs`): the
+//! rasterizer is synchronous CPU work in thread mode, and on a shared
+//! cooperative executor every chunk's DMA completion had to wait for the
+//! raster to finish (a 9 ms upload stretched to 37 ms). Preemption lets each
+//! chunk continue as soon as its DMA completes.
 //!
 //! A touch-tagged job bypasses the TE wait to keep the response inside the
 //! 50 ms latency gate; animation frames start on the TE edge.
@@ -20,15 +34,16 @@ use embassy_sync::{
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::Input;
 use log::{info, warn};
+use mosaico_s31::canvas_pool::ReadLease;
 
 use crate::{
-    display_task::{
-        self, AVG_TRANSFER_US, BRIGHTNESS_RESTORED, FIRST_FRAME, FPS, FRAMES,
+    display_stats::{
+        AVG_TRANSFER_US, BRIGHTNESS_RESTORED, FIRST_FRAME, FPS, FRAMES,
         LAST_TRANSFER_MS, LAST_TRANSFER_US, MAX_TRANSFER_MS, TE_BYPASS,
         TE_SYNCS, TE_TIMEOUTS, TE_WAIT_AVG_US, TOUCH_FRAMES,
     },
     drivers::display::Display,
-    framebuffer::{DirtyRect, HEIGHT, WIDTH},
+    framebuffer::{DirtyRect, WIDTH},
     latency,
 };
 
@@ -44,20 +59,21 @@ const LOG_EVERY_FRAMES: u32 = 120;
 const FPS_WINDOW_US: u64 = 1_000_000;
 
 /// One canvas upload. The canvas is always at [`BALL_ORIGIN`].
-#[derive(Clone, Copy)]
 pub struct PlaneJob {
-    /// The mounted 240x240 canvas, valid until the widget is unmounted.
-    pub canvas: &'static [u16],
+    /// Exclusive read access to the rendered frame for the whole upload.
+    pub canvas: ReadLease,
     /// Touch timestamp of the press this frame responds to, if any.
     pub touch_at_us: Option<u64>,
 }
 
 static JOBS: Signal<CriticalSectionRawMutex, PlaneJob> = Signal::new();
 
+/// UI-side handle: publishes frames to the upload task.
 pub struct PlaneUi {
     _private: (),
 }
 
+/// Upload-side handle: owned by [`ball_plane_task`].
 pub struct PlaneDisplay {
     _private: (),
 }
@@ -67,15 +83,20 @@ pub fn new() -> (PlaneUi, PlaneDisplay) {
 }
 
 impl PlaneUi {
-    /// Publish a canvas. Returns `false` when the previous upload is still in
-    /// flight; the caller retries after `DISPLAY_ACTIVE` clears.
-    pub fn submit(&mut self, job: PlaneJob) -> bool {
-        if display_task::DISPLAY_ACTIVE.load(Ordering::Relaxed) {
-            return false;
+    /// Publish a frame. Never blocks.
+    ///
+    /// If the upload task has not picked up the previous job yet, that job is
+    /// replaced (its lease drops and the slot returns to the renderer), but
+    /// its touch tag is carried over so a press is never lost from the
+    /// latency statistics.
+    pub fn submit(&mut self, mut job: PlaneJob) {
+        if let Some(stale) = JOBS.try_take() {
+            job.touch_at_us = match (stale.touch_at_us, job.touch_at_us) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
         }
-        display_task::DISPLAY_ACTIVE.store(true, Ordering::Relaxed);
         JOBS.signal(job);
-        true
     }
 }
 
@@ -83,15 +104,55 @@ impl PlaneDisplay {
     async fn next_job(&mut self) -> PlaneJob {
         JOBS.wait().await
     }
+}
 
-    fn release(&mut self) {
-        display_task::DISPLAY_ACTIVE.store(false, Ordering::Relaxed);
+/// Moves the async panel driver onto the plane's interrupt executor.
+///
+/// esp-hal marks `Async` drivers `!Send` because their DMA wakers are bound
+/// to the core whose interrupt handlers were installed. The firmware runs on
+/// core 0 only and both executors live there, so handing the driver from the
+/// thread executor to the interrupt executor never crosses a core.
+pub struct PanelOwner(Display<esp_hal::Async>);
+
+impl PanelOwner {
+    /// # Safety
+    ///
+    /// The caller must spawn the plane task on an executor that runs on the
+    /// same core that created `panel`.
+    pub unsafe fn new(panel: Display<esp_hal::Async>) -> Self {
+        Self(panel)
+    }
+}
+
+// SAFETY: see `PanelOwner::new`; the driver never leaves its creating core.
+unsafe impl Send for PanelOwner {}
+
+/// Future wrapper that carries the `PanelOwner` guarantee across awaits.
+struct SameCore<F>(F);
+
+// SAFETY: only built by `ball_plane_task` from a `PanelOwner`, whose
+// constructor contract keeps the future on the creating core.
+unsafe impl<F> Send for SameCore<F> {}
+
+impl<F: core::future::Future> core::future::Future for SameCore<F> {
+    type Output = F::Output;
+
+    fn poll(
+        self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<F::Output> {
+        // SAFETY: structural pin projection; `SameCore` never moves `F`.
+        unsafe { self.map_unchecked_mut(|s| &mut s.0) }.poll(cx)
     }
 }
 
 /// Display task for the fixed ball plane.
 #[embassy_executor::task]
-pub async fn ball_plane_task(
+pub async fn ball_plane_task(panel: PanelOwner, display: PlaneDisplay, te: Input<'static>) {
+    SameCore(run_plane(panel.0, display, te)).await
+}
+
+async fn run_plane(
     mut panel: Display<esp_hal::Async>,
     mut display: PlaneDisplay,
     mut te: Input<'static>,
@@ -150,11 +211,11 @@ pub async fn ball_plane_task(
                 y1: y2,
             };
             let mut result = panel
-                .write_canvas_async(dst, src, BALL_SIDE, job.canvas)
+                .write_canvas_async(dst, src, BALL_SIDE, job.canvas.pixels())
                 .await;
             if result.is_err() {
                 result = panel
-                    .write_canvas_async(dst, src, BALL_SIDE, job.canvas)
+                    .write_canvas_async(dst, src, BALL_SIDE, job.canvas.pixels())
                     .await;
             }
             match result {
@@ -203,7 +264,8 @@ pub async fn ball_plane_task(
             window_start = Instant::now();
         }
 
-        display.release();
+        // Return the slot to the renderer before logging.
+        drop(job);
 
         if frames == 1 || frames.is_multiple_of(LOG_EVERY_FRAMES) || !completed {
             info!(

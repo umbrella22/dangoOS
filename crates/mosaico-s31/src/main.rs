@@ -1,21 +1,26 @@
 //! ESP-Mosaico v1.2 S31 platform firmware (R1 + R1.5).
 //!
-//! Four `esp-rtos` + Embassy tasks share one executor:
+//! `esp-rtos` + Embassy, two executors:
 //!
-//! - `ui_task`: exclusively owns LVGL. Runs a 10 ms loop, drains the touch
-//!   channel into the pointer indev, invalidates the full screen, renders,
-//!   dispatches input and reconciles the R1 application.
-//! - `display_task`: exclusively owns the CO5300 panel. Waits for frame jobs
-//!   from the two-frame presenter and transfers 16-row chunks asynchronously.
-//! - `input_task`: exclusively owns the CST9220. GPIO6 falling edges plus a
-//!   5 ms fallback trigger async I2C report reads into a bounded queue.
-//! - `sensor_task` (R1.5): polls the BMI270, the BMM150 pair and the right-slot
-//!   Interaction module, then publishes `SensorEvent` values into a bounded
-//!   capacity-64 channel. It shares I2C0 with touch through `shared_i2c`; the
-//!   subboard EEPROM uses the separate I2C1.
-//! - `haptic_task` (H1.3): non-blocking motor patterns on GPIO8. esp-hal has
-//!   no S31 LEDC driver at this revision, so RMT TX generates the equivalent
-//!   5 kHz PWM in hardware.
+//! - **Interrupt executor (FROM_CPU_INTR1, priority 2)**
+//!   - `ball_plane_task`: exclusively owns the CO5300 panel. Takes the newest
+//!     rendered canvas from the two-slot canvas pool and uploads it in 32-row
+//!     DMA chunks at the panel centre. Running here lets each chunk resume as
+//!     soon as its DMA completes, instead of waiting for the thread-mode
+//!     rasterizer to yield.
+//! - **Thread-mode executor**
+//!   - `ui_task`: exclusively owns LVGL. A 5 ms loop drains sensors and touch
+//!     into the runtime, advances the ball widget (engine + raster into a free
+//!     canvas slot) and hands each new frame to the plane.
+//!   - `input_task`: exclusively owns the CST9220. GPIO6 falling edges plus a
+//!     5 ms fallback trigger async I2C report reads into a bounded queue.
+//!   - `sensor_task` (R1.5): polls the BMI270, the BMM150 pair and the
+//!     right-slot Interaction module, then publishes `SensorEvent` values into
+//!     a bounded capacity-64 channel. It shares I2C0 with touch through
+//!     `shared_i2c`; the subboard EEPROM uses the separate I2C1.
+//!   - `haptic_task` (H1.3): non-blocking motor patterns on GPIO8. esp-hal has
+//!     no S31 LEDC driver at this revision, so RMT TX generates the equivalent
+//!     5 kHz PWM in hardware.
 //!
 //! The console is a USB-OTG HS CDC-ACM device on the USB-C port. The boot
 //! summary is replayed on every connection and includes the R1 counters:
@@ -33,15 +38,15 @@ esp_bootloader_esp_idf::esp_app_desc!();
 // map is documentation.
 mod ball_plane;
 mod board;
-mod display_task;
+mod display_stats;
 #[allow(dead_code)]
 mod drivers;
-// The native RGB565 model is shared by the driver, presenter and display port.
+// The native RGB565 model is shared by the panel driver and the ball plane.
 #[allow(dead_code)]
 mod framebuffer;
 mod haptic;
-// Only `CAPACITY` is used by the R1 pointer port; the queue itself is exported
-// by the host library.
+// Only `CAPACITY` is used by the firmware; the queue itself is exported by
+// the host library.
 #[allow(dead_code)]
 mod input_queue;
 mod input_task;
@@ -50,8 +55,6 @@ mod lvgl_port;
 // Ported allocation helper.
 #[allow(dead_code)]
 mod memory;
-mod pointer_port;
-mod present;
 mod sensor_task;
 mod ui;
 mod ui_task;
@@ -74,8 +77,10 @@ use embassy_usb::{
     Builder,
 };
 use esp_backtrace as _;
+use esp_rtos::embassy::InterruptExecutor;
 use esp_hal::{
     clock::CpuClock,
+    interrupt::Priority,
     gpio::{Level, Output, OutputConfig},
     i2c::master::I2c,
     rmt::Rmt,
@@ -177,16 +182,16 @@ fn status_record(connected: bool) -> LogRecord {
     let _ = write!(
         line,
         "[boot] R1 cdc={connected} disp={} br={} frames={} p50={p50} p95={p95} max={max} n={samples} transfer_ms={} fps={} te={}/{}/{} ty={} tew={} q={} drops={} hb={} ldrop={}",
-        display_task::FIRST_FRAME.load(Ordering::Relaxed) as u8,
-        display_task::BRIGHTNESS_RESTORED.load(Ordering::Relaxed) as u8,
-        display_task::FRAMES.load(Ordering::Relaxed),
-        display_task::LAST_TRANSFER_MS.load(Ordering::Relaxed),
-        display_task::FPS.load(Ordering::Relaxed),
-        display_task::TE_SYNCS.load(Ordering::Relaxed),
-        display_task::TE_TIMEOUTS.load(Ordering::Relaxed),
-        display_task::TE_BYPASS.load(Ordering::Relaxed),
-        display_task::TE_YIELDS.load(Ordering::Relaxed),
-        display_task::TE_WAIT_AVG_US.load(Ordering::Relaxed) / 1000,
+        display_stats::FIRST_FRAME.load(Ordering::Relaxed) as u8,
+        display_stats::BRIGHTNESS_RESTORED.load(Ordering::Relaxed) as u8,
+        display_stats::FRAMES.load(Ordering::Relaxed),
+        display_stats::LAST_TRANSFER_MS.load(Ordering::Relaxed),
+        display_stats::FPS.load(Ordering::Relaxed),
+        display_stats::TE_SYNCS.load(Ordering::Relaxed),
+        display_stats::TE_TIMEOUTS.load(Ordering::Relaxed),
+        display_stats::TE_BYPASS.load(Ordering::Relaxed),
+        display_stats::TE_YIELDS.load(Ordering::Relaxed),
+        display_stats::TE_WAIT_AVG_US.load(Ordering::Relaxed) / 1000,
         input_task::INPUT.len(),
         input_task::INPUT_DROPS.load(Ordering::Relaxed),
         ui_task::HEARTBEATS.load(Ordering::Relaxed),
@@ -257,8 +262,8 @@ async fn main(spawner: Spawner) {
 
     info!("==============================================");
     info!("Mosaico S31 R1 platform runtime");
-    info!("scheduler: esp-rtos + Embassy (one executor)");
-    info!("display:   async QSPI, two-frame presenter");
+    info!("scheduler: esp-rtos + Embassy (thread + interrupt executor)");
+    info!("display:   async QSPI ball plane, two-slot canvas pool");
     info!("input:     GPIO6 IRQ + async I2C CST9220");
     info!("console:   USB-OTG HS CDC-ACM (USB-C), buffered log bridge");
     info!("==============================================");
@@ -315,25 +320,28 @@ async fn main(spawner: Spawner) {
     let gpio6 = input_task::touch_irq_input(peripherals.GPIO6);
 
     // CO5300 tearing-effect output (GPIO43). The panel's TE signal marks the
-    // start of a frame; `display_task` starts animation transfers on it so a
-    // moving ball is not split by a scanout boundary.
+    // start of a frame; `ball_plane_task` starts animation transfers on it so
+    // an animated frame is not split by a scanout boundary.
     let panel_te = esp_hal::gpio::Input::new(
         peripherals.GPIO43,
         esp_hal::gpio::InputConfig::default(),
     );
 
-    // Two 480x480 RGB565 presentation frames in PSRAM.
-    let presenter = present::Presenter::new();
-    info!(
-        "R1 presentation: two {}x{} RGB565 frames in PSRAM ({} KiB each)",
-        present::FRAME_WIDTH,
-        present::FRAME_HEIGHT,
-        present::FRAME_BYTES / 1024,
-    );
     let (plane_ui, plane_display) = ball_plane::new();
 
-    spawner.spawn(ball_plane::ball_plane_task(panel, plane_display, panel_te).unwrap());
-    spawner.spawn(ui_task::ui_task(presenter, plane_ui).unwrap());
+    // The panel upload runs on a high-priority interrupt executor so its DMA
+    // chunk chain preempts the thread-mode rasterizer.
+    // Leaked once at boot: the executor must live for the whole run.
+    let plane_executor: &'static mut InterruptExecutor<1> = alloc::boxed::Box::leak(
+        alloc::boxed::Box::new(InterruptExecutor::new(peripherals.FROM_CPU_INTR1)),
+    );
+    let plane_spawner = plane_executor.start(Priority::Priority2);
+    // SAFETY: single-core firmware; the interrupt executor runs on core 0,
+    // the same core that created the panel driver.
+    let panel = unsafe { ball_plane::PanelOwner::new(panel) };
+    plane_spawner.spawn(ball_plane::ball_plane_task(panel, plane_display, panel_te).unwrap());
+    info!("ball_plane on interrupt executor (FROM_CPU_INTR1, priority 2)");
+    spawner.spawn(ui_task::ui_task(plane_ui).unwrap());
     match touch {
         Some(touch) => {
             spawner.spawn(input_task::input_task(gpio6, touch).unwrap());
