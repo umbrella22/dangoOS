@@ -123,7 +123,42 @@ impl Quality {
 const EYE_COLOR: Rgb = Rgb::from_hex(0x1B1B1B);
 
 /// Number of entries in the body gradient LUT.
-const GRADIENT_LUT_LEN: usize = 64;
+///
+/// The LUT is indexed by squared distance, so the first entries span the
+/// widest radius steps; 512 entries keep the step at the centre below half
+/// a green level (2 KiB on the stack while rendering).
+const GRADIENT_LUT_LEN: usize = 512;
+
+/// RGB565 level with 4 fractional bits per channel, packed into one `u32`:
+/// red at bits 19..28, green at 9..19, blue at 0..9. Each field has one
+/// spare bit, so adding a 0..15 threshold to every field never carries
+/// into its neighbour.
+type PackedLevel = u32;
+
+const R_SHIFT: u32 = 19;
+const G_SHIFT: u32 = 9;
+
+/// 4x4 Bayer thresholds (0..16), replicated into every packed field.
+///
+/// RGB565 has only 32 red/blue and 64 green levels; the large, slow body
+/// gradient shows contour bands. Ordered dithering spreads each fractional
+/// level over a 4x4 tile, is deterministic per pixel (a still ball does not
+/// shimmer) and costs one add plus the field extraction per pixel.
+const BAYER4: [[PackedLevel; 4]; 4] = {
+    const M: [[u32; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+    let mut out = [[0; 4]; 4];
+    let mut y = 0;
+    while y < 4 {
+        let mut x = 0;
+        while x < 4 {
+            let t = M[y][x];
+            out[y][x] = (t << R_SHIFT) | (t << G_SHIFT) | t;
+            x += 1;
+        }
+        y += 1;
+    }
+    out
+};
 
 /// Outer gradient color factor (`72 / 100`).
 const GRADIENT_OUTER_NUM: u32 = 72;
@@ -488,8 +523,8 @@ fn sanitize_coord(v: f32) -> f32 {
 
 /// Pixel color source used by [`fill_polygon`].
 trait Shader {
-    /// Color for one fully covered pixel, sampled at the pixel center.
-    fn color_at(&self, x: f32, y: f32) -> u16;
+    /// Color for one fully covered pixel `(px, py)`, sampled at its centre.
+    fn color_at(&self, px: usize, py: usize) -> u16;
 }
 
 struct SolidShader {
@@ -498,13 +533,13 @@ struct SolidShader {
 
 impl Shader for SolidShader {
     #[inline]
-    fn color_at(&self, _x: f32, _y: f32) -> u16 {
+    fn color_at(&self, _px: usize, _py: usize) -> u16 {
         self.value
     }
 }
 
 struct RadialShader {
-    lut: [u16; GRADIENT_LUT_LEN],
+    lut: [PackedLevel; GRADIENT_LUT_LEN],
     cx: f32,
     cy: f32,
     inv_r2: f32,
@@ -512,9 +547,9 @@ struct RadialShader {
 
 impl Shader for RadialShader {
     #[inline]
-    fn color_at(&self, x: f32, y: f32) -> u16 {
-        let dx = x - self.cx;
-        let dy = y - self.cy;
+    fn color_at(&self, px: usize, py: usize) -> u16 {
+        let dx = px as f32 + 0.5 - self.cx;
+        let dy = py as f32 + 0.5 - self.cy;
         // Index the LUT by normalized squared distance. The LUT itself
         // compensates with sqrt, so the visible ramp is linear in radius.
         let scaled = (dx * dx + dy * dy) * self.inv_r2 * (GRADIENT_LUT_LEN - 1) as f32;
@@ -528,8 +563,20 @@ impl Shader for RadialShader {
                 i
             }
         };
-        self.lut[index]
+        let level = self.lut[index];
+        dither565(level, px, py)
     }
+}
+
+/// Quantize a packed fractional RGB565 level with 4x4 ordered dithering.
+///
+/// Per channel this is `floor((level16 + t) / 16)` for the Bayer threshold
+/// `t`: over one 4x4 tile the mean equals `level16 / 16` exactly, and whole
+/// levels stay flat.
+#[inline]
+fn dither565(level: PackedLevel, px: usize, py: usize) -> u16 {
+    let p = level + BAYER4[py & 3][px & 3];
+    (((p >> 12) & 0xf800) | ((p >> 8) & 0x07e0) | ((p >> 4) & 0x001f)) as u16
 }
 
 /// Fill a closed polygon with the requested edge sampling.
@@ -685,7 +732,7 @@ fn fill_polygon<S: Shader>(
                 continue;
             }
             let px = x_start + offset;
-            let src = shader.color_at(px as f32 + 0.5, py as f32 + 0.5);
+            let src = shader.color_at(px, py);
             let index = row + px;
             out[index] = blend565(out[index], src, cov, coverage_max);
         }
@@ -713,9 +760,11 @@ fn blend565(dst: u16, src: u16, coverage: u8, coverage_max: u8) -> u16 {
 
 /// Build the two-stop body gradient LUT.
 ///
-/// Entry `i` corresponds to a normalized radius `sqrt(i / (n - 1))`, so the
-/// LUT is linear in radius although it is indexed by squared distance.
-fn body_gradient_lut(color: Rgb) -> [u16; GRADIENT_LUT_LEN] {
+/// Entry `i` covers squared distances `i..i + 1` (normalized by `n - 1`) and
+/// stores the color at the bucket's mean radius, so the ramp is linear in
+/// radius although it is indexed by squared distance. Each entry keeps four
+/// fractional bits per channel for [`dither565`].
+fn body_gradient_lut(color: Rgb) -> [PackedLevel; GRADIENT_LUT_LEN] {
     let center = [color.r as u32, color.g as u32, color.b as u32];
     let outer = [
         (center[0] * GRADIENT_OUTER_NUM + GRADIENT_OUTER_DEN / 2) / GRADIENT_OUTER_DEN,
@@ -723,31 +772,38 @@ fn body_gradient_lut(color: Rgb) -> [u16; GRADIENT_LUT_LEN] {
         (center[2] * GRADIENT_OUTER_NUM + GRADIENT_OUTER_DEN / 2) / GRADIENT_OUTER_DEN,
     ];
 
-    let mut lut = [0u16; GRADIENT_LUT_LEN];
-    let steps = (GRADIENT_LUT_LEN - 1) as u32;
+    // Per channel: level16(t) = start + delta * t, with four fractional bits.
+    let ramp = |c: u32, o: u32, max: u32| {
+        let k = (max * 16) as f32 / 255.0;
+        (c as f32 * k, (o as f32 - c as f32) * k, (max * 16) as f32)
+    };
+    let channels = [
+        ramp(center[0], outer[0], 31),
+        ramp(center[1], outer[1], 63),
+        ramp(center[2], outer[2], 31),
+    ];
+    let level = |(start, delta, top): (f32, f32, f32), t: f32| {
+        // `as` saturates on overflow and truncates toward zero.
+        ((start + delta * t + 0.5) as u32).min(top as u32)
+    };
+
+    let mut lut = [0; GRADIENT_LUT_LEN];
+    let inv_steps = 1.0 / (GRADIENT_LUT_LEN - 1) as f32;
     let mut i = 0usize;
     while i < GRADIENT_LUT_LEN {
-        let t = sqrt_approx(i as f32 / steps as f32);
-        // Integer-weighted lerp keeps the LUT identical on every target.
-        let r = lerp_channel(center[0], outer[0], t);
-        let g = lerp_channel(center[1], outer[1], t);
-        let b = lerp_channel(center[2], outer[2], t);
-        lut[i] = Rgb { r, g, b }.to_rgb565();
+        // Mean radius over the bucket, clamped to the outer stop.
+        let t = sqrt_approx(((i as f32 + 0.5) * inv_steps).min(1.0));
+        lut[i] = (level(channels[0], t) << R_SHIFT)
+            | (level(channels[1], t) << G_SHIFT)
+            | level(channels[2], t);
         i += 1;
     }
     lut
 }
 
-#[inline]
-fn lerp_channel(a: u32, b: u32, t: f32) -> u8 {
-    let value = a as f32 + (b as f32 - a as f32) * t;
-    // `as` saturates on overflow and truncates toward zero.
-    (value + 0.5) as u8
-}
-
 // ---- math helpers --------------------------------------------------------
 
-/// Fast square root used only while building the 64-entry gradient LUT.
+/// Fast square root used only while building the body gradient LUT.
 ///
 /// One bit-level initial guess plus two Newton steps gives well under 0.1%
 /// relative error over the normalized `0..=1` input range.
@@ -814,5 +870,79 @@ fn clamp_scale(v: f32) -> f32 {
         v.clamp(0.0, SCALE_LIMIT)
     } else {
         1.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pack(r: u32, g: u32, b: u32) -> PackedLevel {
+        (r << R_SHIFT) | (g << G_SHIFT) | b
+    }
+
+    fn channels(p: u16) -> [u32; 3] {
+        [(p >> 11) as u32, ((p >> 5) & 0x3f) as u32, (p & 0x1f) as u32]
+    }
+
+    #[test]
+    fn ordered_dither_keeps_whole_levels_flat() {
+        let level = pack(10 * 16, 40 * 16, 31 * 16);
+        for y in 0..4 {
+            for x in 0..4 {
+                assert_eq!(dither565(level, x, y), (10 << 11) | (40 << 5) | 31);
+            }
+        }
+    }
+
+    #[test]
+    fn ordered_dither_preserves_the_mean_level() {
+        // 10.5, 20.25 and 3.75 levels.
+        let level = pack(10 * 16 + 8, 20 * 16 + 4, 3 * 16 + 12);
+        let mut sum = [0u32; 3];
+        for y in 0..4 {
+            for x in 0..4 {
+                let c = channels(dither565(level, x, y));
+                for i in 0..3 {
+                    sum[i] += c[i];
+                }
+            }
+        }
+        // Means times 16: 10.5, 20.25, 3.75.
+        assert_eq!(sum, [168, 324, 60]);
+    }
+
+    #[test]
+    fn ordered_dither_never_carries_between_channels() {
+        let top = pack(31 * 16, 63 * 16, 31 * 16);
+        let low_g = pack(31 * 16, 0, 31 * 16);
+        for y in 0..4 {
+            for x in 0..4 {
+                assert_eq!(dither565(top, x, y), 0xffff);
+                assert_eq!(dither565(low_g, x, y), 0xf81f);
+            }
+        }
+    }
+
+    #[test]
+    fn gradient_lut_darkens_from_center_to_outer_color() {
+        let lut = body_gradient_lut(Rgb::from_hex(0xf3f0ea));
+        let unpack = |p: PackedLevel| [p >> R_SHIFT, (p >> G_SHIFT) & 0x3ff, p & 0x1ff];
+        let expect = |v: f32, max: f32| (v * max * 16.0 / 255.0 + 0.5) as u32;
+        // The first bucket is within one level (16) of the centre color.
+        let first = unpack(lut[0]);
+        let centre = [expect(243.0, 31.0), expect(240.0, 63.0), expect(234.0, 31.0)];
+        for c in 0..3 {
+            assert!(centre[c] - first[c] < 16, "{first:?} vs {centre:?}");
+        }
+        // The last bucket is the outer stop: 72 % of the centre, rounded.
+        let last = unpack(lut[GRADIENT_LUT_LEN - 1]);
+        assert_eq!(last, [expect(175.0, 31.0), expect(173.0, 63.0), expect(168.0, 31.0)]);
+        for pair in lut.windows(2) {
+            let (a, b) = (unpack(pair[0]), unpack(pair[1]));
+            for c in 0..3 {
+                assert!(b[c] <= a[c]);
+            }
+        }
     }
 }

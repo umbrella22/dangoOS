@@ -190,11 +190,17 @@ fn body_is_visible_and_eye_interior_is_dark() {
     // Gradient center pixel (canvas 38% / 32%) versus an outer body pixel.
     let gradient_center = pixel(&pixels, 121, 102);
     let gradient_outer = pixel(&pixels, 67, 67);
-    assert_eq!(
-        gradient_center,
-        Rgb::from_hex(0xF1EEE8).to_rgb565(),
-        "the gradient center should be the unchanged body color"
-    );
+    // The body gradient is ordered-dithered, so the centre may sit one
+    // RGB565 step from the truncated body color in any channel.
+    let body = Rgb::from_hex(0xF1EEE8).to_rgb565();
+    let channels = |v: u16| [(v >> 11) as i32, ((v >> 5) & 0x3f) as i32, (v & 0x1f) as i32];
+    for (got, want) in channels(gradient_center).into_iter().zip(channels(body)) {
+        assert!(
+            (got - want).abs() <= 1,
+            "the gradient center should be the body color within one step: \
+             {gradient_center:#06x} vs {body:#06x}"
+        );
+    }
     assert!(
         red5(gradient_center) > red5(gradient_outer),
         "gradient should darken away from 38%/32%: {gradient_center:#06x} vs {gradient_outer:#06x}"
