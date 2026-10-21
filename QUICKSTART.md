@@ -14,7 +14,9 @@ G0/H0/G1/R0/R1/G2 与 H1 已在真机验收；H2（传感器→表情→马达�
 - G2 真机证据：球体 240×240，6 状态点按切换；100 次标签触摸 P50 28–29ms、P95 30ms、20–21fps；全屏透明触摸层，只有球体 240×240/8 块被重绘。
 - H1.2：两颗 BMM150 在主板 I2C0 `0x11/0x12`，chip ID `0x32`，20Hz；模块 `interact(0x16)`；IMU 35–46Hz。
 - 当前镜像：`target/mosaico-s31-h3-fixed4.bin`（945,920 B，SHA-256 `367b148b...`，固定球平面、无拖拽）；G2/R0/R1 验证镜像仍在 `target/`。
-- `h3-fixed4` 之后的提交（表情优先级、canvas 双缓冲、ball_plane 中断执行器）已通过 host 测试和目标构建，**待真机验证**。
+- `h3-fixed4` 之后的提交（表情优先级、canvas 双缓冲、ball_plane 中断执行器、渐变有序抖动）已上真机：镜像 `target/mosaico-s31-df1b695.bin`（922,896 B，SHA-256 `0a8427e9...`）。
+  2026-10-21 实测约 3 分钟无复位：`ball_plane on interrupt executor (FROM_CPU_INTR1, priority 2)`、`2 canvas slots`；
+  `ras` 18.9–20.0 ms（p50 19.4，抖动前约 18 ms）、`tx=6` ms、`fps=18–19`、`drop=0`、`q=0/32`。触摸手感和表情切换待人工验收。
 - 缺失美术素材清单见 [docs/ASSET_REQUESTS.md](docs/ASSET_REQUESTS.md)。
 - 详细顺序见 [docs/plans/ROADMAP.md](docs/plans/ROADMAP.md)。
 
