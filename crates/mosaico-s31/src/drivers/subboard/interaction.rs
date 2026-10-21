@@ -7,7 +7,9 @@
 //! [`InteractionPort::activate`] applies the official pulls only once the
 //! EEPROM says an Interaction board is plugged in.
 //!
-//! The WS2812, IR TX and the SI12T touch keys are not driven yet.
+//! The WS2812 light is driven by `tasks::lights` (right slot only). IR TX and
+//! the capacitive key mode (the S31 touch sensor on the KEY pins) are not
+//! driven yet.
 
 use esp_hal::{
     analog::adc::{Adc, AdcChannel, AdcConfig, AdcPin, Attenuation, RegisterAccess},

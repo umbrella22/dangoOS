@@ -211,7 +211,7 @@ CLK=20 / D=21 / Q=22 / CS=23 / HOLD=24 / WP=25（原理图 NAND_* → SD_*）。
 
 **交互模块（INTERACT 0x16）**:
 - 光敏 LDR = GPIO53、红外发射 IR = GPIO48（RMT NEC）、左键 = GPIO13、右键 = GPIO12
-- 人体感应 PIR = GPIO4、WS2812 = GPIO15；按钮支持电容触摸优先/GPIO 回退（触摸挂槽位 I2C）
+- 人体感应 PIR = GPIO4、WS2812 = GPIO15；按钮支持电容触摸优先/GPIO 回退。触摸用的是 S31 自带的 touch sensor（官方 `touch_sensor_lowlevel`，KEY 引脚直接映射到 touch 通道，阈值 500），不是槽位 I2C 上的芯片；官方代码里没有 SI12T。红外只有发射，没有接收头
 
 **相机模块（CAMERA 0x07, 仅左槽）**:
 - DVP 8-bit: D0-D7 = 16/15/33/4/14/12/18/13（GPIO33、GPIO14 也被占用）

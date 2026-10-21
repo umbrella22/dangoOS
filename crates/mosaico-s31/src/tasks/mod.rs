@@ -5,9 +5,11 @@
 //! - [`input`]: reads the touch controller into a bounded queue.
 //! - [`sensors`]: IMU, magnetometers, fuel gauge and the module slot.
 //! - [`haptic`]: motor patterns.
+//! - [`lights`]: Interaction board WS2812 mood light.
 
 pub mod haptic;
 pub mod input;
+pub mod lights;
 pub mod plane;
 pub mod sensors;
 pub mod ui;

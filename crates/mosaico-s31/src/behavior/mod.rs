@@ -8,11 +8,13 @@
 //!   modules, battery) become an expression and a haptic pattern.
 //! - [`personality`]: the tap ladder (curious, puzzled, annoyed, angry) with
 //!   its noticing delay, hold times and anger cooldown.
+//! - [`mood_light`]: the Interaction board LEDs follow the expression.
 //! - [`runtime`]: merges both into the expression the screen shows, with a
 //!   fixed priority so a touch reaction is not overwritten by ambient noise.
 
 pub mod affect;
 pub mod magnet;
+pub mod mood_light;
 pub mod personality;
 pub mod runtime;
 

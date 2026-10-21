@@ -47,10 +47,12 @@ use embassy_time::{Duration, Ticker};
 use log::{info, warn};
 use mosaico_s31::behavior::affect::{EventKind, EventSource, SensorEvent};
 use mosaico_s31::behavior::magnet::{MagReading, MagneticClassifier, MagneticEvent};
+use mosaico_s31::behavior::mood_light::Side;
 
 use crate::drivers::battery::Bq27220;
 use crate::drivers::imu::{self, Bmi270, Bmm150, ImuSample, MagSample};
 use crate::drivers::subboard::{self, Slot, Subboard};
+use crate::tasks::lights;
 
 /// `SensorEvent` queue depth (RFC 0005 section 3.5).
 pub const SENSOR_QUEUE_CAPACITY: usize = 64;
@@ -329,8 +331,12 @@ pub async fn sensor_task(mut subboard: Subboard) {
                     source: EventSource::Light,
                     kind: EventKind::LightLevel(inputs.light_level),
                 });
+                lights::set_ambient(inputs.light_level);
 
                 if let Some(pressed) = inputs.key_l_edge {
+                    if pressed {
+                        lights::spark(Side::Left);
+                    }
                     publish(SensorEvent {
                         at_ms: at,
                         source: EventSource::KeyLeft,
@@ -342,6 +348,9 @@ pub async fn sensor_task(mut subboard: Subboard) {
                     });
                 }
                 if let Some(pressed) = inputs.key_r_edge {
+                    if pressed {
+                        lights::spark(Side::Right);
+                    }
                     publish(SensorEvent {
                         at_ms: at,
                         source: EventSource::KeyRight,
@@ -409,6 +418,7 @@ pub async fn sensor_task(mut subboard: Subboard) {
                     },
                 });
             }
+            lights::set_attached(subboard.active_slot() == Some(Slot::Right));
             next_scan_ms = now.saturating_add(subboard::SCAN_PERIOD_MS);
         }
 

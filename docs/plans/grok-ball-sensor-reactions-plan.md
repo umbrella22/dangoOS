@@ -7,7 +7,8 @@
 > - 模块驱动已改为左右槽自适应：`drivers/subboard/`。交互板插左（`0x50`）或插右（`0x51`）都能用；同时只读一块；相机固定按左槽报告。`ModuleInserted/ModuleRemoved` 现在带 `ModuleKind`，反应跟随模块类型而不是槽位。下文 §2.2、§7 里"交互板只在右槽、相机只在左槽"的假设已经放宽，规则见 [硬件文档 §7.2.1](../MOSAICO_V12_HARDWARE.md)。
 > - 2026-10-21 真机试用后调慢了交互板相关表情：按键、光线、PIR 和插拔序列的停留时间加长（下文表格已同步），并加了 1.2 s 最短停留——光线、PIR、磁铁这类被动传感器不能在 1.2 s 内用另一来源的反应顶掉刚出现的表情；按键、触摸、摇晃和同一来源的后续反应不受限。常量在 `behavior/affect.rs`，测试直接引用这些常量。
 > - 磁力计实现见 §4.6 前的当前说明。真机已验收：马达、相机插拔、磁铁贴上/拿开、LDR、PIR。
-> - 仍未完成：WS2812 心情灯；SI12T 触摸键模式；IR 发射（本 RFC 原本就不使用）。
+> - WS2812 心情灯已实现（右槽），待真机验收。
+> - 仍未完成：电容触摸键模式（官方用 S31 自带 touch sensor，下文的“SI12T”是早期误记）；IR 发射搁置，见 ROADMAP。
 
 > Original status (2026-10-20): Draft implementation plan; no implementation work package is complete.
 > Plan ID: `mosaico-grok-ball-reactions-v1`; revision: `1`.

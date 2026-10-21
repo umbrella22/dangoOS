@@ -59,6 +59,7 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
         │   ├── mod.rs           Expression（18 个表情）
         │   ├── affect.rs        传感器事件 → 情绪 / 表情 / 马达（摇晃、光线、PIR、磁铁、电量…）
         │   ├── magnet.rs        磁力计基线学习与接近/接触/旋转分类
+        │   ├── mood_light.rs    交互板 6 颗 WS2812：表情 → 颜色与动态
         │   ├── personality.rs   触摸 → 点按阶梯（好奇 → 疑惑 → 不耐烦 → 生气）
         │   ├── runtime.rs       合并两者：紧急情绪 > 触摸反应 > 情绪表情 > 静息
         │   └── tests/           按场景分的时间线测试
@@ -84,7 +85,8 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
         │   ├── ui.rs            LVGL + behavior 运行时 + 渲染
         │   ├── input.rs         触摸读取
         │   ├── sensors.rs       IMU、磁力计、电量、左右扩展槽
-        │   └── haptic.rs        马达（RMT 生成 PWM）
+        │   ├── haptic.rs        马达（RMT ch0 生成 PWM）
+        │   └── lights.rs        交互板 WS2812（RMT ch1，右槽 GPIO38）
         └── drivers/             外设驱动
             ├── display.rs       CO5300 QSPI + DMA（display/packing.rs：窗口打包）
             ├── touch.rs         CST9220（touch/protocol.rs：报告解码）

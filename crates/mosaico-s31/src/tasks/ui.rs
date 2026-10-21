@@ -45,6 +45,7 @@ use mosaico_s31::ui::{theme, MosaicoApp, Screen, SHOW_SPLASH};
 use super::{
     haptic,
     input::{INPUT, INPUT_CAPACITY},
+    lights,
     plane::{PlaneJob, PlaneUi},
     sensors::SENSOR_EVENTS,
 };
@@ -190,6 +191,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
         if let Some(pattern) = runtime.tick(now_ms) {
             haptic::play(pattern);
         }
+        lights::show(runtime.expression());
 
         // ---- render into a free slot, then hand the frame to the plane ----
         if let Err(error) = ui.tick(elapsed_ms) {

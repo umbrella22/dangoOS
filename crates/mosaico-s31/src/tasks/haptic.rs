@@ -372,18 +372,22 @@ fn now_ms() -> u64 {
         .as_millis()
 }
 
+/// The RMT peripheral runs at 10 MHz for the WS2812 light (`lights`); the
+/// haptic channel divides it back to the 1 MHz tick its periods assume.
+const RMT_TICKS_PER_US: u8 = 10;
+
 /// Configure the RMT TX channel that the haptic task will own.
 ///
 /// The caller attaches `GPIO8` with [`Channel::with_pin`] so a setup failure
 /// can still leave the pin driven low.
 pub fn configure_channel(
-    rmt: esp_hal::rmt::Rmt<'static, Blocking>,
+    creator: esp_hal::rmt::ChannelCreator<'static, Blocking, 0>,
 ) -> Result<HapticChannel, esp_hal::rmt::ConfigError> {
     use esp_hal::rmt::TxChannelCreator;
 
     let config = TxChannelConfig::default()
-        .with_clk_divider(1)
+        .with_clk_divider(RMT_TICKS_PER_US)
         .with_idle_output(true)
         .with_idle_output_level(Level::Low);
-    rmt.channel0.configure_tx(&config)
+    creator.configure_tx(&config)
 }
