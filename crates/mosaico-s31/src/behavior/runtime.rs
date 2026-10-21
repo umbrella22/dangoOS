@@ -176,6 +176,8 @@ impl Runtime {
             scale_y: 1.0,
             look_x: quantize(self.persona.look_x, 0.5),
             pulse: quantize(self.persona.pulse, 0.125),
+            pet: quantize(self.persona.pet, 0.0625),
+            lean_x: quantize(self.persona.lean_x, 1.0),
         };
         self.control.set_visual(visual);
     }
@@ -321,9 +323,12 @@ mod tests {
         let control = FoxControl::new(Expression::Idle);
         let mut runtime = Runtime::new(0, Rc::clone(&control));
 
-        // Two large peaks within 200 ms: the affect engine panics.
-        accel(&mut runtime, 950, 2_500);
-        accel(&mut runtime, 1_000, 2_500);
+        // A violent shake, five hard peaks inside a second: the affect engine
+        // panics.
+        for n in (0..5u64).rev() {
+            accel(&mut runtime, 990 - n * 60, 1_000);
+            accel(&mut runtime, 1_000 - n * 60, 2_500);
+        }
         runtime.tick(1_000);
         assert_eq!(runtime.expression(), Expression::Panic);
 

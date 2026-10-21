@@ -56,7 +56,7 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
         │   ├── fox.bin          狐狸全部图像的行 RLE（fox_pack.py 生成）
         │   └── bmi270-config.bin  Bosch BMI270 配置微码
         ├── behavior/            “狐狸怎么想”
-        │   ├── mod.rs           Expression（16 个表情）
+        │   ├── mod.rs           Expression（18 个表情）
         │   ├── affect.rs        传感器事件 → 情绪 / 表情 / 马达（摇晃、光线、PIR、磁铁、电量…）
         │   ├── personality.rs   触摸 → 点按阶梯（好奇 → 疑惑 → 不耐烦 → 生气）
         │   ├── runtime.rs       合并两者：紧急情绪 > 触摸反应 > 情绪表情 > 静息

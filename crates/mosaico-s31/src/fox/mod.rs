@@ -2,7 +2,7 @@
 //!
 //! The art lives in `assets/fox-dango/` and is packed by
 //! `assets/fox-dango/tools/fox_pack.py` into [`data`]: one 128-colour RGB565
-//! palette, 18 base poses and their parts, all as row RLE of palette indices.
+//! palette, 20 base poses and their parts, all as row RLE of palette indices.
 //!
 //! - [`FoxAnimator`] (`animate.rs`): expression plus time to a [`Scene`].
 //! - [`Scene`] (`scene.rs`): pose, layers and warp; no allocation.
@@ -74,7 +74,7 @@ pub struct Pose {
     pub spiral: [&'static [Img]; 3],
 }
 
-/// The 18 fox poses, in the order of [`data::POSES`].
+/// The 20 fox poses, in the order of [`data::POSES`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FoxPose {
@@ -96,6 +96,8 @@ pub enum FoxPose {
     Dying,
     Annoyed,
     Charging,
+    Peering,
+    Dazzled,
 }
 
 impl FoxPose {
@@ -123,6 +125,8 @@ impl From<Expression> for FoxPose {
             Expression::Error => Self::Error,
             Expression::Tired => Self::Tired,
             Expression::Dying => Self::Dying,
+            Expression::Peering => Self::Peering,
+            Expression::Dazzled => Self::Dazzled,
         }
     }
 }
@@ -235,7 +239,7 @@ mod tests {
     fn every_pose_animates_for_ten_seconds() {
         let mut r = FoxRenderer::new();
         let mut out = vec![0u16; PIXELS];
-        for pose in 0..18u8 {
+        for pose in 0..20u8 {
             // SAFETY-free conversion through the table index.
             let p = [
                 FoxPose::Idle,
@@ -256,6 +260,8 @@ mod tests {
                 FoxPose::Dying,
                 FoxPose::Annoyed,
                 FoxPose::Charging,
+                FoxPose::Peering,
+                FoxPose::Dazzled,
             ][pose as usize];
             let mut a = FoxAnimator::new(FoxPose::Idle);
             a.set_pose(p);
@@ -264,6 +270,7 @@ mod tests {
                 let s = a.scene(FoxInput {
                     scale_x: 1.03,
                     scale_y: 0.97,
+                    offset_x: 4,
                     offset_y: -10,
                     look_x: 5.0,
                 });

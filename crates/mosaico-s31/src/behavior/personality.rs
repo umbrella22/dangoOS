@@ -1,7 +1,10 @@
 //! Human-feeling tap personality.
 //!
 //! The fox does not support grab/drag: product decision, the fixed plane
-//! keeps it at the panel centre. What remains is the tap ladder:
+//! keeps it at the panel centre. A finger that stays or strokes is petting:
+//! the fox closes her eyes contentedly, squashes under the hand and leans
+//! with the stroke, and the press never counts as a tap. Short presses are
+//! the tap ladder:
 //!
 //! - a tap is noticed after a short beat, not in the same frame;
 //! - one tap is curiosity, two are puzzlement, three or four are mild
@@ -39,6 +42,22 @@ pub const BURST_SETTLE_DELAY_MS: u64 = 380;
 pub const ANGRY_COOLDOWN_MS: u64 = 6_000;
 /// Visual tap pulse duration.
 pub const TAP_PULSE_MS: u64 = 280;
+/// A press held this long is petting, even without moving.
+pub const PET_HOLD_MS: u64 = 450;
+/// Or a press that travels this far: a stroke.
+pub const PET_STROKE_PX: i32 = 40;
+/// Petting stays on screen this long after the finger lifts.
+pub const PET_AFTER_MS: u64 = 1_800;
+/// Squash of a hand resting on the head, `0..=1`.
+const PET_REST_SQUASH: f32 = 0.35;
+/// Squash added per pixel of stroke travel.
+const PET_SQUASH_PER_PX: f32 = 0.02;
+/// Stroke squash half-life, ms.
+const PET_SQUASH_DECAY_MS: f32 = 180.0;
+/// Lean toward the stroke: pixels of lean per pixel of finger offset.
+const PET_LEAN_PER_PX: f32 = 0.06;
+/// Largest lean, canvas pixels.
+pub const PET_LEAN_MAX_PX: f32 = 6.0;
 
 /// Hold time for one personality reaction.
 const fn reaction_hold_ms(reaction: PersonaReaction) -> u64 {
@@ -47,6 +66,7 @@ const fn reaction_hold_ms(reaction: PersonaReaction) -> u64 {
         PersonaReaction::Puzzled => 1_800,
         PersonaReaction::Annoyed => 2_000,
         PersonaReaction::Angry => 4_000,
+        PersonaReaction::Petted => PET_AFTER_MS,
     }
 }
 
@@ -59,6 +79,8 @@ pub enum PersonaReaction {
     Puzzled,
     /// Three or four taps: "please stop".
     Annoyed,
+    /// A finger resting or stroking: contented, eyes shut.
+    Petted,
     /// A frantic burst: genuinely angry.
     Angry,
 }
@@ -71,6 +93,7 @@ impl PersonaReaction {
             Self::Puzzled => Expression::Puzzled,
             Self::Annoyed => Expression::Confused,
             Self::Angry => Expression::Angry,
+            Self::Petted => Expression::Satisfied,
         }
     }
 
@@ -84,6 +107,7 @@ impl PersonaReaction {
             Self::Puzzled => Some(HapticPattern::Puzzled),
             Self::Annoyed => Some(HapticPattern::Confused),
             Self::Angry => Some(HapticPattern::Angry),
+            Self::Petted => Some(HapticPattern::Satisfied),
         }
     }
 }
@@ -110,6 +134,10 @@ pub struct PersonaOutput {
     pub pulse: f32,
     /// Gaze offset in source units toward the finger, `-8..=8`.
     pub look_x: f32,
+    /// Squash under a petting hand, `0..=1`.
+    pub pet: f32,
+    /// Lean with the stroke, canvas pixels.
+    pub lean_x: f32,
 }
 
 impl PersonaOutput {
@@ -120,6 +148,8 @@ impl PersonaOutput {
         haptic: None,
         pulse: 0.0,
         look_x: 0.0,
+        pet: 0.0,
+        lean_x: 0.0,
     };
 }
 
@@ -156,6 +186,15 @@ pub struct PersonalityEngine {
     press_travel: i32,
     look_x: f32,
 
+    /// The current press is petting.
+    petting: bool,
+    /// Decaying squash from stroke travel.
+    stroke: f32,
+    /// Eased pet squash and lean actually shown.
+    pet: f32,
+    lean_x: f32,
+    eased_ms: u64,
+
     tap_times: [u64; 8],
     tap_count: u8,
 
@@ -182,6 +221,11 @@ impl PersonalityEngine {
             last_y: 0,
             press_travel: 0,
             look_x: 0.0,
+            petting: false,
+            stroke: 0.0,
+            pet: 0.0,
+            lean_x: 0.0,
+            eased_ms: now_ms,
             tap_times: [0; 8],
             tap_count: 0,
             pending: None,
@@ -199,6 +243,7 @@ impl PersonalityEngine {
         if self.phase != Phase::Idle {
             self.phase = Phase::Idle;
             self.pending = None;
+            self.petting = false;
         }
     }
 
@@ -248,7 +293,51 @@ impl PersonalityEngine {
         };
         self.look_x += (target_x - self.look_x) * 0.25;
 
+        if self.phase == Phase::Pressed
+            && !self.petting
+            && now.saturating_sub(self.press_start_ms) >= PET_HOLD_MS
+        {
+            self.start_petting();
+        }
+        self.ease_pet(now);
+
         self.output()
+    }
+
+    /// Ease the pet squash and lean toward their targets (time based).
+    fn ease_pet(&mut self, now: u64) {
+        let dt = now.saturating_sub(self.eased_ms).min(200) as f32;
+        self.eased_ms = now;
+        self.stroke *= half_life(dt, PET_SQUASH_DECAY_MS);
+        let (squash, lean) = if self.petting && self.phase == Phase::Pressed {
+            let lean = ((self.last_x - self.press_x) as f32 * PET_LEAN_PER_PX)
+                .clamp(-PET_LEAN_MAX_PX, PET_LEAN_MAX_PX);
+            ((PET_REST_SQUASH + self.stroke).min(1.0), lean)
+        } else {
+            (0.0, 0.0)
+        };
+        // About 60 ms to follow the hand, so a stroke reads as one motion.
+        let k = 1.0 - half_life(dt, 60.0);
+        self.pet += (squash - self.pet) * k;
+        self.lean_x += (lean - self.lean_x) * k;
+        if self.pet < 0.01 && squash == 0.0 {
+            self.pet = 0.0;
+        }
+        if self.lean_x.abs() < 0.05 && lean == 0.0 {
+            self.lean_x = 0.0;
+        }
+    }
+
+    /// The press became petting: it soothes whatever the taps started.
+    fn start_petting(&mut self) {
+        self.petting = true;
+        self.pending = None;
+        self.tap_count = 0;
+        self.active = Some(ActiveReaction {
+            reaction: PersonaReaction::Petted,
+            ends_ms: u64::MAX,
+        });
+        self.haptic_pending = PersonaReaction::Petted.haptic();
     }
 
     fn expire(&mut self, now: u64) {
@@ -282,9 +371,18 @@ impl PersonalityEngine {
                 self.last_x = x;
                 self.last_y = y;
                 self.press_travel = 0;
+                self.petting = false;
                 self.pulse_start_ms = Some(at);
             }
-            Phase::Pressed => self.track_press_move(x, y),
+            Phase::Pressed => {
+                self.track_press_move(x, y);
+                if !self.petting
+                    && (self.press_travel >= PET_STROKE_PX
+                        || at.saturating_sub(self.press_start_ms) >= PET_HOLD_MS)
+                {
+                    self.start_petting();
+                }
+            }
         }
     }
 
@@ -297,7 +395,13 @@ impl PersonalityEngine {
         self.last_y = y;
         let held = at.saturating_sub(self.press_start_ms);
         self.phase = Phase::Idle;
-        if held <= TAP_MAX_MS && self.press_travel <= TAP_MAX_MOVE_PX {
+        if self.petting {
+            self.petting = false;
+            self.active = Some(ActiveReaction {
+                reaction: PersonaReaction::Petted,
+                ends_ms: at.saturating_add(PET_AFTER_MS),
+            });
+        } else if held <= TAP_MAX_MS && self.press_travel <= TAP_MAX_MOVE_PX {
             self.register_tap(at);
         }
     }
@@ -306,7 +410,11 @@ impl PersonalityEngine {
         let dx = x - self.last_x;
         let dy = y - self.last_y;
         if dx.abs() + dy.abs() > 2 {
-            self.press_travel = self.press_travel.saturating_add(dx.abs() + dy.abs());
+            let moved = dx.abs() + dy.abs();
+            self.press_travel = self.press_travel.saturating_add(moved);
+            if self.petting {
+                self.stroke = (self.stroke + moved as f32 * PET_SQUASH_PER_PX).min(1.0);
+            }
             self.last_x = x;
             self.last_y = y;
         }
@@ -404,6 +512,8 @@ impl PersonalityEngine {
             haptic: self.haptic_pending.take(),
             pulse,
             look_x: self.look_x,
+            pet: self.pet,
+            lean_x: self.lean_x,
         }
     }
 }
@@ -412,6 +522,21 @@ impl Default for PersonalityEngine {
     fn default() -> Self {
         Self::new(0)
     }
+}
+
+/// Remaining fraction after `dt` ms with the given half-life (no `exp` in
+/// `core`: a short polynomial is plenty for easing).
+fn half_life(dt: f32, half_ms: f32) -> f32 {
+    // 2^-x for x = dt / half, via 1 / (1 + x ln2 + (x ln2)^2 / 2), and halving
+    // per whole half-life to keep the error small.
+    let mut x = dt / half_ms;
+    let mut scale = 1.0;
+    while x > 1.0 {
+        scale *= 0.5;
+        x -= 1.0;
+    }
+    let y = x * core::f32::consts::LN_2;
+    scale / (1.0 + y + y * y * 0.5)
 }
 
 /// Integer length of a 2D vector (no `sqrt` in `core`).

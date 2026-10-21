@@ -30,6 +30,8 @@ ORDER = [  # (key, label); order matches behavior::Expression, then extras
     ('dying', '濒死 Dying'),
     ('annoyed', '不耐烦 Annoyed'),
     ('charging', '充电 Charging'),
+    ('peering', '暗中张望 Peering'),
+    ('dazzled', '刺眼 Dazzled'),
 ]
 CANVAS_W, CANVAS_H = 352, 336   # device canvas; bottom-anchored, headroom for hops
 COLORS = 128
@@ -43,7 +45,7 @@ def to565(a):
     return out.astype(np.uint8)
 
 def geometry():
-    """One crop + scale for every expression: the union of the 18 poses' content."""
+    """One crop + scale for every expression: the union of every pose's content."""
     boxes = [np.argwhere(np.asarray(src(k)).max(2) > 24) for k, _ in ORDER]
     y0 = min(b[:, 0].min() for b in boxes); y1 = max(b[:, 0].max() for b in boxes)
     x0 = min(b[:, 1].min() for b in boxes); x1 = max(b[:, 1].max() for b in boxes)

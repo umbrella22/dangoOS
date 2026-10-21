@@ -56,6 +56,8 @@ HINTS = {
     'dying': {'breath_ms': 6000, 'breath_pct': 0.8},
     'annoyed': {'sigh_every_ms': 3000, 'blink': [3000, 6000], 'symbols': 'sigh: drift out 10 px and fade'},
     'charging': {'breath_ms': 3000, 'breath_pct': 1.5, 'blink': [2500, 6000], 'symbols': 'spark[0] (bolt): bob 4 px; others twinkle 250 ms'},
+    'peering': {'breath_ms': 3600, 'breath_pct': 1.0, 'blink': [3500, 7000], 'lean': 'forward 1.5% squash', 'gaze_scan_ms': 2400},
+    'dazzled': {'enter': 'flinch', 'flinch_ms': 360, 'tremble_ms': 900, 'tremble_px': 1},
 }
 
 

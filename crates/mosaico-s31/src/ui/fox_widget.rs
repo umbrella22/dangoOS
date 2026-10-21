@@ -62,6 +62,10 @@ pub struct FoxVisual {
     pub look_x: f32,
     /// Decaying tap pulse, `0..=1`.
     pub pulse: f32,
+    /// Squash under a petting hand, `0..=1`.
+    pub pet: f32,
+    /// Lean with a stroke, canvas pixels.
+    pub lean_x: f32,
 }
 
 impl FoxVisual {
@@ -71,6 +75,8 @@ impl FoxVisual {
         scale_y: 1.0,
         look_x: 0.0,
         pulse: 0.0,
+        pet: 0.0,
+        lean_x: 0.0,
     };
 
     /// Clamp into the range the canvas can show.
@@ -80,6 +86,8 @@ impl FoxVisual {
             scale_y: finite_or(self.scale_y, 1.0).clamp(0.4, MAX_POSE_SCALE),
             look_x: finite_or(self.look_x, 0.0).clamp(-10.0, 10.0),
             pulse: finite_or(self.pulse, 0.0).clamp(0.0, 1.0),
+            pet: finite_or(self.pet, 0.0).clamp(0.0, 1.0),
+            lean_x: finite_or(self.lean_x, 0.0).clamp(-8.0, 8.0),
         }
     }
 }
@@ -379,10 +387,17 @@ impl FoxWidget {
             visual.scale_x *= 1.0 + visual.pulse * 0.06;
             visual.scale_y *= 1.0 - visual.pulse * 0.04;
         }
+        // A petting hand presses the head down a little and the fox leans
+        // into the stroke; the warp keeps the bottom edge planted.
+        if visual.pet > 0.0 {
+            visual.scale_x *= 1.0 + visual.pet * 0.035;
+            visual.scale_y *= 1.0 - visual.pet * 0.05;
+        }
         let visual = visual.sanitized();
         FoxInput {
             scale_x: visual.scale_x,
             scale_y: visual.scale_y,
+            offset_x: visual.lean_x as i32,
             offset_y,
             look_x: visual.look_x,
         }

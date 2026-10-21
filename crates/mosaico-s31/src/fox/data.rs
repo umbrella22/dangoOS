@@ -9,43 +9,43 @@ pub const W: usize = 352;
 pub const H: usize = 336;
 
 /// Shared RGB565 palette; index 255 in the RLE stream is transparent.
-pub static PALETTE: [u16; 128] = [0x0000, 0xef5d, 0xef7e, 0xef5e, 0xff9d, 0xffbe, 0xff5c, 0xe73d, 0xe75d, 0xff3c, 0x31a8, 0x39c8, 0xc61a, 0xffbd, 0xbdf9, 0xff9e, 0x3187, 0xffff, 0x5b0e, 0xce7b, 0xff7d, 0x632f, 0xf7bf, 0xb5b9, 0xce5a, 0xf699, 0xf6ba, 0xb598, 0x60c3, 0xb5d9, 0x8453, 0x39e9, 0xc63a, 0x8433, 0xad78, 0x4209, 0xf658, 0xa537, 0xad57, 0xce9b, 0x6b70, 0xd1a6, 0xbe1a, 0xd6bc, 0xc125, 0x5082, 0xef7d, 0xe71d, 0x5acd, 0xdefc, 0xdedc, 0xff11, 0x8c94, 0x2946, 0x7bf2, 0x31c8, 0xbdd9, 0x4a6b, 0x2125, 0x2966, 0x30c3, 0x528c, 0x9d16, 0x2967, 0x9cd5, 0x422a, 0xfed0, 0x73d1, 0xf79e, 0x0020, 0xa0c4, 0x18e4, 0xfefa, 0xffdf, 0x1062, 0xef9e, 0x0841, 0x4124, 0xe248, 0x3188, 0x10a3, 0x80c3, 0xffde, 0xfeba, 0xff1b, 0x51a6, 0xac51, 0x9bef, 0x2881, 0x8b6d, 0xff5d, 0x7aeb, 0x6a48, 0xb4d3, 0xe5f7, 0xfdb5, 0xc555, 0xf6fb, 0xa535, 0xdc10, 0xb597, 0xd5d6, 0xc50d, 0xcb2c, 0xe679, 0xdd75, 0xaa28, 0xbdd8, 0xe5ae, 0xeedb, 0x9368, 0xb46b, 0xff15, 0xf4f3, 0xd4b2, 0xd638, 0xff78, 0xe75e, 0xee51, 0xef3c, 0xefbf, 0xebcb, 0x8e3f, 0xa67f, 0xcf3f, 0xdf7f, 0xbedf, 0x551d];
+pub static PALETTE: [u16; 128] = [0x0000, 0xef5d, 0xef7e, 0xef5e, 0xff9d, 0xe73d, 0xffbe, 0xff5c, 0xffbd, 0xe75d, 0xff9e, 0xff3c, 0x31a8, 0xbdf9, 0xc61a, 0x39c8, 0xffff, 0x3187, 0xce5b, 0x5b0e, 0xf7bf, 0x58c3, 0x632f, 0x8433, 0xce7b, 0xff7d, 0xf6ba, 0xb5b9, 0xb5d9, 0xa537, 0xad78, 0xf699, 0xc63a, 0x2946, 0xb598, 0xad57, 0xc986, 0xdedc, 0x3a09, 0xdefc, 0x2125, 0x6b6f, 0xf658, 0x5acd, 0xe71d, 0x2967, 0x528c, 0xbdd9, 0xb925, 0x4a4b, 0x422a, 0xd6bc, 0x7bf2, 0x73b0, 0x94b5, 0x8c74, 0xff11, 0xbe19, 0xf6da, 0xef9e, 0x18e4, 0x9cf6, 0xf79e, 0xa0c4, 0xff7c, 0xffdf, 0x0821, 0x1062, 0x31a7, 0x39e9, 0xd69b, 0x30c3, 0xfefb, 0xfed0, 0x10a3, 0x4104, 0x39e8, 0x5082, 0xe248, 0xff1b, 0x78c3, 0xbe1a, 0xffde, 0x31c8, 0x8411, 0x8c73, 0x4082, 0xfeba, 0xa410, 0x938e, 0xbcac, 0xb472, 0x2881, 0x832c, 0x5185, 0x39c9, 0xe5f7, 0xbcf3, 0x72aa, 0xf5b5, 0xc575, 0xa515, 0xdc10, 0xad76, 0x6207, 0xff5d, 0xe6ba, 0xdd75, 0xd5f7, 0xcb2c, 0xce5a, 0xff77, 0xbdb7, 0xde59, 0x9368, 0xaa28, 0xdd6e, 0xef1b, 0xc618, 0xd4b3, 0xee10, 0xfef4, 0x3188, 0xf4f3, 0x79c6, 0xebcb, 0x8e3f, 0xcf3f];
 
-/// Row RLE of every image, concatenated (659550 bytes).
+/// Row RLE of every image, concatenated (739512 bytes).
 pub static BLOB: &[u8] = include_bytes!("../assets/fox.bin");
 
 /// One entry per [`super::FoxPose`], in declaration order.
-pub static POSES: [Pose; 18] = [
+pub static POSES: [Pose; 20] = [
     // idle
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 11216, len: 31884, over_bg: false },
-        blink: &[Img { x: 95, y: 209, w: 68, h: 65, off: 0, len: 1800, over_bg: false }, Img { x: 187, y: 209, w: 67, h: 65, off: 1800, len: 1716, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 11486, len: 31814, over_bg: false },
+        blink: &[Img { x: 95, y: 209, w: 67, h: 65, off: 0, len: 1824, over_bg: false }, Img { x: 187, y: 209, w: 67, h: 65, off: 1824, len: 1754, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
-        ear: &[Img { x: 3, y: 50, w: 125, h: 119, off: 3516, len: 3612, over_bg: false }],
-        gaze_left: &[Img { x: 109, y: 220, w: 48, h: 46, off: 7128, len: 1234, over_bg: false }, Img { x: 193, y: 220, w: 43, h: 42, off: 8362, len: 1002, over_bg: false }],
-        gaze_right: &[Img { x: 119, y: 220, w: 36, h: 41, off: 9364, len: 758, over_bg: false }, Img { x: 194, y: 223, w: 44, h: 39, off: 10122, len: 1094, over_bg: false }],
+        ear: &[Img { x: 3, y: 50, w: 125, h: 117, off: 3578, len: 3602, over_bg: false }],
+        gaze_left: &[Img { x: 109, y: 220, w: 47, h: 46, off: 7180, len: 1296, over_bg: false }, Img { x: 192, y: 220, w: 44, h: 41, off: 8476, len: 1070, over_bg: false }],
+        gaze_right: &[Img { x: 118, y: 220, w: 37, h: 42, off: 9546, len: 826, over_bg: false }, Img { x: 194, y: 223, w: 44, h: 39, off: 10372, len: 1114, over_bg: false }],
         symbols: &[],
         tremble: &[],
         spiral: [&[], &[], &[]],
     },
     // sleep
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 44862, len: 25476, over_bg: false },
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 45128, len: 25516, over_bg: false },
         blink: &[],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
         gaze_left: &[],
         gaze_right: &[],
-        symbols: &[Img { x: 262, y: 78, w: 31, h: 32, off: 43100, len: 518, over_bg: true }, Img { x: 247, y: 96, w: 23, h: 23, off: 43618, len: 358, over_bg: true }, Img { x: 284, y: 54, w: 45, h: 44, off: 43976, len: 886, over_bg: true }],
+        symbols: &[Img { x: 262, y: 78, w: 31, h: 32, off: 43300, len: 560, over_bg: true }, Img { x: 247, y: 96, w: 23, h: 23, off: 43860, len: 368, over_bg: true }, Img { x: 284, y: 54, w: 45, h: 44, off: 44228, len: 900, over_bg: true }],
         tremble: &[],
         spiral: [&[], &[], &[]],
     },
     // curious
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 74398, len: 35230, over_bg: false },
-        blink: &[Img { x: 114, y: 213, w: 73, h: 64, off: 70338, len: 1944, over_bg: false }, Img { x: 208, y: 183, w: 63, h: 68, off: 72282, len: 2116, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 74596, len: 35600, over_bg: false },
+        blink: &[Img { x: 114, y: 213, w: 73, h: 64, off: 70644, len: 1926, over_bg: false }, Img { x: 208, y: 183, w: 63, h: 68, off: 72570, len: 2026, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
@@ -57,7 +57,7 @@ pub static POSES: [Pose; 18] = [
     },
     // happy
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 109628, len: 34894, over_bg: false },
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 110196, len: 34708, over_bg: false },
         blink: &[],
         mouth_closed: &[],
         mouth_wide: &[],
@@ -70,34 +70,34 @@ pub static POSES: [Pose; 18] = [
     },
     // puzzled
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 148474, len: 33884, over_bg: false },
-        blink: &[Img { x: 77, y: 198, w: 68, h: 61, off: 144522, len: 1970, over_bg: false }, Img { x: 166, y: 231, w: 69, h: 48, off: 146492, len: 1306, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 148718, len: 34230, over_bg: false },
+        blink: &[Img { x: 77, y: 198, w: 68, h: 61, off: 144904, len: 1902, over_bg: false }, Img { x: 166, y: 231, w: 69, h: 49, off: 146806, len: 1232, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
         gaze_left: &[],
         gaze_right: &[],
-        symbols: &[Img { x: 261, y: 76, w: 35, h: 49, off: 147798, len: 676, over_bg: true }],
+        symbols: &[Img { x: 261, y: 76, w: 35, h: 49, off: 148038, len: 680, over_bg: true }],
         tremble: &[],
         spiral: [&[], &[], &[]],
     },
     // confused
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 188978, len: 31904, over_bg: false },
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 191548, len: 31840, over_bg: false },
         blink: &[],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
         gaze_left: &[],
         gaze_right: &[],
-        symbols: &[Img { x: 23, y: 133, w: 26, h: 23, off: 182358, len: 272, over_bg: true }, Img { x: 35, y: 156, w: 18, h: 15, off: 182630, len: 142, over_bg: true }, Img { x: 295, y: 185, w: 21, h: 18, off: 182772, len: 172, over_bg: true }],
+        symbols: &[Img { x: 23, y: 133, w: 26, h: 23, off: 182948, len: 294, over_bg: true }, Img { x: 34, y: 156, w: 19, h: 15, off: 183242, len: 142, over_bg: true }, Img { x: 295, y: 185, w: 21, h: 18, off: 183384, len: 178, over_bg: true }],
         tremble: &[],
-        spiral: [&[Img { x: 117, y: 229, w: 31, h: 31, off: 182944, len: 922, over_bg: false }, Img { x: 196, y: 239, w: 31, h: 31, off: 183866, len: 1090, over_bg: false }], &[Img { x: 117, y: 229, w: 31, h: 31, off: 184956, len: 918, over_bg: false }, Img { x: 196, y: 239, w: 31, h: 31, off: 185874, len: 1088, over_bg: false }], &[Img { x: 117, y: 229, w: 31, h: 31, off: 186962, len: 928, over_bg: false }, Img { x: 196, y: 239, w: 31, h: 31, off: 187890, len: 1088, over_bg: false }]],
+        spiral: [&[Img { x: 118, y: 228, w: 31, h: 31, off: 183562, len: 1032, over_bg: false }, Img { x: 189, y: 235, w: 37, h: 37, off: 184594, len: 1628, over_bg: false }], &[Img { x: 118, y: 228, w: 31, h: 31, off: 186222, len: 1022, over_bg: false }, Img { x: 189, y: 235, w: 37, h: 37, off: 187244, len: 1636, over_bg: false }], &[Img { x: 118, y: 228, w: 31, h: 31, off: 188880, len: 1032, over_bg: false }, Img { x: 189, y: 235, w: 37, h: 37, off: 189912, len: 1636, over_bg: false }]],
     },
     // surprised
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 224362, len: 40720, over_bg: false },
-        blink: &[Img { x: 95, y: 216, w: 66, h: 67, off: 220882, len: 1858, over_bg: false }, Img { x: 188, y: 216, w: 66, h: 67, off: 222740, len: 1622, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 226928, len: 40454, over_bg: false },
+        blink: &[Img { x: 95, y: 216, w: 65, h: 67, off: 223388, len: 1836, over_bg: false }, Img { x: 188, y: 216, w: 66, h: 67, off: 225224, len: 1704, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
@@ -109,33 +109,33 @@ pub static POSES: [Pose; 18] = [
     },
     // panic
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 276098, len: 36066, over_bg: false },
-        blink: &[Img { x: 92, y: 202, w: 68, h: 59, off: 265082, len: 2516, over_bg: false }, Img { x: 189, y: 203, w: 67, h: 58, off: 267598, len: 2202, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 277918, len: 36080, over_bg: false },
+        blink: &[Img { x: 92, y: 202, w: 68, h: 59, off: 267382, len: 2568, over_bg: false }, Img { x: 189, y: 203, w: 67, h: 58, off: 269950, len: 2230, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
         gaze_left: &[],
         gaze_right: &[],
-        symbols: &[Img { x: 33, y: 87, w: 44, h: 31, off: 269800, len: 616, over_bg: true }, Img { x: 74, y: 70, w: 33, h: 34, off: 270416, len: 540, over_bg: true }, Img { x: 79, y: 143, w: 20, h: 31, off: 270956, len: 468, over_bg: false }, Img { x: 257, y: 157, w: 20, h: 32, off: 271424, len: 534, over_bg: false }, Img { x: 270, y: 81, w: 31, h: 32, off: 271958, len: 520, over_bg: true }, Img { x: 288, y: 99, w: 40, h: 25, off: 272478, len: 478, over_bg: true }],
-        tremble: &[Img { x: 25, y: 257, w: 32, h: 57, off: 272956, len: 826, over_bg: true }, Img { x: 65, y: 208, w: 18, h: 20, off: 273782, len: 282, over_bg: false }, Img { x: 106, y: 270, w: 18, h: 31, off: 274064, len: 396, over_bg: false }, Img { x: 217, y: 270, w: 24, h: 32, off: 274460, len: 606, over_bg: false }, Img { x: 262, y: 235, w: 17, h: 15, off: 275066, len: 200, over_bg: false }, Img { x: 289, y: 265, w: 37, h: 54, off: 275266, len: 832, over_bg: true }],
+        symbols: &[Img { x: 33, y: 87, w: 44, h: 31, off: 272180, len: 486, over_bg: true }, Img { x: 74, y: 70, w: 33, h: 34, off: 272666, len: 468, over_bg: true }, Img { x: 79, y: 143, w: 20, h: 31, off: 273134, len: 402, over_bg: false }, Img { x: 257, y: 160, w: 20, h: 29, off: 273536, len: 374, over_bg: false }, Img { x: 270, y: 81, w: 31, h: 32, off: 273910, len: 432, over_bg: true }, Img { x: 288, y: 99, w: 40, h: 25, off: 274342, len: 370, over_bg: true }],
+        tremble: &[Img { x: 25, y: 257, w: 32, h: 57, off: 274712, len: 820, over_bg: true }, Img { x: 65, y: 208, w: 18, h: 20, off: 275532, len: 228, over_bg: false }, Img { x: 106, y: 270, w: 18, h: 31, off: 275760, len: 416, over_bg: false }, Img { x: 216, y: 270, w: 25, h: 32, off: 276176, len: 668, over_bg: false }, Img { x: 262, y: 229, w: 17, h: 21, off: 276844, len: 232, over_bg: false }, Img { x: 289, y: 265, w: 37, h: 54, off: 277076, len: 842, over_bg: true }],
         spiral: [&[], &[], &[]],
     },
     // angry
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 317988, len: 30128, over_bg: false },
-        blink: &[Img { x: 91, y: 210, w: 79, h: 62, off: 312164, len: 2278, over_bg: false }, Img { x: 179, y: 210, w: 79, h: 62, off: 314442, len: 2076, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 319664, len: 30294, over_bg: false },
+        blink: &[Img { x: 91, y: 210, w: 79, h: 63, off: 313998, len: 2224, over_bg: false }, Img { x: 180, y: 210, w: 78, h: 62, off: 316222, len: 1972, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
         gaze_left: &[],
         gaze_right: &[],
-        symbols: &[Img { x: 222, y: 158, w: 44, h: 45, off: 316518, len: 1470, over_bg: false }],
+        symbols: &[Img { x: 222, y: 158, w: 44, h: 45, off: 318194, len: 1470, over_bg: false }],
         tremble: &[],
         spiral: [&[], &[], &[]],
     },
     // satisfied
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 348116, len: 33642, over_bg: false },
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 349958, len: 33652, over_bg: false },
         blink: &[],
         mouth_closed: &[],
         mouth_wide: &[],
@@ -148,11 +148,11 @@ pub static POSES: [Pose; 18] = [
     },
     // listening
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 390222, len: 33490, over_bg: false },
-        blink: &[Img { x: 90, y: 205, w: 66, h: 62, off: 381758, len: 2060, over_bg: false }, Img { x: 184, y: 218, w: 68, h: 60, off: 383818, len: 2028, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 391768, len: 33688, over_bg: false },
+        blink: &[Img { x: 90, y: 205, w: 66, h: 62, off: 383610, len: 1988, over_bg: false }, Img { x: 184, y: 218, w: 68, h: 60, off: 385598, len: 1888, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
-        ear: &[Img { x: 220, y: 38, w: 125, h: 151, off: 385846, len: 4376, over_bg: false }],
+        ear: &[Img { x: 220, y: 38, w: 125, h: 151, off: 387486, len: 4282, over_bg: false }],
         gaze_left: &[],
         gaze_right: &[],
         symbols: &[],
@@ -161,23 +161,23 @@ pub static POSES: [Pose; 18] = [
     },
     // thinking
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 427446, len: 31978, over_bg: false },
-        blink: &[Img { x: 94, y: 208, w: 68, h: 58, off: 423712, len: 1596, over_bg: false }, Img { x: 187, y: 210, w: 68, h: 62, off: 425308, len: 1304, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 429200, len: 32462, over_bg: false },
+        blink: &[Img { x: 94, y: 208, w: 68, h: 58, off: 425456, len: 1558, over_bg: false }, Img { x: 187, y: 210, w: 68, h: 62, off: 427014, len: 1348, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
         gaze_left: &[],
         gaze_right: &[],
-        symbols: &[Img { x: 136, y: 58, w: 23, h: 23, off: 426612, len: 274, over_bg: true }, Img { x: 163, y: 54, w: 23, h: 23, off: 426886, len: 278, over_bg: true }, Img { x: 190, y: 58, w: 23, h: 23, off: 427164, len: 282, over_bg: true }],
+        symbols: &[Img { x: 136, y: 58, w: 23, h: 23, off: 428362, len: 276, over_bg: true }, Img { x: 163, y: 54, w: 23, h: 23, off: 428638, len: 282, over_bg: true }, Img { x: 190, y: 58, w: 23, h: 23, off: 428920, len: 280, over_bg: true }],
         tremble: &[],
         spiral: [&[], &[], &[]],
     },
     // speaking
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 463462, len: 36714, over_bg: false },
-        blink: &[Img { x: 96, y: 209, w: 67, h: 64, off: 459424, len: 1566, over_bg: false }, Img { x: 187, y: 209, w: 67, h: 64, off: 460990, len: 1398, over_bg: false }],
-        mouth_closed: &[Img { x: 158, y: 262, w: 37, h: 34, off: 462388, len: 316, over_bg: false }],
-        mouth_wide: &[Img { x: 154, y: 259, w: 43, h: 42, off: 462704, len: 758, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 465718, len: 36096, over_bg: false },
+        blink: &[Img { x: 96, y: 209, w: 67, h: 64, off: 461662, len: 1564, over_bg: false }, Img { x: 187, y: 209, w: 67, h: 64, off: 463226, len: 1390, over_bg: false }],
+        mouth_closed: &[Img { x: 157, y: 262, w: 38, h: 34, off: 464616, len: 310, over_bg: false }],
+        mouth_wide: &[Img { x: 154, y: 259, w: 42, h: 42, off: 464926, len: 792, over_bg: false }],
         ear: &[],
         gaze_left: &[],
         gaze_right: &[],
@@ -187,7 +187,7 @@ pub static POSES: [Pose; 18] = [
     },
     // error
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 500176, len: 25434, over_bg: false },
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 501814, len: 24800, over_bg: false },
         blink: &[],
         mouth_closed: &[],
         mouth_wide: &[],
@@ -200,8 +200,8 @@ pub static POSES: [Pose; 18] = [
     },
     // tired
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 528506, len: 29062, over_bg: false },
-        blink: &[Img { x: 93, y: 219, w: 70, h: 54, off: 525610, len: 1558, over_bg: false }, Img { x: 187, y: 219, w: 68, h: 54, off: 527168, len: 1338, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 529710, len: 28902, over_bg: false },
+        blink: &[Img { x: 91, y: 217, w: 72, h: 56, off: 526614, len: 1754, over_bg: false }, Img { x: 187, y: 219, w: 68, h: 54, off: 528368, len: 1342, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
@@ -213,7 +213,7 @@ pub static POSES: [Pose; 18] = [
     },
     // dying
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 557568, len: 25454, over_bg: false },
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 558612, len: 25504, over_bg: false },
         blink: &[],
         mouth_closed: &[],
         mouth_wide: &[],
@@ -226,27 +226,53 @@ pub static POSES: [Pose; 18] = [
     },
     // annoyed
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 585776, len: 29640, over_bg: false },
-        blink: &[Img { x: 115, y: 221, w: 68, h: 47, off: 583022, len: 808, over_bg: false }, Img { x: 203, y: 208, w: 62, h: 46, off: 583830, len: 1160, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 586956, len: 30036, over_bg: false },
+        blink: &[Img { x: 115, y: 221, w: 68, h: 47, off: 584116, len: 778, over_bg: false }, Img { x: 203, y: 208, w: 62, h: 46, off: 584894, len: 1218, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
         gaze_left: &[],
         gaze_right: &[],
-        symbols: &[Img { x: 261, y: 254, w: 51, h: 39, off: 584990, len: 786, over_bg: true }],
+        symbols: &[Img { x: 261, y: 254, w: 51, h: 39, off: 586112, len: 844, over_bg: true }],
         tremble: &[],
         spiral: [&[], &[], &[]],
     },
     // charging
     Pose {
-        base: Img { x: 0, y: 0, w: 352, h: 336, off: 621688, len: 37862, over_bg: false },
-        blink: &[Img { x: 93, y: 214, w: 68, h: 64, off: 615416, len: 2084, over_bg: false }, Img { x: 188, y: 214, w: 68, h: 64, off: 617500, len: 1992, over_bg: false }],
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 623354, len: 37756, over_bg: false },
+        blink: &[Img { x: 93, y: 214, w: 68, h: 64, off: 616992, len: 2088, over_bg: false }, Img { x: 188, y: 214, w: 68, h: 64, off: 619080, len: 2076, over_bg: false }],
         mouth_closed: &[],
         mouth_wide: &[],
         ear: &[],
         gaze_left: &[],
         gaze_right: &[],
-        symbols: &[Img { x: 152, y: 28, w: 48, h: 70, off: 619492, len: 686, over_bg: true }, Img { x: 10, y: 135, w: 27, h: 34, off: 620178, len: 290, over_bg: true }, Img { x: 311, y: 150, w: 27, h: 33, off: 620468, len: 298, over_bg: true }, Img { x: 306, y: 262, w: 22, h: 23, off: 620766, len: 188, over_bg: true }, Img { x: 22, y: 257, w: 19, h: 22, off: 620954, len: 188, over_bg: true }, Img { x: 30, y: 165, w: 14, h: 14, off: 621142, len: 88, over_bg: true }, Img { x: 36, y: 277, w: 14, h: 14, off: 621230, len: 90, over_bg: true }, Img { x: 194, y: 80, w: 14, h: 14, off: 621320, len: 98, over_bg: true }, Img { x: 298, y: 283, w: 15, h: 15, off: 621418, len: 90, over_bg: true }, Img { x: 135, y: 79, w: 14, h: 15, off: 621508, len: 98, over_bg: true }, Img { x: 318, y: 129, w: 14, h: 15, off: 621606, len: 82, over_bg: true }],
+        symbols: &[Img { x: 152, y: 28, w: 48, h: 70, off: 621156, len: 692, over_bg: true }, Img { x: 10, y: 135, w: 27, h: 34, off: 621848, len: 298, over_bg: true }, Img { x: 311, y: 150, w: 27, h: 33, off: 622146, len: 300, over_bg: true }, Img { x: 306, y: 262, w: 22, h: 23, off: 622446, len: 190, over_bg: true }, Img { x: 22, y: 257, w: 19, h: 22, off: 622636, len: 176, over_bg: true }, Img { x: 36, y: 277, w: 14, h: 14, off: 622812, len: 92, over_bg: true }, Img { x: 298, y: 283, w: 15, h: 15, off: 622904, len: 90, over_bg: true }, Img { x: 194, y: 80, w: 14, h: 14, off: 622994, len: 90, over_bg: true }, Img { x: 29, y: 165, w: 15, h: 14, off: 623084, len: 82, over_bg: true }, Img { x: 318, y: 129, w: 14, h: 15, off: 623166, len: 84, over_bg: true }, Img { x: 135, y: 79, w: 14, h: 15, off: 623250, len: 104, over_bg: true }],
+        tremble: &[],
+        spiral: [&[], &[], &[]],
+    },
+    // peering
+    Pose {
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 673228, len: 37080, over_bg: false },
+        blink: &[Img { x: 92, y: 216, w: 70, h: 70, off: 661110, len: 2822, over_bg: false }, Img { x: 187, y: 216, w: 70, h: 69, off: 663932, len: 2528, over_bg: false }],
+        mouth_closed: &[],
+        mouth_wide: &[],
+        ear: &[],
+        gaze_left: &[Img { x: 100, y: 227, w: 62, h: 58, off: 666460, len: 2034, over_bg: false }, Img { x: 210, y: 228, w: 29, h: 57, off: 668494, len: 864, over_bg: false }],
+        gaze_right: &[Img { x: 110, y: 228, w: 53, h: 56, off: 669358, len: 1670, over_bg: false }, Img { x: 188, y: 228, w: 62, h: 58, off: 671028, len: 2200, over_bg: false }],
+        symbols: &[],
+        tremble: &[],
+        spiral: [&[], &[], &[]],
+    },
+    // dazzled
+    Pose {
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 710308, len: 29204, over_bg: false },
+        blink: &[],
+        mouth_closed: &[],
+        mouth_wide: &[],
+        ear: &[],
+        gaze_left: &[],
+        gaze_right: &[],
+        symbols: &[],
         tremble: &[],
         spiral: [&[], &[], &[]],
     },

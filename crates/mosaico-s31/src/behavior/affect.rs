@@ -25,21 +25,22 @@
 //! | Item | Value |
 //! | --- | --- |
 //! | Rest | dynamic accel `< 80 mg` and gyro `< 20 dps` (plan) |
-//! | Small shake | dynamic accel `>= 300 mg`; the unspecified `0.8–1.2 g` band is also small |
-//! | Large shake | dynamic accel `> 1200 mg` or gyro `> 200 dps` (plan) |
-//! | Large peaks | two within `200 ms` (plan) |
+//! | Shaky sample | dynamic accel `>= 300 mg` or gyro `>= 150 dps` |
+//! | Dizzy | shaky samples fill a leaky bucket (`+min(mg,1000)/10`, `+min(dps,500)/10`, leak `500/s`); `>= 1500` → Confused (chosen: a pickup stays far below) |
+//! | Violent shake | `5` rising peaks of dynamic accel `>= 950 mg` within `1 s` → Panic (chosen; the plan's two peaks or one gyro spike fired on every pickup) |
 //! | Burst rest | `300 ms` below rest (plan) |
 //! | Burst gap | `300..=800 ms` (plan) |
 //! | Angry bursts | `5` within `15 s` (plan 5–10; 5 chosen, see tests) |
 //! | Panic hold / still / confused | `1.5 s` / `5 s` / `3 s` (plan) |
-//! | Small-shake confused | `2.5 s` (plan) |
+//! | Dizzy confused | `2.5 s` after the last motion (plan) |
 //! | Angry hold / cooldown | `10 s` / `30 s` after the hold (plan) |
 //! | Petting hold | `1.5 s` after the last pet (plan 4.2) |
 //! | Poke | `1.5 s`; three pokes within `1.5 s` → Angry (plan) |
 //! | Key L / R | Happy `1.5 s` while held; Puzzled `1.5 s` |
 //! | Key R triple | `3` within `1.5 s` (plan 4.5) |
 //! | Hug window / hold | `300 ms` / `2 s` (plan) |
-//! | Light fast delta | `+/-25` points inside `300 ms` (plan), 16-sample window |
+//! | Light cover | drop of `max(8, 40% of before)` inside `400 ms` → Peering, held while covered (`<= 15 s`) |
+//! | Light flash | rise of `max(8, 40% of after)` inside `400 ms` → Dazzled `3 s` (relative, so a dim room works) |
 //! | Light dawn | rise of `20` points over `30 s` (plan concept, chosen rise) |
 //! | Night | level `< 10` for `60 s`; wake at level `>= 20` (chosen wake level) |
 //! | PIR debounce | `200 ms` (plan) |
@@ -279,10 +280,23 @@ pub struct AffectTick {
 
 const ACCEL_REST_MG: i32 = 80;
 const ACCEL_SMALL_MG: i32 = 300;
+/// A burst with a sample above this is no small "nudge" for the anger count.
 const ACCEL_LARGE_MG: i32 = 1_200;
 const GYRO_REST_DPS: i32 = 20;
-const GYRO_LARGE_DPS: i32 = 200;
-const LARGE_PEAK_WINDOW_MS: u64 = 200;
+/// A rotation this fast is shaky (feeds the dizzy bucket); alone it never panics.
+const GYRO_SHAKY_DPS: i32 = 150;
+/// The ±2 g range saturates near here on a hard shake along any axis.
+const ACCEL_VIOLENT_MG: i32 = 950;
+/// A violent peak re-arms once the dynamic accel falls below this.
+const ACCEL_VIOLENT_RELEASE_MG: i32 = 600;
+pub(crate) const VIOLENT_PEAKS: usize = 5;
+pub(crate) const VIOLENT_WINDOW_MS: u64 = 1_000;
+/// Dizzy bucket: gain caps, leak and trigger level.
+const DIZZY_ACCEL_CAP_MG: i32 = 1_000;
+const DIZZY_GYRO_CAP_DPS: i32 = 500;
+const DIZZY_LEAK_PER_S: u32 = 500;
+pub(crate) const DIZZY_TRIGGER: u32 = 1_500;
+const DIZZY_MAX: u32 = 3_000;
 const REST_CONFIRM_MS: u64 = 300;
 const BURST_GAP_MIN_MS: u64 = 300;
 const BURST_GAP_MAX_MS: u64 = 800;
@@ -291,7 +305,7 @@ const ANGRY_BURST_COUNT: u8 = 5;
 const PANIC_HOLD_MS: u64 = 1_500;
 const PANIC_STILL_MS: u64 = 5_000;
 const PANIC_CONFUSED_MS: u64 = 3_000;
-const SMALL_CONFUSED_MS: u64 = 2_500;
+pub(crate) const DIZZY_MS: u64 = 2_500;
 const ANGRY_HOLD_MS: u64 = 10_000;
 const ANGRY_COOLDOWN_MS: u64 = 30_000;
 
@@ -308,10 +322,16 @@ const HUG_WINDOW_MS: u64 = 300;
 pub(crate) const HUG_MS: u64 = 3_500;
 
 const LIGHT_HISTORY: usize = 16;
-const LIGHT_FAST_WINDOW_MS: u64 = 300;
-const LIGHT_FAST_DELTA: i32 = 25;
+pub(crate) const LIGHT_FAST_WINDOW_MS: u64 = 400;
+/// A fast change must be at least this many points...
+const LIGHT_FAST_MIN: i32 = 8;
+/// ...and this share (percent) of the brighter of the two levels.
+const LIGHT_FAST_PCT: i32 = 40;
 pub(crate) const LIGHT_BRIGHT_MS: u64 = 3_000;
+/// Peering lasts this long after the last covered sample...
 pub(crate) const LIGHT_DARK_MS: u64 = 3_000;
+/// ...but at most this long in one cover: then the eyes have adjusted.
+pub(crate) const LIGHT_COVER_MAX_MS: u64 = 15_000;
 const LIGHT_DARK_LEVEL: u8 = 10;
 const LIGHT_WAKE_LEVEL: u8 = 20;
 const NIGHT_SLEEP_MS: u64 = 60_000;
@@ -408,8 +428,14 @@ struct ModuleSequence {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct ShakeState {
-    /// Last accel peak above the large threshold.
-    last_large_peak_ms: Option<u64>,
+    /// Rising edges above [`ACCEL_VIOLENT_MG`], oldest first.
+    violent_peaks: [u64; VIOLENT_PEAKS],
+    violent_len: u8,
+    /// The current sample run is above the violent threshold.
+    violent_above: bool,
+    /// Leaky dizziness bucket and the time it was last drained.
+    dizzy: u32,
+    dizzy_at_ms: u64,
     burst_active: bool,
     burst_first_motion_ms: u64,
     burst_last_motion_ms: u64,
@@ -420,6 +446,13 @@ struct ShakeState {
     small_burst_count: u8,
     burst_window_start_ms: u64,
     prev_burst_last_motion_ms: Option<u64>,
+}
+
+/// The sensor was covered: the level before the drop and when it fell.
+#[derive(Clone, Copy, Debug)]
+struct LightCover {
+    before: u8,
+    since_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -450,6 +483,14 @@ impl LightHistory {
         if self.len < LIGHT_HISTORY as u8 {
             self.len += 1;
         }
+    }
+
+    /// Forget everything but `sample`: a change that already fired a
+    /// reaction must not fire it again on every following sample.
+    fn restart_from(&mut self, sample: LightSample) {
+        self.len = 0;
+        self.next = 0;
+        self.push(sample);
     }
 
     /// Oldest sample no more than `window_ms` before `at_ms`, in chronological
@@ -500,6 +541,7 @@ pub struct AffectEngine {
     r_key_count: u8,
     light_history: LightHistory,
     light_level: Option<u8>,
+    light_cover: Option<LightCover>,
     dawn_ref_level: u8,
     dawn_ref_at: Option<u64>,
     dark_since: Option<u64>,
@@ -546,6 +588,7 @@ impl AffectEngine {
             r_key_count: 0,
             light_history: LightHistory::new(),
             light_level: None,
+            light_cover: None,
             dawn_ref_level: 0,
             dawn_ref_at: None,
             dark_since: None,
@@ -1056,7 +1099,8 @@ impl AffectEngine {
         // full panic sequence masks the Activity, which resumes when the
         // sequence ends. Activity(Error) is handled before this call.
         self.module_sequence = None;
-        self.shake.last_large_peak_ms = None;
+        self.shake.violent_len = 0;
+        self.shake.dizzy = 0;
         self.shake.small_burst_count = 0;
         self.shake.burst_window_start_ms = at;
         self.shake.prev_burst_last_motion_ms = None;
@@ -1094,36 +1138,86 @@ impl AffectEngine {
 
         if dynamic_mg < ACCEL_REST_MG {
             self.shake.burst_above_small = false;
+            self.shake.violent_above = false;
+            self.drain_dizzy(at);
             return;
         }
 
         self.note_motion(at);
 
         if dynamic_mg > ACCEL_LARGE_MG {
-            self.shake.burst_above_small = false;
             self.shake.burst_large = true;
-            self.on_large_peak(at);
-        } else if dynamic_mg >= ACCEL_SMALL_MG {
+        }
+        if dynamic_mg >= ACCEL_SMALL_MG {
             if !self.shake.burst_above_small {
                 self.shake.burst_above_small = true;
                 self.shake.burst_small_peaks = self.shake.burst_small_peaks.saturating_add(1);
             }
-            self.on_small_motion(at);
+            self.add_dizzy(at, dynamic_mg.min(DIZZY_ACCEL_CAP_MG) as u32 / 10);
         } else {
             self.shake.burst_above_small = false;
+            self.drain_dizzy(at);
+        }
+
+        if dynamic_mg >= ACCEL_VIOLENT_MG {
+            if !self.shake.violent_above {
+                self.shake.violent_above = true;
+                self.on_violent_peak(at);
+            }
+        } else if dynamic_mg < ACCEL_VIOLENT_RELEASE_MG {
+            self.shake.violent_above = false;
         }
     }
 
     fn on_gyro(&mut self, at: u64, gx_dps: i16, gy_dps: i16, gz_dps: i16) {
         let max_dps = gyro_max_dps(gx_dps, gy_dps, gz_dps);
         if max_dps < GYRO_REST_DPS {
+            self.drain_dizzy(at);
             return;
         }
         self.note_motion(at);
-        if max_dps > GYRO_LARGE_DPS {
-            self.shake.burst_large = true;
-            self.shake.burst_confused_emitted = true;
+        // Turning the fox over in the hand is not a reason to scream: a fast
+        // rotation only makes her dizzier.
+        if max_dps >= GYRO_SHAKY_DPS {
+            self.add_dizzy(at, max_dps.min(DIZZY_GYRO_CAP_DPS) as u32 / 10);
+        } else {
+            self.drain_dizzy(at);
+        }
+    }
+
+    /// Leak the dizzy bucket up to `at`.
+    fn drain_dizzy(&mut self, at: u64) {
+        let elapsed = at.saturating_sub(self.shake.dizzy_at_ms);
+        let leak = (elapsed.min(60_000) as u32).saturating_mul(DIZZY_LEAK_PER_S) / 1_000;
+        self.shake.dizzy = self.shake.dizzy.saturating_sub(leak);
+        self.shake.dizzy_at_ms = self.shake.dizzy_at_ms.max(at);
+    }
+
+    /// Pour one shaky sample into the dizzy bucket; full means dizzy.
+    fn add_dizzy(&mut self, at: u64, gain: u32) {
+        self.drain_dizzy(at);
+        self.shake.dizzy = (self.shake.dizzy + gain).min(DIZZY_MAX);
+        if self.shake.dizzy >= DIZZY_TRIGGER {
+            self.on_dizzy(at);
+        }
+    }
+
+    fn on_violent_peak(&mut self, at: u64) {
+        let shake = &mut self.shake;
+        let len = shake.violent_len as usize;
+        if len == VIOLENT_PEAKS {
+            shake.violent_peaks.copy_within(1.., 0);
+            shake.violent_peaks[VIOLENT_PEAKS - 1] = at;
+        } else {
+            shake.violent_peaks[len] = at;
+            shake.violent_len += 1;
+        }
+        if shake.violent_len as usize == VIOLENT_PEAKS
+            && at.saturating_sub(shake.violent_peaks[0]) <= VIOLENT_WINDOW_MS
+        {
+            shake.violent_len = 0;
             if !self.is_panic_active(at) {
+                self.shake.burst_confused_emitted = true;
                 self.trigger_panic(at);
             }
         }
@@ -1146,38 +1240,19 @@ impl AffectEngine {
                 && reaction.expression == Expression::Confused
                 && at < reaction.ends_ms
             {
-                reaction.ends_ms = at.saturating_add(SMALL_CONFUSED_MS);
+                reaction.ends_ms = at.saturating_add(DIZZY_MS);
             }
         }
     }
 
-    fn on_large_peak(&mut self, at: u64) {
-        self.shake.burst_confused_emitted = true;
-        if self.is_panic_active(at) {
-            return;
-        }
-        if let Some(previous) = self.shake.last_large_peak_ms {
-            if at.saturating_sub(previous) <= LARGE_PEAK_WINDOW_MS {
-                self.shake.last_large_peak_ms = None;
-                self.trigger_panic(at);
-                return;
-            }
-        }
-        self.shake.last_large_peak_ms = Some(at);
-    }
-
-    fn on_small_motion(&mut self, at: u64) {
-        if self.shake.burst_large {
-            return;
-        }
-
+    fn on_dizzy(&mut self, at: u64) {
         if let Some(reaction) = self.reaction {
             if reaction.reason == ReactionReason::ShakeSmall
                 && reaction.expression == Expression::Confused
                 && at < reaction.ends_ms
             {
                 if let Some(active) = &mut self.reaction {
-                    active.ends_ms = at.saturating_add(SMALL_CONFUSED_MS);
+                    active.ends_ms = at.saturating_add(DIZZY_MS);
                 }
                 self.shake.burst_confused_emitted = true;
                 return;
@@ -1201,7 +1276,7 @@ impl AffectEngine {
             ReactionReason::ShakeSmall,
             PRIO_PHYSICAL,
             at,
-            SMALL_CONFUSED_MS,
+            DIZZY_MS,
             haptic,
         ) {
             self.shake.burst_confused_emitted = true;
@@ -1342,35 +1417,72 @@ impl AffectEngine {
 
         if let Some(oldest) = self.light_history.oldest_within(at, LIGHT_FAST_WINDOW_MS) {
             if oldest.at_ms < at {
-                let delta = level as i32 - oldest.level as i32;
-                if delta >= LIGHT_FAST_DELTA {
+                let before = oldest.level as i32;
+                let now = level as i32;
+                let threshold = LIGHT_FAST_MIN.max(before.max(now) * LIGHT_FAST_PCT / 100);
+                if now - before >= threshold {
+                    // Light floods back: she squeezes her eyes shut.
+                    self.light_cover = None;
                     let _ = self.try_start_reaction(
-                        Expression::Surprised,
+                        Expression::Dazzled,
                         ReactionReason::Light,
                         PRIO_AMBIENT,
                         at,
                         LIGHT_BRIGHT_MS,
                         Some(HapticPattern::Surprised),
                     );
+                    self.light_history
+                        .restart_from(LightSample { level, at_ms: at });
                     self.reanchor_dawn(at, level);
-                } else if delta <= -LIGHT_FAST_DELTA {
+                } else if before - now >= threshold && self.light_cover.is_none() {
+                    // Covered: wide eyes, straining to see.
+                    self.light_cover = Some(LightCover {
+                        before: oldest.level,
+                        since_ms: at,
+                    });
                     let _ = self.try_start_reaction(
-                        Expression::Confused,
+                        Expression::Peering,
                         ReactionReason::Light,
                         PRIO_AMBIENT,
                         at,
                         LIGHT_DARK_MS,
-                        Some(HapticPattern::Confused),
+                        None,
                     );
+                    self.light_history
+                        .restart_from(LightSample { level, at_ms: at });
                     self.reanchor_dawn(at, level);
                 }
             }
         }
+        self.hold_cover(at, level);
 
         if self.dawn_ref_at.is_none() {
             self.reanchor_dawn(at, level);
         }
         self.light_level = Some(level);
+    }
+
+    /// Keep peering while the sensor stays covered.
+    fn hold_cover(&mut self, at: u64, level: u8) {
+        let Some(cover) = self.light_cover else {
+            return;
+        };
+        let before = cover.before as i32;
+        let threshold = LIGHT_FAST_MIN.max(before * LIGHT_FAST_PCT / 100);
+        if (level as i32) > before - threshold / 2 {
+            // The light came back slowly: no flash, just the end of the cover.
+            self.light_cover = None;
+            return;
+        }
+        if let Some(reaction) = &mut self.reaction {
+            if reaction.expression == Expression::Peering && at < reaction.ends_ms {
+                let cap = cover.since_ms.saturating_add(LIGHT_COVER_MAX_MS);
+                reaction.ends_ms = at
+                    .saturating_add(LIGHT_DARK_MS)
+                    .min(cap)
+                    .max(reaction.ends_ms);
+            }
+        }
     }
 
     fn reanchor_dawn(&mut self, at: u64, level: u8) {
@@ -1872,6 +1984,8 @@ fn expression_intensity(expression: Expression) -> u8 {
         Expression::Error => 100,
         Expression::Tired => 25,
         Expression::Dying => 15,
+        Expression::Peering => 40,
+        Expression::Dazzled => 65,
     }
 }
 

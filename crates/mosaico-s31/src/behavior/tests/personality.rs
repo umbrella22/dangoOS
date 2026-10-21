@@ -6,12 +6,15 @@
 //! - one tap is curiosity, two are puzzlement, three are annoyance, and only a
 //!   frantic burst makes the fox angry;
 //! - an angry fox is not re-angered during its cooldown;
+//! - a finger that rests or strokes is petting, never a tap;
 //! - the boot hold-off discards pointer samples completely;
 //! - the battery face is a baseline that reactions still override.
 
+use crate::behavior::affect::HapticPattern;
 use crate::behavior::affect::{AffectEngine, EventKind, EventSource, ReactionReason, SensorEvent};
 use crate::behavior::personality::{
-    PersonaReaction, PersonalityEngine, PointerSample, SCREEN_CENTER_X, SCREEN_CENTER_Y,
+    PersonaReaction, PersonalityEngine, PointerSample, PET_AFTER_MS, PET_HOLD_MS, PET_LEAN_MAX_PX,
+    SCREEN_CENTER_X, SCREEN_CENTER_Y,
 };
 use crate::behavior::Expression;
 
@@ -215,6 +218,99 @@ fn the_tap_pulse_decays() {
     });
     let later = engine.tick(1_400);
     assert_eq!(later.pulse, 0.0, "the pulse decays inside 280 ms");
+}
+
+fn press(engine: &mut PersonalityEngine, at_ms: u64, x: i32, pressed: bool) {
+    engine.on_pointer(PointerSample {
+        at_ms,
+        x,
+        y: CENTER.1,
+        pressed,
+    });
+}
+
+#[test]
+fn a_resting_finger_is_petting() {
+    let mut engine = PersonalityEngine::new(0);
+    press(&mut engine, 1_000, CENTER.0, true);
+    assert_eq!(engine.tick(1_000 + PET_HOLD_MS - 10).reaction, None);
+
+    let petted = engine.tick(1_000 + PET_HOLD_MS);
+    assert_eq!(petted.reaction, Some(PersonaReaction::Petted));
+    assert_eq!(petted.expression, Some(Expression::Satisfied));
+    assert_eq!(petted.haptic, Some(HapticPattern::Satisfied));
+
+    // The hand squashes her a little while it rests.
+    let held = engine.tick(1_000 + PET_HOLD_MS + 300);
+    assert!(held.pet > 0.2, "pet squash {}", held.pet);
+    assert_eq!(held.haptic, None, "the purr buzzes once");
+
+    // Long after the start she is still being petted.
+    assert_eq!(engine.tick(10_000).reaction, Some(PersonaReaction::Petted));
+
+    // Lift: contented a little longer, then back; no tap was counted.
+    press(&mut engine, 10_000, CENTER.0, false);
+    assert_eq!(
+        engine.tick(10_000 + PET_AFTER_MS - 1).reaction,
+        Some(PersonaReaction::Petted)
+    );
+    let after = engine.tick(10_000 + PET_AFTER_MS);
+    assert_eq!(after.reaction, None);
+    assert_eq!(engine.tick(10_000 + PET_AFTER_MS + 500).reaction, None);
+    assert!(engine.tick(10_000 + PET_AFTER_MS + 600).pet < 0.01);
+}
+
+#[test]
+fn a_stroke_is_petting_at_once_and_she_leans_with_it() {
+    let mut engine = PersonalityEngine::new(0);
+    press(&mut engine, 1_000, CENTER.0 - 40, true);
+    // A quick stroke to the right, well inside the tap time.
+    let mut at = 1_000;
+    let mut x = CENTER.0 - 40;
+    for _ in 0..6 {
+        at += 20;
+        x += 15;
+        press(&mut engine, at, x, true);
+    }
+    let out = engine.tick(at);
+    assert_eq!(out.reaction, Some(PersonaReaction::Petted));
+    let mut lean = 0.0;
+    let mut squash = 0.0;
+    for _ in 0..10 {
+        at += 20;
+        let out = engine.tick(at);
+        lean = out.lean_x;
+        squash = out.pet;
+    }
+    assert!(lean > 2.0 && lean <= PET_LEAN_MAX_PX, "lean {lean}");
+    assert!(
+        squash > 0.35,
+        "a stroke presses harder than a rest: {squash}"
+    );
+
+    // A quick release after a stroke is not a tap either.
+    press(&mut engine, at, x, false);
+    let later = engine.tick(at + PET_AFTER_MS + 400);
+    assert_eq!(later.reaction, None, "no Curious from the stroke");
+}
+
+#[test]
+fn petting_soothes_a_pending_tap_reaction() {
+    let mut engine = PersonalityEngine::new(0);
+    tap(&mut engine, 1_000);
+    tap(&mut engine, 1_200);
+    // Before the puzzled face appears, the finger comes back and stays.
+    press(&mut engine, 1_300, CENTER.0, true);
+    let petted = engine.tick(1_300 + PET_HOLD_MS);
+    assert_eq!(petted.reaction, Some(PersonaReaction::Petted));
+    press(&mut engine, 3_000, CENTER.0, false);
+
+    // The next tap starts a fresh ladder: curious, not annoyed.
+    tap(&mut engine, 6_000);
+    assert_eq!(
+        engine.tick(6_000 + 40 + 220).reaction,
+        Some(PersonaReaction::Curious)
+    );
 }
 
 // ---------------------------------------------------------------------------

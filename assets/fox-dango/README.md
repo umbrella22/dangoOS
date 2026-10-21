@@ -1,14 +1,14 @@
 # 狐狸团子（fox-dango）角色素材
 
-固件的角色形象（取代了早期的 grok-ball 矢量小球）。18 个表情的静态姿势、14 个表情的
+固件的角色形象（取代了早期的 grok-ball 矢量小球）。20 个表情的静态姿势、15 个表情的
 局部补丁（眨眼 / 嘴型 / 耳朵 / 视线 / 螺旋眼）、8 个表情的独立符号精灵，以及描述
 这一切的 `device/manifest.json`。固件已接入：`crates/mosaico-s31/src/fox/`。
 整条管线的讲解见 [docs/FOX_RENDER_PIPELINE.md](../../docs/FOX_RENDER_PIPELINE.md)。
 
 | 目录 | 内容 | 是否入库 |
 | --- | --- | --- |
-| `source/` | 1254×1254 高清原稿（黑底）：18 个表情 + `variants/` 下 26 张对齐编辑（`<表情>__<部位>.png`） | 否（`.gitignore`） |
-| `device/poses/` | 18 张 352×336 底图。带符号的表情这里放的是去掉符号的干净版 | 是 |
+| `source/` | 1254×1254 高清原稿（黑底）：20 个表情 + `variants/` 下 29 张对齐编辑（`<表情>__<部位>.png`） | 否（`.gitignore`） |
+| `device/poses/` | 20 张 352×336 底图。带符号的表情这里放的是去掉符号的干净版 | 是 |
 | `device/parts/<表情>/` | 补丁和符号精灵（RGBA，透明处 alpha=0） | 是 |
 | `device/manifest.json` | 画布、128 色 RGB565 调色板、每个部件的类型和位置、动画参数 | 是 |
 | `preview/` | `expressions_480.png` 全表情（含符号）；`parts_sheet.png` 部件框（绿=补丁，品红=精灵）；`animation_parts.mp4/.gif` 九宫格动画 | 是 |
@@ -28,7 +28,7 @@ python3 assets/fox-dango/tools/fox_anim.py    # preview/animation_parts.*
 
 ## 表情映射
 
-顺序与 `behavior::Expression` 一致，最后两项（annoyed、charging）是额外姿势。
+顺序与 `fox::FoxPose` 一致：前 16 项对应 `behavior::Expression` 的前 16 个，annoyed、charging 是只有姿势的额外项，peering、dazzled 是后加的光线表情（`Expression::Peering` / `Dazzled`）。
 
 | 文件 | 表情 | 说明 |
 | --- | --- | --- |
@@ -50,6 +50,8 @@ python3 assets/fox-dango/tools/fox_anim.py    # preview/animation_parts.*
 | `dying` | Dying | 只剩一条眼缝、身体塌平；不完全闭眼，和 Sleep 区分（电量 ≤5%） |
 | `annoyed` | Annoyed（P0） | 斜眼、鼓腮、叹气团；没有怒筋和虎牙，和 Angry 区分 |
 | `charging` | Charging（可选） | 抬眼、头顶闪电、火花 |
+| `peering` | Peering | 光线不足：眼睛睁圆、瞳孔放大、双耳竖起（遮住光敏电阻时） |
+| `dazzled` | Dazzled | 强光刺眼：> < 紧闭眼、波浪嘴、一只爪子挡在额前（光线突然恢复时） |
 
 ## 设备规格
 
@@ -58,7 +60,7 @@ python3 assets/fox-dango/tools/fox_anim.py    # preview/animation_parts.*
   Floyd–Steinberg 抖动在头发上会产生颗粒，而且缩放时颗粒会闪。
   平涂风格不抖动反而最干净。
 - 存储：8 bit 索引 + 字节 RLE（每行独立、(长度, 索引) 两字节一段），
-  18 张底图约 569 KiB（单张最大约 40 KiB），73 个部件约 88 KiB，合计约 660 KiB flash，
+  20 张底图和 79 个部件合计约 722 KiB flash（单张底图最大约 40 KiB），
   外加 128×2 B 调色板。精灵用索引 255 表示透明。原始 RGB565 是每张 231 KiB。
 
 ## manifest 格式
@@ -101,7 +103,8 @@ python3 assets/fox-dango/tools/fox_anim.py    # preview/animation_parts.*
 | Speaking | blink ×2、mouth_closed、mouth_wide | — |
 | Annoyed | blink ×2 | sigh（飘出淡出） |
 | Charging | blink ×2 | spark ×11，`spark_0` 是闪电（浮动），其余是火花（闪烁） |
-| Happy / Satisfied / Error / Dying | — | —（眼睛本来就是闭的或不需要眨） |
+| Peering | blink ×2、gaze_left ×2、gaze_right ×2 | — |
+| Happy / Satisfied / Error / Dying / Dazzled | — | —（眼睛本来就是闭的或不需要眨） |
 
 ## 动画方案
 
@@ -109,7 +112,7 @@ python3 assets/fox-dango/tools/fox_anim.py    # preview/animation_parts.*
 
 ### L0 姿势（静态，每个表情一张）
 
-就是 `device/poses/` 里的 18 张。切换表情 = 换一张 RLE 姿势。
+就是 `device/poses/` 里的 20 张。切换表情 = 换一张 RLE 姿势。
 
 ### L1 局部补丁（对齐编辑 + 自动差分）
 
@@ -148,6 +151,8 @@ python3 assets/fox-dango/tools/fox_anim.py    # preview/animation_parts.*
 | Dying | 6 s 极慢呼吸，幅度 0.8% |
 | Annoyed | 一次叹气压扁 + 气团上浮 |
 | Charging | 闪电上下浮动、火花闪烁 |
+| Peering | 慢呼吸；少眨眼；视线左、中、右、中轮流张望（4.8 s 一圈）；缓慢前倾 |
+| Dazzled | 深 pop（被光逼得一缩）；前 0.9 s 横向 ±1 px 发抖；之后每 2 s 皱一下 |
 
 ### L3 符号精灵
 

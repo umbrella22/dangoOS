@@ -17,7 +17,7 @@ pub mod runtime;
 
 pub use runtime::Runtime;
 
-/// The 16 expressions the behavior engines can ask for.
+/// The 18 expressions the behavior engines can ask for.
 ///
 /// `Tired` and `Dying` are battery baselines: they replace the resting face,
 /// not a reaction. The fox has two more poses of its own (see
@@ -42,10 +42,14 @@ pub enum Expression {
     Tired,
     /// Critical battery.
     Dying,
+    /// Sudden dark: wide eyes, dilated pupils, straining to see.
+    Peering,
+    /// Sudden bright light: eyes squeezed shut, a paw shading them.
+    Dazzled,
 }
 
 impl Expression {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 18] = [
         Self::Idle,
         Self::Sleep,
         Self::Curious,
@@ -62,6 +66,8 @@ impl Expression {
         Self::Error,
         Self::Tired,
         Self::Dying,
+        Self::Peering,
+        Self::Dazzled,
     ];
 }
 

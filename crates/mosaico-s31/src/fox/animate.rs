@@ -17,11 +17,12 @@ fn breath(pose: FoxPose) -> (u32, f32) {
     match pose {
         FoxPose::Sleep => (4500, 0.025),
         FoxPose::Puzzled | FoxPose::Thinking => (3600, 0.012),
+        FoxPose::Peering => (3600, 0.010),
         FoxPose::Satisfied => (3600, 0.015),
         FoxPose::Panic => (600, 0.02),
         FoxPose::Tired => (4000, 0.015),
         FoxPose::Dying => (6000, 0.008),
-        FoxPose::Happy | FoxPose::Surprised | FoxPose::Error => (3000, 0.01),
+        FoxPose::Happy | FoxPose::Surprised | FoxPose::Error | FoxPose::Dazzled => (3000, 0.01),
         _ => (3000, 0.015),
     }
 }
@@ -36,6 +37,8 @@ fn blink_range(pose: FoxPose) -> Option<(u32, u32)> {
         FoxPose::Idle | FoxPose::Curious | FoxPose::Listening | FoxPose::Charging => {
             Some((2500, 6000))
         }
+        // Wide eyes in the dark hardly blink.
+        FoxPose::Peering => Some((3500, 7000)),
         _ => Some((3000, 6000)),
     }
 }
@@ -50,6 +53,8 @@ const POP_MS: u32 = 600;
 pub struct FoxInput {
     pub scale_x: f32,
     pub scale_y: f32,
+    /// Lean in canvas pixels (petting).
+    pub offset_x: i32,
     pub offset_y: i32,
     /// Personality gaze toward the finger, source units (about -10..10).
     pub look_x: f32,
@@ -59,6 +64,7 @@ impl FoxInput {
     pub const REST: Self = Self {
         scale_x: 1.0,
         scale_y: 1.0,
+        offset_x: 0,
         offset_y: 0,
         look_x: 0.0,
     };
@@ -167,10 +173,11 @@ impl FoxAnimator {
         // Switch pop: damped spring squash, pose swaps at the deepest point.
         if self.prev.is_some() && t < POP_MS {
             let tt = t as f32 / 1000.0;
-            let amp = if shown == FoxPose::Surprised {
-                -0.10
-            } else {
-                0.12
+            let amp = match shown {
+                FoxPose::Surprised => -0.10,
+                // Recoil from the light: a deeper squash.
+                FoxPose::Dazzled => 0.18,
+                _ => 0.12,
             };
             let k = amp * exp_neg(tt / 0.10) * cos(TAU * tt / 0.24);
             sy -= k;
@@ -388,6 +395,32 @@ impl FoxAnimator {
                     dy = round(6.0 * sin(PI * nt as f32 / 600.0));
                 }
             }
+            FoxPose::Peering => {
+                // Look around in the dark: left, ahead, right, ahead.
+                let st = t % 4800;
+                if !self.blinking() {
+                    if (700..1700).contains(&st) {
+                        s.under.extend(pose.gaze_left);
+                    } else if (3100..4100).contains(&st) {
+                        s.under.extend(pose.gaze_right);
+                    }
+                }
+                // Straining forward: a slow, shallow lean.
+                let k = 0.012 * (0.5 - 0.5 * cos(TAU * phase(t, 4800, 0)));
+                sy -= k;
+                sx += k * 0.5;
+            }
+            FoxPose::Dazzled => {
+                // A wincing tremble right after the flash, then a flinch
+                // every 2 s while the light still stings.
+                if t < 900 {
+                    dx = if (t / 60) % 2 == 0 { 1 } else { -1 };
+                } else if t % 2000 < 160 {
+                    let k = 0.04 * sin(PI * (t % 2000) as f32 / 160.0);
+                    sy -= k;
+                    sx += k * 0.6;
+                }
+            }
             FoxPose::Curious | FoxPose::Surprised | FoxPose::Dying => {}
         }
 
@@ -396,7 +429,7 @@ impl FoxAnimator {
         s.warp = Warp {
             sx: clamp(sx, 0.5, 1.2),
             sy: clamp(sy, 0.5, 1.2),
-            dx,
+            dx: dx + input.offset_x,
             dy: dy + input.offset_y,
         };
         s

@@ -39,6 +39,15 @@ fn gyro(at_ms: u64, gx_dps: i16, gy_dps: i16, gz_dps: i16) -> SensorEvent {
     )
 }
 
+/// Five hard peaks with rest samples between, the last one at `at_ms`.
+fn violent_shake(engine: &mut AffectEngine, at_ms: u64) {
+    for n in (0..5u64).rev() {
+        let peak = at_ms.saturating_sub(n * 40);
+        engine.on_event(accel(peak.saturating_sub(20), 0, 0, 1_000));
+        engine.on_event(accel(peak, 0, 0, 2_500));
+    }
+}
+
 fn key(at_ms: u64, source: EventSource, down: bool) -> SensorEvent {
     event(
         at_ms,
@@ -107,8 +116,8 @@ fn panic_overrides_angry_and_lower_reactions() {
     assert_eq!(angry.state.expression, Expression::Angry);
     assert_eq!(angry.state.reason, ReactionReason::KeyRight);
 
-    // A single gyro sample above 200 dps is a large shake.
-    engine.on_event(gyro(600, 0, 0, 250));
+    // A violent shake (five hard peaks inside a second) panics.
+    violent_shake(&mut engine, 600);
     let panic = engine.tick(600);
     assert_eq!(panic.state.expression, Expression::Panic);
     assert_eq!(panic.state.reason, ReactionReason::ShakeLarge);
@@ -233,10 +242,10 @@ fn short_physical_and_ambient_reactions_overlay_activity() {
     engine.on_event(activity(2_000, Expression::Thinking));
     assert_eq!(engine.tick(2_000).state.expression, Expression::Thinking);
     engine.on_event(light(2_100, 80));
-    engine.on_event(light(2_200, 50));
-    assert_eq!(engine.tick(2_200).state.expression, Expression::Confused);
+    engine.on_event(light(2_200, 20));
+    assert_eq!(engine.tick(2_200).state.expression, Expression::Peering);
     let end = 2_200 + LIGHT_DARK_MS;
-    assert_eq!(engine.tick(end - 1).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Peering);
     assert_eq!(engine.tick(end).state.expression, Expression::Thinking);
 }
 
@@ -246,7 +255,7 @@ fn panic_interrupts_activity_and_it_resumes_after_the_sequence() {
     engine.on_event(activity(100, Expression::Thinking));
     assert_eq!(engine.tick(100).state.expression, Expression::Thinking);
 
-    engine.on_event(gyro(200, 0, 0, 300));
+    violent_shake(&mut engine, 200);
     assert_eq!(engine.tick(200).state.expression, Expression::Panic);
 
     // The full panic sequence masks Activity: Panic hold, still wait,
@@ -272,7 +281,7 @@ fn error_interrupts_panic_angry_and_activity_until_idle() {
     engine.on_event(activity(100, Expression::Speaking));
     assert_eq!(engine.tick(100).state.expression, Expression::Speaking);
 
-    engine.on_event(gyro(200, 0, 0, 300));
+    violent_shake(&mut engine, 200);
     assert_eq!(engine.tick(200).state.expression, Expression::Panic);
 
     engine.on_event(activity(300, Expression::Error));
@@ -329,7 +338,7 @@ fn physical_reaction_blocks_ambient_reaction() {
 
     // Sudden dark while Puzzled is active: ambient must not replace physical.
     engine.on_event(light(200, 80));
-    engine.on_event(light(300, 50));
+    engine.on_event(light(300, 20));
     assert_eq!(engine.tick(300).state.expression, Expression::Puzzled);
 
     // Puzzled ends at 1600; the blocked dark reaction never appears.
@@ -337,11 +346,10 @@ fn physical_reaction_blocks_ambient_reaction() {
 
     // With no physical reaction, the same light delta does react.
     engine.on_event(light(2_000, 80));
-    engine.on_event(light(2_100, 50));
-    let confused = engine.tick(2_100);
-    assert_eq!(confused.state.expression, Expression::Confused);
-    assert_eq!(confused.state.reason, ReactionReason::Light);
-    assert_eq!(confused.haptic, Some(HapticPattern::Confused));
+    engine.on_event(light(2_100, 20));
+    let peering = engine.tick(2_100);
+    assert_eq!(peering.state.expression, Expression::Peering);
+    assert_eq!(peering.state.reason, ReactionReason::Light);
 }
 
 #[test]
@@ -399,16 +407,29 @@ fn panic_replaces_a_pending_lower_haptic() {
     assert_eq!(limited.haptic, None);
 
     // Panic replaces the pending Happy pattern.
-    engine.on_event(gyro(110, 0, 0, 300));
+    violent_shake(&mut engine, 110);
     let panic = engine.tick(150);
     assert_eq!(panic.state.expression, Expression::Panic);
     assert_eq!(panic.haptic, Some(HapticPattern::Panic));
 }
 
 #[test]
+fn a_fast_turn_in_the_hand_does_not_panic() {
+    let mut engine = AffectEngine::new(0);
+    // Picking the fox up: a 0.3 s rotation well above 200 dps.
+    for n in 0..15u64 {
+        engine.on_event(gyro(100 + n * 20, 0, 0, 320));
+        engine.on_event(accel(100 + n * 20, 0, 0, 1_350));
+    }
+    let held = engine.tick(400);
+    assert_ne!(held.state.expression, Expression::Panic);
+    assert_ne!(held.state.expression, Expression::Confused);
+}
+
+#[test]
 fn tick_is_idempotent_at_the_same_timestamp() {
     let mut engine = AffectEngine::new(0);
-    engine.on_event(accel(100, 0, 0, 1_500));
+    engine.on_event(touch(100, EventKind::TouchPoke));
 
     let first = engine.tick(100);
     let second = engine.tick(100);

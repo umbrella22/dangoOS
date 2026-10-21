@@ -190,18 +190,20 @@ Shake detection uses filtered acceleration magnitude and gyro magnitude. A burst
 
 | Event | Rule | Reaction | Return |
 | --- | --- | --- | --- |
-| Large shake | Two peaks above the large threshold within 200 ms, or gyro above the large threshold | `Panic` for 1.5 s | No motion for 5 s → `Confused` 3 s → prior state |
-| Small shake burst | 1–3 oscillations above the small threshold, then 300–800 ms rest | `Confused` 2.5 s | Prior state |
+| Violent shake | 5 rising peaks of dynamic accel ≥ 950 mg within 1 s (gyro alone never panics) | `Panic` for 1.5 s | No motion for 5 s → `Confused` 3 s → prior state |
+| Sustained swaying (dizzy) | Shaky samples (≥ 300 mg or ≥ 150 °/s) fill a leaky bucket (leak 500/s); full at 1500 | `Confused` (spiral eyes) while moving, 2.5 s after the last motion | Prior state |
+| Pickup | Short lift or turn: the bucket stays far below full | None | — |
 | Repeated small bursts | 5–10 bursts within 15 s, each separated by 300–800 ms rest | `Angry` 10 s | Prior state; 30 s angry cooldown |
 | Continuous shake | No new burst while motion remains above rest threshold | Keep current Panic/Confused | Start rest timer only after motion falls below rest threshold |
-| Pickup/flip | Gravity direction change plus gyro | `Surprised` 1.2 s | Prior state |
 
-The large shake clears the small-burst counter. Continuous shaking does not increment the burst counter; the rest gap is required.
+Implementation note (2026-10): the original rules (two peaks in 200 ms, or one gyro sample above 200 °/s) fired Panic on every pickup, and one 300 mg sample made the fox Confused at once. The violent-shake and dizzy-bucket rules above replace them; see `behavior/affect.rs`.
+
+The violent shake clears the small-burst counter. Continuous shaking does not increment the burst counter; the rest gap is required.
 
 Initial thresholds are calibration points, not final values:
 
 - Small dynamic acceleration: `0.3–0.8 g`.
-- Large dynamic acceleration: above `1.2 g` or gyro above `200 °/s`.
+- Violent dynamic acceleration: `0.95 g` (the ±2 g range saturates around there on a hard shake), 5 peaks in 1 s.
 - Rest: below `0.08 g` dynamic and `20 °/s` for 300 ms.
 - Burst rest gap: 300–800 ms.
 - Angry burst count: 5–10.
@@ -213,7 +215,7 @@ Touch input is restricted to the ball area, not the full screen.
 
 | Event | Rule | Reaction | Return |
 | --- | --- | --- | --- |
-| Petting | At least two direction reversals, path >80 px, within 1.5 s | `Happy` while held | Release + 1.5 s → prior state |
+| Petting | Press held ≥ 450 ms, or travel ≥ 40 px (personality layer, `behavior/personality.rs`) | `Satisfied` while held; squash under the hand, lean with the stroke | Release + 1.8 s → prior state; never counts as a tap |
 | Single poke | Short press with <12 px movement | `Puzzled` 1.5 s | Prior state |
 | Rapid pokes | Three pokes within 1.5 s | `Angry` 10 s | Prior state; shared angry cooldown |
 | Long stroke | Slow one-direction stroke >150 px | `Satisfied` 1.5 s | Prior state |
@@ -226,12 +228,12 @@ Touch events use the existing `InputQueue` timestamps. The gesture detector runs
 
 | Event | Rule | Reaction | Return |
 | --- | --- | --- | --- |
-| Sudden bright | +25 points or more within 300 ms | `Surprised` 3 s | Prior state |
-| Sudden dark/cover | −25 points or more within 300 ms | `Confused` 3 s | Prior state |
+| Sudden bright / uncover | Rise of `max(8, 40%)` within 400 ms | `Dazzled` 3 s (eyes squeezed shut, paw shading them) | Prior state |
+| Sudden dark / cover | Drop of `max(8, 40% of before)` within 400 ms | `Peering` (wide, dilated eyes looking around) while covered, at most 15 s | 3 s after the last covered sample |
 | Gradual dawn | Slow rise over 30 s | `Curious` 3 s → `Idle` | Idle |
 | Night | Level below 10 for 60 s | `Sleep` | Any touch, PIR or bright light wakes |
 
-Absolute level does not select an expression. A slow daylight change must not trigger `Surprised`.
+Absolute level does not select an expression. A slow daylight change must not trigger `Dazzled`. The thresholds are relative so a dim room (level ≈ 25) still reacts to a finger over the sensor.
 
 ### 4.4 PIR
 
@@ -368,7 +370,7 @@ The right-slot address select is `GPIO39=1`. The subboard I2C bus is SDA `GPIO0`
 - Small shake → Confused 2.5 s.
 - 5, 7 and 10 small bursts with valid rest gaps → Angry 10 s; four bursts → no Angry.
 - Continuous shaking for 3 s → one burst only; no Angry count.
-- Petting → Happy while held; release +1.5 s → prior state.
+- Petting → Satisfied while held; release +1.8 s → prior state.
 - Three pokes within 1.5 s → Angry.
 - LDR bright/dark deltas; gradual daylight does not trigger Surprised.
 - PIR rising/sustained/falling; absence timer.
