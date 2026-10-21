@@ -3,7 +3,7 @@ name = "mosaico-s31"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-description = "ESP-Mosaico S31 platform firmware (R1 async display/input, LVGL UI task)"
+description = "ESP-Mosaico S31 firmware: the fox-dango companion (host-testable lib + device bin)"
 publish = false
 
 [lib]
@@ -12,12 +12,11 @@ path = "src/lib.rs"
 
 [dependencies]
 log.workspace = true
-# Host-buildable UI dependencies. The BallWidget and its host preview build
+# Host-buildable UI dependencies: the library and the host previews build
 # with the plain host toolchain; the ESP HAL/RTOS dependencies stay target
 # gated.
 lvgl.workspace = true
 lvgl-ui.workspace = true
-grok-ball = { path = "../grok-ball" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 esp-hal.workspace = true

@@ -105,11 +105,8 @@ impl ModulePins {
 /// three-sample debounced transition.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ModuleInputs {
-    pub light_raw: u16,
+    /// Filtered light, `0..=100`.
     pub light_level: u8,
-    pub pir: bool,
-    pub key_l: bool,
-    pub key_r: bool,
     pub pir_edge: Option<bool>,
     pub key_l_edge: Option<bool>,
     pub key_r_edge: Option<bool>,
@@ -270,18 +267,12 @@ impl ModuleWatcher {
         let key_r = self.pins.key_r.is_low();
         let pir = self.pins.pir.is_high();
 
-        // Update the debouncers first so the snapshot fields below report the
-        // post-edge stable state.
         let pir_edge = self.pir.update(pir);
         let key_l_edge = self.key_l.update(key_l);
         let key_r_edge = self.key_r.update(key_r);
 
         Some(ModuleInputs {
-            light_raw: raw,
             light_level,
-            pir: self.pir.stable,
-            key_l: self.key_l.stable,
-            key_r: self.key_r.stable,
             pir_edge,
             key_l_edge,
             key_r_edge,

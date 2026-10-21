@@ -73,10 +73,6 @@ const REG_TEMPERATURE: u8 = 0x06;
 /// Standard-command `BatteryStatus()`.
 const REG_BATTERY_STATUS: u8 = 0x0A;
 
-/// Flag word bits (bq27xxx `BatteryStatus()`).
-const STATUS_DSG: u16 = 0x0001;
-const STATUS_FC: u16 = 0x0200;
-
 /// One decoded gauge sample.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatterySample {
@@ -93,16 +89,6 @@ pub struct BatterySample {
 }
 
 impl BatterySample {
-    /// Whether the gauge reports a full pack (`FC`).
-    pub fn is_full(&self) -> bool {
-        self.status & STATUS_FC != 0
-    }
-
-    /// Whether the pack is discharging (`DSG`).
-    pub fn is_discharging(&self) -> bool {
-        self.status & STATUS_DSG != 0
-    }
-
     /// Temperature in degrees Celsius.
     pub fn temperature_c(&self) -> i16 {
         self.temperature_dk as i16 / 10 - 273

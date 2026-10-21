@@ -56,7 +56,6 @@ const BMM150_CHIP_ID: u8 = 0x32;
 // ---- BMI270 registers (Bosch BMI270 datasheet / SensorAPI) ----
 const REG_CHIP_ID: u8 = 0x00;
 const REG_STATUS: u8 = 0x03;
-const REG_ACC_X_LSB: u8 = 0x0C;
 const REG_INTERNAL_STATUS: u8 = 0x21;
 const REG_ACC_CONF: u8 = 0x40;
 const REG_ACC_RANGE: u8 = 0x41;
@@ -461,10 +460,6 @@ impl Bmi270 {
         None
     }
 
-    pub fn address(&self) -> u8 {
-        self.addr
-    }
-
     /// Load the Bosch configuration file, verify `INTERNAL_STATUS`, and enable
     /// accel + gyro at 50 Hz.
     ///
@@ -628,7 +623,6 @@ pub struct MagSample {
     pub magnitude_ut: f32,
     /// Raw 13/15-bit axes, kept for H1.2 calibration logs.
     pub raw: [i16; 3],
-    pub rhall: u16,
 }
 
 /// Result of the startup probe ladder for one address.
@@ -1119,7 +1113,6 @@ impl Bmm150 {
             z_ut,
             magnitude_ut,
             raw: [raw_x, raw_y, raw_z],
-            rhall,
         }))
     }
 

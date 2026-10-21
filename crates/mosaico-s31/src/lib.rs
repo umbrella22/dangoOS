@@ -1,41 +1,35 @@
-//! Host-safe library surface for the Mosaico S31 firmware crate.
+//! The host-testable half of the Mosaico S31 firmware.
 //!
-//! The binary (`src/main.rs`) keeps its ESP-only modules. This library is
-//! `no_std` + `alloc` and contains only code that also builds on the host, so
-//! the ball widget, the boot splash, the input queue and the latency sample
-//! math can be exercised without hardware.
+//! Everything here is `no_std` + `alloc` and builds for the host as well as
+//! the device, so `cargo test -p mosaico-s31` covers it without hardware. The
+//! binary (`src/main.rs`) adds the board, the drivers and the Embassy tasks.
 //!
-//! `present.rs` is compiled by the binary because it depends on
-//! `crate::framebuffer` and `crate::memory`, whose host test modules need
-//! imports owned by R1.1; exporting it here would break `cargo test --lib`
-//! without cross-package edits. The source is intentionally not duplicated.
+//! - [`behavior`]: what the fox feels. Sensors, buttons and touch in; one
+//!   expression and one haptic pattern out.
+//! - [`fox`]: what the fox looks like. Palette sprites, the per-expression
+//!   animation and the renderer that draws a frame into an RGB565 canvas.
+//! - [`ui`]: the LVGL screen tree, the fox widget and the canvas pool shared
+//!   with the panel upload.
+//! - [`telemetry`]: latency and display counters for the console.
+//!
+//! Data flow per frame: `behavior::Runtime` -> `ui::fox_widget::FoxControl`
+//! -> `fox::FoxAnimator` -> `fox::FoxRenderer` -> `ui::canvas_pool` -> the
+//! firmware's plane task -> panel.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 extern crate alloc;
-// The firmware binary compiles `ui.rs` and `ui_task.rs` as modules of the
-// binary crate, whose `main.rs` does not declare `ball_widget`. Referring to
-// the package library by its own name keeps one `BallWidget` type in both
-// compilation units.
-extern crate self as mosaico_s31;
 
-pub mod ball_widget;
-pub mod canvas_pool;
-pub mod boot_splash;
-pub mod entrance;
+pub mod behavior;
 pub mod fox;
-pub mod input_queue;
-pub mod latency;
-pub mod runtime;
-pub mod splash_font;
-pub mod splash_widget;
+pub mod telemetry;
 pub mod ui;
 
-pub use ball_widget::{BallControl, BallVisual, BallWidget, Character, FRAME_INTERVAL_MS};
-pub use runtime::BallRuntime;
-pub use splash_widget::{SplashControl, SplashWidget};
-pub use ui::{next_ai_state, BallApp, BallMsg, Screen, AI_STATES};
+pub use behavior::{Expression, Runtime};
+pub use ui::fox_widget::{FoxControl, FoxVisual, FoxWidget, FRAME_INTERVAL_MS};
+pub use ui::splash::{SplashControl, SplashWidget};
+pub use ui::{next_ai_state, AppMsg, MosaicoApp, Screen, AI_STATES};
 
 /// Process-wide LVGL test lock.
 ///
@@ -45,8 +39,6 @@ pub use ui::{next_ai_state, BallApp, BallMsg, Screen, AI_STATES};
 /// count.
 #[cfg(test)]
 pub(crate) mod test_support {
-    extern crate std;
-
     use std::sync::{Mutex, MutexGuard};
 
     static LVGL_LOCK: Mutex<()> = Mutex::new(());

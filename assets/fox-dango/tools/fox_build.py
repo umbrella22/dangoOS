@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
-ORDER = [  # (key, label); order matches BallExpression, then extras
+ORDER = [  # (key, label); order matches behavior::Expression, then extras
     ('idle', '待机 Idle'),
     ('sleep', '睡眠 Sleep'),
     ('curious', '好奇 Curious'),

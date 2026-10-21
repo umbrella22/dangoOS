@@ -1,4 +1,4 @@
-//! Headless host preview for [`mosaico_s31::BallWidget`].
+//! Headless host preview for [`mosaico_s31::FoxWidget`].
 //!
 //! Run from the workspace root:
 //!
@@ -7,12 +7,12 @@
 //! ```
 //!
 //! The example registers a 480x480 RGB888 memory display (no SDL), mounts one
-//! `Node::custom(BallWidget)`, and cycles through all 14 `BallExpression`
+//! `Node::custom(FoxWidget)`, and cycles through all 16 `Expression`
 //! values. Each state runs for 125 ticks of 16 ms (2 seconds), then the display
 //! buffer is forced out and written as a PPM (P6) image under
-//! `target/ball-widget-preview/`.
+//! `target/fox-widget-preview/`.
 //!
-//! The widget is controlled only through the shared `BallControl` handle after
+//! The widget is controlled only through the shared `FoxControl` handle after
 //! the initial mount, which proves that a later `Node::custom` descriptor is
 //! not needed to change the expression.
 
@@ -25,12 +25,11 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use grok_ball::types::BallExpression;
 use lvgl::sys as lvgl_sys;
 use lvgl::Display;
 use lvgl_ui::{App, Node, Theme, Ui};
-use mosaico_s31::ball_widget::CANVAS_SIZE;
-use mosaico_s31::{BallControl, BallWidget};
+use mosaico_s31::ui::fox_widget::{CANVAS_HEIGHT, CANVAS_WIDTH};
+use mosaico_s31::{Expression, FoxControl, FoxWidget};
 
 const DISPLAY_WIDTH: u32 = 480;
 const DISPLAY_HEIGHT: u32 = 480;
@@ -46,7 +45,7 @@ const BYTES_PER_PIXEL: usize = 3;
 type Capture = Rc<RefCell<Vec<u8>>>;
 
 struct PreviewApp {
-    control: Rc<BallControl>,
+    control: Rc<FoxControl>,
 }
 
 impl App for PreviewApp {
@@ -57,7 +56,7 @@ impl App for PreviewApp {
     fn view(&self, _theme: &Theme) -> Node<()> {
         // Built once at mount. Later reconciles would discard this descriptor;
         // the mounted instance is driven through `self.control`.
-        Node::custom(BallWidget::new(Rc::clone(&self.control)))
+        Node::custom(FoxWidget::new(Rc::clone(&self.control)))
     }
 }
 
@@ -76,7 +75,7 @@ fn main() {
     let display = register_capturing_display(Rc::clone(&pixels));
     let mut ui = Ui::new(&display, Theme::dark()).expect("ui creation");
 
-    let control = BallControl::new(BallExpression::Idle);
+    let control = FoxControl::new(Expression::Idle);
     let app = PreviewApp {
         control: Rc::clone(&control),
     };
@@ -92,8 +91,7 @@ fn main() {
     verify_canvas(canvas);
     let (canvas_x, canvas_y) = canvas_position(canvas);
     println!(
-        "mounted canvas: {size}x{size} at ({canvas_x}, {canvas_y}) inside {DISPLAY_WIDTH}x{DISPLAY_HEIGHT}",
-        size = CANVAS_SIZE,
+        "mounted canvas: {CANVAS_WIDTH}x{CANVAS_HEIGHT} at ({canvas_x}, {canvas_y}) inside {DISPLAY_WIDTH}x{DISPLAY_HEIGHT}",
     );
 
     let output = output_dir();
@@ -104,7 +102,7 @@ fn main() {
 
     let mut paths = Vec::new();
     let mut hashes = Vec::new();
-    for (index, expression) in BallExpression::ALL.iter().copied().enumerate() {
+    for (index, expression) in Expression::ALL.iter().copied().enumerate() {
         control.set_expression(expression);
 
         for _ in 0..FRAMES_PER_STATE {
@@ -134,11 +132,11 @@ fn main() {
     assert_eq!(
         control.create_count(),
         1,
-        "changing the expression through BallControl must not remount the widget"
+        "changing the expression through FoxControl must not remount the widget"
     );
     assert_eq!(control.delete_count(), 0, "widget is still mounted");
     assert!(
-        control.update_count() >= u64::from(FRAMES_PER_STATE) * BallExpression::ALL.len() as u64,
+        control.update_count() >= u64::from(FRAMES_PER_STATE) * Expression::ALL.len() as u64,
         "every tick must reach the widget"
     );
     assert!(
@@ -151,13 +149,12 @@ fn main() {
         "the widget must invalidate only after a rendered frame"
     );
     println!(
-        "lifecycle: creates={} updates={} rendered_frames={} invalidations={} deletes={} last_dirty_rect={:?}",
+        "lifecycle: creates={} updates={} rendered_frames={} invalidations={} deletes={}",
         control.create_count(),
         control.update_count(),
         control.rendered_frames(),
         control.invalidations(),
         control.delete_count(),
-        control.last_dirty_rect(),
     );
 
     let all_equal = hashes.windows(2).all(|pair| pair[0] == pair[1]);
@@ -229,9 +226,9 @@ fn mounted_canvas() -> *mut lvgl_sys::lv_obj_t {
     let root = unsafe { lvgl_sys::lv_obj_get_child(screen, 0) };
     assert!(!root.is_null(), "Ui root container");
     // SAFETY: the app view returns a single custom node, so child 0 of the Ui
-    // root is the canvas created by `BallWidget::create`.
+    // root is the canvas created by `FoxWidget::create`.
     let canvas = unsafe { lvgl_sys::lv_obj_get_child(root, 0) };
-    assert!(!canvas.is_null(), "ball canvas");
+    assert!(!canvas.is_null(), "fox canvas");
     canvas
 }
 
@@ -247,8 +244,8 @@ fn verify_canvas(canvas: *mut lvgl_sys::lv_obj_t) {
             lvgl_sys::lv_obj_get_height(canvas),
         )
     };
-    assert_eq!(width, CANVAS_SIZE as i32, "canvas width");
-    assert_eq!(height, CANVAS_SIZE as i32, "canvas height");
+    assert_eq!(width, CANVAS_WIDTH as i32, "canvas width");
+    assert_eq!(height, CANVAS_HEIGHT as i32, "canvas height");
 }
 
 fn canvas_position(canvas: *mut lvgl_sys::lv_obj_t) -> (i32, i32) {
@@ -259,9 +256,8 @@ fn canvas_position(canvas: *mut lvgl_sys::lv_obj_t) -> (i32, i32) {
             lvgl_sys::lv_obj_get_y(canvas),
         )
     };
-    let expected = (DISPLAY_WIDTH as i32 - CANVAS_SIZE as i32) / 2;
-    assert_eq!(x, expected, "canvas horizontally centered");
-    assert_eq!(y, expected, "canvas vertically centered");
+    assert_eq!(x, (DISPLAY_WIDTH as i32 - CANVAS_WIDTH as i32) / 2, "canvas horizontally centered");
+    assert_eq!(y, (DISPLAY_HEIGHT as i32 - CANVAS_HEIGHT as i32) / 2, "canvas vertically centered");
     (x, y)
 }
 
@@ -282,7 +278,7 @@ fn output_dir() -> PathBuf {
         .join("..")
         .join("..")
         .join("target")
-        .join("ball-widget-preview")
+        .join("fox-widget-preview")
 }
 
 fn prepare_output_dir(output: &Path) {
@@ -314,8 +310,8 @@ fn color_stats(pixels: &[u8], canvas_x: i32, canvas_y: i32) -> (usize, usize) {
             let cy = y as i32;
             if cx >= canvas_x
                 && cy >= canvas_y
-                && cx < canvas_x + CANVAS_SIZE as i32
-                && cy < canvas_y + CANVAS_SIZE as i32
+                && cx < canvas_x + CANVAS_WIDTH as i32
+                && cy < canvas_y + CANVAS_HEIGHT as i32
             {
                 canvas.insert(color);
             }

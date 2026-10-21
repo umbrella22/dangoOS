@@ -1,31 +1,39 @@
-//! ESP-Mosaico v1.2 S31 platform firmware (R1 + R1.5).
+//! ESP-Mosaico v1.2 S31 firmware entry point.
+//!
+//! `main` brings up the board and spawns the tasks; everything else lives in
+//! modules:
+//!
+//! - [`board`]: the v1.2 pin map and board-revision check.
+//! - [`drivers`]: panel, touch, sensors, fuel gauge, module slot, LVGL port.
+//! - [`tasks`]: the Embassy tasks (see below).
+//! - [`console`]: the USB CDC-ACM log console.
+//! - The host-testable library (`mosaico_s31`): behaviour, fox, UI, telemetry.
 //!
 //! `esp-rtos` + Embassy, two executors:
 //!
 //! - **Interrupt executor (FROM_CPU_INTR1, priority 2)**
-//!   - `ball_plane_task`: exclusively owns the CO5300 panel. Takes the newest
+//!   - `tasks::plane`: exclusively owns the CO5300 panel. Takes the newest
 //!     rendered canvas from the two-slot canvas pool and uploads it in 32-row
-//!     DMA chunks at the panel centre. Running here lets each chunk resume as
-//!     soon as its DMA completes, instead of waiting for the thread-mode
-//!     rasterizer to yield.
+//!     DMA chunks. Running here lets each chunk resume as soon as its DMA
+//!     completes, instead of waiting for the thread-mode renderer to yield.
 //! - **Thread-mode executor**
-//!   - `ui_task`: exclusively owns LVGL. A 5 ms loop drains sensors and touch
-//!     into the runtime, advances the ball widget (engine + raster into a free
-//!     canvas slot) and hands each new frame to the plane.
-//!   - `input_task`: exclusively owns the CST9220. GPIO6 falling edges plus a
+//!   - `tasks::ui`: exclusively owns LVGL. A 5 ms loop drains sensors and
+//!     touch into the behaviour runtime, renders the fox into a free canvas
+//!     slot and hands each new frame to the plane.
+//!   - `tasks::input`: exclusively owns the CST9220. GPIO6 falling edges plus a
 //!     5 ms fallback trigger async I2C report reads into a bounded queue.
-//!   - `sensor_task` (R1.5): polls the BMI270, the BMM150 pair and the
-//!     right-slot Interaction module, then publishes `SensorEvent` values into
-//!     a bounded capacity-64 channel. It shares I2C0 with touch through
-//!     `shared_i2c`; the subboard EEPROM uses the separate I2C1.
-//!   - `haptic_task` (H1.3): non-blocking motor patterns on GPIO8. esp-hal has
-//!     no S31 LEDC driver at this revision, so RMT TX generates the equivalent
+//!   - `tasks::sensors`: polls the BMI270, the BMM150 pair and the right-slot
+//!     Interaction module, then publishes `SensorEvent` values into a bounded
+//!     capacity-64 channel. It shares I2C0 with touch through
+//!     `drivers::shared_i2c`; the sub-board EEPROM uses the separate I2C1.
+//!   - `tasks::haptic`: non-blocking motor patterns on GPIO8. esp-hal has no
+//!     S31 LEDC driver at this revision, so RMT TX generates the equivalent
 //!     5 kHz PWM in hardware.
 //!
 //! The console is a USB-OTG HS CDC-ACM device on the USB-C port. The boot
-//! summary is replayed on every connection and includes the R1 counters:
-//! display readiness, presented frames, touch-to-first-pixel P50/P95/max, last
-//! transfer time, FPS, input queue depth, input drops and UI heartbeats.
+//! summary is replayed on every connection and includes display readiness,
+//! presented frames, touch-to-first-pixel P50/P95/max, transfer time, FPS,
+//! input queue depth, input drops and UI heartbeats.
 
 #![no_std]
 #![no_main]
@@ -34,55 +42,25 @@ extern crate alloc;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-// `board.rs` carries its own crate-level `#![allow(dead_code)]` because the pin
-// map is documentation.
-mod ball_plane;
+// `board.rs` carries its own `#![allow(dead_code)]`: the pin map is
+// documentation.
 mod board;
-mod display_stats;
-#[allow(dead_code)]
+mod console;
 mod drivers;
-// The native RGB565 model is shared by the panel driver and the ball plane.
-#[allow(dead_code)]
-mod framebuffer;
-mod haptic;
-// Only `CAPACITY` is used by the firmware; the queue itself is exported by
-// the host library.
-#[allow(dead_code)]
-mod input_queue;
-mod input_task;
-mod latency;
-mod lvgl_port;
-// Ported allocation helper.
-#[allow(dead_code)]
-mod memory;
-mod sensor_task;
-mod ui;
-mod ui_task;
-
-use core::{
-    fmt::Write as _,
-    sync::atomic::{AtomicU32, Ordering},
-};
+mod tasks;
 
 use embassy_executor::Spawner;
-use embassy_futures::{
-    join::join,
-    select::{select, Either},
-};
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
-use embassy_time::{Duration, Timer};
+use embassy_futures::join::join;
 use embassy_usb::{
     class::cdc_acm::{CdcAcmClass, State},
-    driver::EndpointError,
     Builder,
 };
 use esp_backtrace as _;
-use esp_rtos::embassy::InterruptExecutor;
 use esp_hal::{
     clock::CpuClock,
-    interrupt::Priority,
     gpio::{Level, Output, OutputConfig},
     i2c::master::I2c,
+    interrupt::Priority,
     rmt::Rmt,
     time::Rate,
     timer::timg::TimerGroup,
@@ -91,160 +69,11 @@ use esp_hal::{
         Usb,
     },
 };
+use esp_rtos::embassy::InterruptExecutor;
 use log::{info, warn};
 
 use crate::drivers::{display, module, shared_i2c, touch};
-
-/// Fixed capacity of one console line, including the trailing CRLF.
-const LOG_LINE_BYTES: usize = 160;
-/// Text capacity leaves room for the two-byte CRLF terminator.
-const LOG_TEXT_BYTES: usize = LOG_LINE_BYTES - 2;
-/// Bounded log queue. New records are dropped when the CDC pump is behind.
-const LOG_CHANNEL_DEPTH: usize = 32;
-/// How often the console pump reports connection state and drop counters.
-const CONSOLE_STATUS_PERIOD: Duration = Duration::from_secs(5);
-
-/// One formatted log line owned by the channel.
-struct LogRecord {
-    len: u8,
-    bytes: [u8; LOG_LINE_BYTES],
-}
-
-/// A fixed-buffer `core::fmt::Write` sink. Formatting truncates at
-/// `LOG_TEXT_BYTES`; the trailing CRLF is always appended by `finish`.
-struct LogLine {
-    bytes: [u8; LOG_LINE_BYTES],
-    len: usize,
-}
-
-impl LogLine {
-    const fn new() -> Self {
-        Self {
-            bytes: [0; LOG_LINE_BYTES],
-            len: 0,
-        }
-    }
-
-    fn finish(mut self) -> LogRecord {
-        self.bytes[self.len] = b'\r';
-        self.bytes[self.len + 1] = b'\n';
-        self.len += 2;
-        LogRecord {
-            len: self.len as u8,
-            bytes: self.bytes,
-        }
-    }
-}
-
-impl core::fmt::Write for LogLine {
-    fn write_str(&mut self, text: &str) -> core::fmt::Result {
-        let available = LOG_TEXT_BYTES.saturating_sub(self.len);
-        let count = core::cmp::min(available, text.len());
-        self.bytes[self.len..self.len + count].copy_from_slice(&text.as_bytes()[..count]);
-        self.len += count;
-        Ok(())
-    }
-}
-
-/// The bounded queue between `log` producers (all tasks) and the USB pump.
-static LOG_CHANNEL: Channel<CriticalSectionRawMutex, LogRecord, LOG_CHANNEL_DEPTH> = Channel::new();
-/// Records dropped because the bounded queue was full. Never reset.
-static LOG_DROPS: AtomicU32 = AtomicU32::new(0);
-
-/// `log::Log` implementation that formats into a fixed 160-byte record.
-struct UsbLogger;
-
-impl log::Log for UsbLogger {
-    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= log::Level::Info
-    }
-
-    fn log(&self, record: &log::Record<'_>) {
-        if !self.enabled(record.metadata()) {
-            return;
-        }
-        let mut line = LogLine::new();
-        let _ = write!(line, "[{}] {}", record.level(), record.args());
-        if LOG_CHANNEL.try_send(line.finish()).is_err() {
-            LOG_DROPS.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-static USB_LOGGER: UsbLogger = UsbLogger;
-
-/// Draft one R1 status line for the CDC port.
-fn status_record(connected: bool) -> LogRecord {
-    let (samples, p50, p95, max) = latency::summary();
-    let mut line = LogLine::new();
-    let _ = write!(
-        line,
-        "[boot] R1 cdc={connected} disp={} br={} frames={} p50={p50} p95={p95} max={max} n={samples} transfer_ms={} fps={} te={}/{}/{} ty={} tew={} q={} drops={} hb={} ldrop={}",
-        display_stats::FIRST_FRAME.load(Ordering::Relaxed) as u8,
-        display_stats::BRIGHTNESS_RESTORED.load(Ordering::Relaxed) as u8,
-        display_stats::FRAMES.load(Ordering::Relaxed),
-        display_stats::LAST_TRANSFER_MS.load(Ordering::Relaxed),
-        display_stats::FPS.load(Ordering::Relaxed),
-        display_stats::TE_SYNCS.load(Ordering::Relaxed),
-        display_stats::TE_TIMEOUTS.load(Ordering::Relaxed),
-        display_stats::TE_BYPASS.load(Ordering::Relaxed),
-        display_stats::TE_YIELDS.load(Ordering::Relaxed),
-        display_stats::TE_WAIT_AVG_US.load(Ordering::Relaxed) / 1000,
-        input_task::INPUT.len(),
-        input_task::INPUT_DROPS.load(Ordering::Relaxed),
-        ui_task::HEARTBEATS.load(Ordering::Relaxed),
-        LOG_DROPS.load(Ordering::Relaxed),
-    );
-    line.finish()
-}
-
-/// Pump queued log lines to the CDC-ACM class.
-///
-/// Waits for the host to open the port, drains the bounded channel, and sends a
-/// status line every `CONSOLE_STATUS_PERIOD` so a disconnect is detected even
-/// when no logs are produced.
-async fn console_pump<'a>(class: &mut CdcAcmClass<'a, Driver<'a>>) {
-    loop {
-        class.wait_connection().await;
-        let mut next_status = embassy_time::Instant::now() + CONSOLE_STATUS_PERIOD;
-        let status = status_record(true);
-        let _ = class
-            .write_packet(&status.bytes[..status.len as usize])
-            .await;
-
-        loop {
-            let result = match select(LOG_CHANNEL.receive(), Timer::at(next_status)).await {
-                Either::First(record) => {
-                    class
-                        .write_packet(&record.bytes[..record.len as usize])
-                        .await
-                }
-                Either::Second(()) => {
-                    next_status += CONSOLE_STATUS_PERIOD;
-                    let record = status_record(true);
-                    class
-                        .write_packet(&record.bytes[..record.len as usize])
-                        .await
-                }
-            };
-            match result {
-                Ok(()) => {}
-                Err(EndpointError::Disabled) => {
-                    // Cable removed or bus reset. Wait for the next connection;
-                    // queued records stay bounded while disconnected.
-                    break;
-                }
-                Err(EndpointError::BufferOverflow) => {
-                    // A single record exceeded the endpoint packet size. Drop it
-                    // rather than treating it as a disconnect.
-                    LOG_DROPS.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-        }
-    }
-}
+use crate::tasks::{haptic, input, plane, sensors, ui};
 
 #[unsafe(no_mangle)]
 fn custom_halt() -> ! {
@@ -254,16 +83,12 @@ fn custom_halt() -> ! {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    // Replace the default esp-println logger: its output goes to USB-Serial-JTAG,
-    // which is not wired to the USB-C connector on this board. All `log`
-    // records now enter the bounded channel drained by the USB CDC pump.
-    let _ = log::set_logger(&USB_LOGGER);
-    log::set_max_level(log::LevelFilter::Info);
+    console::install_logger();
 
     info!("==============================================");
     info!("Mosaico S31 R1 platform runtime");
     info!("scheduler: esp-rtos + Embassy (thread + interrupt executor)");
-    info!("display:   async QSPI ball plane, two-slot canvas pool");
+    info!("display:   async QSPI fox plane, two-slot canvas pool");
     info!("input:     GPIO6 IRQ + async I2C CST9220");
     info!("console:   USB-OTG HS CDC-ACM (USB-C), buffered log bridge");
     info!("==============================================");
@@ -314,20 +139,20 @@ async fn main(spawner: Spawner) {
     shared_i2c::install_async(i2c);
     info!("shared I2C0 installed (async, CST9220 @0x5A)");
 
-    let touch = touch::Cst9220Async::new_async().await;
+    let touch = touch::Cst9220::new().await;
     info!("touch available={}", touch.is_some());
 
-    let gpio6 = input_task::touch_irq_input(peripherals.GPIO6);
+    let gpio6 = input::touch_irq_input(peripherals.GPIO6);
 
     // CO5300 tearing-effect output (GPIO43). The panel's TE signal marks the
-    // start of a frame; `ball_plane_task` starts animation transfers on it so
+    // start of a frame; `plane_task` starts animation transfers on it so
     // an animated frame is not split by a scanout boundary.
     let panel_te = esp_hal::gpio::Input::new(
         peripherals.GPIO43,
         esp_hal::gpio::InputConfig::default(),
     );
 
-    let (plane_ui, plane_display) = ball_plane::new();
+    let (plane_ui, plane_display) = plane::new();
 
     // The panel upload runs on a high-priority interrupt executor so its DMA
     // chunk chain preempts the thread-mode rasterizer.
@@ -338,16 +163,16 @@ async fn main(spawner: Spawner) {
     let plane_spawner = plane_executor.start(Priority::Priority2);
     // SAFETY: single-core firmware; the interrupt executor runs on core 0,
     // the same core that created the panel driver.
-    let panel = unsafe { ball_plane::PanelOwner::new(panel) };
-    plane_spawner.spawn(ball_plane::ball_plane_task(panel, plane_display, panel_te).unwrap());
-    info!("ball_plane on interrupt executor (FROM_CPU_INTR1, priority 2)");
-    spawner.spawn(ui_task::ui_task(plane_ui).unwrap());
+    let panel = unsafe { plane::PanelOwner::new(panel) };
+    plane_spawner.spawn(plane::plane_task(panel, plane_display, panel_te).unwrap());
+    info!("plane on interrupt executor (FROM_CPU_INTR1, priority 2)");
+    spawner.spawn(ui::ui_task(plane_ui).unwrap());
     match touch {
         Some(touch) => {
-            spawner.spawn(input_task::input_task(gpio6, touch).unwrap());
-            info!("R1 tasks spawned: ball_plane, ui_task, input_task");
+            spawner.spawn(input::input_task(gpio6, touch).unwrap());
+            info!("R1 tasks spawned: plane, ui, input");
         }
-        None => info!("R1 tasks spawned: ball_plane, ui_task (input task disabled)"),
+        None => info!("R1 tasks spawned: plane, ui (input task disabled)"),
     }
 
     // v1.2 subboard bus (I2C1, SDA=GPIO0/SCL=GPIO1, internal pull-ups). It is
@@ -375,10 +200,10 @@ async fn main(spawner: Spawner) {
         peripherals.GPIO11,
         peripherals.GPIO10,
     ));
-    spawner.spawn(sensor_task::sensor_task(module).unwrap());
+    spawner.spawn(sensors::sensor_task(module).unwrap());
     info!(
         "R1.5 sensor task spawned (BMI270/BMM150 on I2C0, module EEPROM 0x51 on I2C1, queue={})",
-        sensor_task::SENSOR_QUEUE_CAPACITY
+        sensors::SENSOR_QUEUE_CAPACITY
     );
 
     // H1.3 haptics: motor on GPIO8 (BSP BSP_MOTOR_GPIO, active high). The S31
@@ -432,5 +257,5 @@ async fn main(spawner: Spawner) {
     let mut usb_device = builder.build();
 
     info!("USB-OTG HS CDC console starting (512-byte packets)");
-    join(usb_device.run(), console_pump(&mut class)).await;
+    join(usb_device.run(), console::pump(&mut class)).await;
 }

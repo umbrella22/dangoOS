@@ -1,12 +1,6 @@
-//! 共享 I2C 总线: 触摸(CST9220 @0x5A)独占本 demo 的 I2C0。
+//! 共享 I2C 总线: I2C0 挂触摸(CST9220 @0x5A)、BMI270 与 BMM150。
 //!
-//! 两个互斥的槽位让 R0 与 R1 共存:
-//! - 阻塞槽 [`install`]/[`with_bus`]: 已验证的 R0 `main` 使用 `I2c<Blocking>`;
-//! - 异步槽 [`install_async`]/[`with_bus_async`]: R1 `input_task` 使用
-//!   `I2c<Async>`，由 embassy 异步互斥锁保护。
-//!
-//! 物理 I2C0 是独占单例，只能安装到其中一个槽位，因此运行时不会同时存在
-//! 两条总线。R0 `main` 保持阻塞槽; R1.3 集成后改用异步槽。
+//! 总线装在一个异步槽里（[`install_async`]），由 embassy 异步互斥锁保护。
 //!
 //! 异步事务助手 [`write_async`]/[`read_async`]/[`write_read_async`] 会在
 //! 整笔事务期间持有互斥锁（CST9220 的一次写或读即一次事务），并用
@@ -20,28 +14,22 @@
 
 use core::cell::RefCell;
 
-use critical_section::Mutex as CsMutex;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex as AsyncMutex};
 use embassy_time::{with_timeout, Duration};
 use esp_hal::{
     i2c::master::{Config as I2cConfig, Error as I2cError, I2c},
     time::Rate,
-    Async, Blocking,
+    Async,
 };
 
 /// R1 异步总线类型（接口冻结: `SharedI2c = I2c<'static, Async>`）。
 pub type SharedI2c = I2c<'static, Async>;
-/// R0 阻塞总线类型，保持已验证的 `main` 可编译。
-pub type BlockingI2c = I2c<'static, Blocking>;
 
 /// Main I2C0 frequency installed by `main` (CST9220/BMI270/BMM150).
 pub const MAIN_BUS_FREQUENCY_KHZ: u32 = 400;
 
 /// 单次异步 I2C 事务的软件超时（接口冻结要求 100 ms）。
 pub const TRANSACTION_TIMEOUT: Duration = Duration::from_millis(100);
-
-/// R0 阻塞槽位（单线程 critical-section 互斥，保留原语义）。
-static SHARED_I2C: CsMutex<RefCell<Option<BlockingI2c>>> = CsMutex::new(RefCell::new(None));
 
 /// 异步槽位的存储单元。
 ///
@@ -67,25 +55,9 @@ static SHARED_I2C_ASYNC: AsyncMutex<CriticalSectionRawMutex, AsyncSlot> =
 static SHARED_I2C_SUBBOARD_ASYNC: AsyncMutex<CriticalSectionRawMutex, AsyncSlot> =
     AsyncMutex::new(AsyncSlot(RefCell::new(None)));
 
-/// 把初始化好的阻塞模式 I2C 总线注册为共享（R0 路径）。
-pub fn install(i2c: BlockingI2c) {
-    critical_section::with(|cs| {
-        SHARED_I2C.borrow_ref_mut(cs).replace(i2c);
-    });
-}
-
-/// 独占访问共享阻塞总线执行一个操作(锁内完成)。
-pub fn with_bus<R>(f: impl FnOnce(&mut BlockingI2c) -> R) -> Option<R> {
-    critical_section::with(|cs| {
-        let mut borrow = SHARED_I2C.borrow_ref_mut(cs);
-        borrow.as_mut().map(f)
-    })
-}
-
 /// 把初始化好的异步模式 I2C 总线注册为共享（R1 路径）。
 ///
-/// 必须在任何异步事务开始前调用一次。与 [`install`] 互斥: 物理 I2C0 只能
-/// 存在于一个槽位。
+/// 必须在任何异步事务开始前调用一次。
 pub fn install_async(i2c: SharedI2c) {
     install_slot(&SHARED_I2C_ASYNC, i2c, "shared I2C async slot");
 }

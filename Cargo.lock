@@ -1171,10 +1171,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
-name = "grok-ball"
-version = "0.1.0"
-
-[[package]]
 name = "hash32"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1450,7 +1446,6 @@ dependencies = [
  "esp-hal",
  "esp-println",
  "esp-rtos",
- "grok-ball",
  "log",
  "lvgl",
  "lvgl-ui",

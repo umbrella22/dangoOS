@@ -1,18 +1,14 @@
 //! 480×480 CO5300 QSPI AMOLED 驱动（ESP-Mosaico v1.2）。
 //!
-//! 保留两条已验证的传输路径:
-//!
-//! - [`Display::write_chunk`]（`Blocking`）: R0 色条与所有仍有同步需求的调用；
-//! - [`Display::write_chunk_async`]（`Async`）: R1 展示任务使用的 DMA 异步路径。
-//!
-//! 两条路径共用同一个 CO5300 初始化序列、CASET/RASET 窗口、GRAM 写操作码
-//! `0x32` 与四线数据相位。RGB565 帧缓冲和脏区由调用方独占管理；每次
-//! `write_chunk*()` 从借用的整屏行主序帧缓冲打包一个窗口。
+//! 初始化（厂商序列、清黑屏）走阻塞 SPI，命令短且要等 SLPOUT/DISPON 的毫秒延时；
+//! 之后 [`Display::into_async`] 切到 DMA 异步，运行期只有一条上传路径：
+//! [`Display::write_canvas_async`]，每次把画布里的一个 ≤32 行窗口打包进内部暂存，
+//! 设置 CASET/RASET，再用 GRAM 写操作码 `0x32` + 四线数据相位发出。
 //!
 //! 蓝本: 官方 BSP `esp-mosaico/esp-mosaico-bsp` onboard/display.c +
 //! `espressif/esp_lcd_co5300` v2.2.0（线序: 寄存器单线 0x02, GRAM 四线 0x32）。
 
-use crate::{board, framebuffer::DirtyRect};
+use crate::{board, drivers::geometry::DirtyRect};
 use core::{
     alloc::{GlobalAlloc, Layout},
     ptr::NonNull,
@@ -40,7 +36,7 @@ const CHUNK_BYTES: usize = MAX_CHUNK_ROWS as usize * ROW_BYTES;
 ///
 /// The SPI function clock on S31 is 160 MHz (BBPLL/3), so 80 MHz is a clean
 /// divide-by-two. The CO5300 QSPI write path is specified for 80 MHz; the
-/// previous 40 MHz setting left a 12 ms ball frame competing with a 50 ms UI
+/// previous 40 MHz setting left a 12 ms frame competing with a 50 ms UI
 /// cadence, and a drag frame grew to ~49 ms when the UI raster interleaved.
 const SPI_CLOCK_HZ: u32 = 80_000_000;
 
@@ -115,98 +111,24 @@ impl Drop for InternalStaging {
 
 /// CO5300 panel driver.
 ///
-/// The default type parameter keeps the validated R0 source
-/// (`display::Display` / [`init`] / [`Display::write_chunk`]) unchanged while
-/// allowing [`init_async`] to return the DMA-async variant.
+/// [`init`] returns the blocking variant used for bring-up; [`init_async`]
+/// switches it to the DMA-async variant the plane task uses.
 pub struct Display<Dm: DriverMode = Blocking> {
     spi: SpiDma<'static, Dm>,
     staging: InternalStaging,
-    error_count: usize,
     _rst: Output<'static>,
 }
 
-impl<Dm: DriverMode> Display<Dm> {
-    /// 累计失败的 SPI 写事务数（包括窗口、GRAM 和亮度），饱和递增。
-    /// 每个失败的传输阶段仅计一次；不逐块打印。
-    pub fn error_count(&self) -> usize {
-        self.error_count
-    }
-
-    fn record_transfer_result(
-        &mut self,
-        result: Result<(), esp_hal::spi::Error>,
-    ) -> Result<(), esp_hal::spi::Error> {
-        if result.is_err() {
-            self.error_count = self.error_count.saturating_add(1);
-        }
-        result
-    }
-}
-
 impl Display<Blocking> {
-    /// 把一个含端点的窗口写入 GRAM；不拆块，不保留 framebuffer 引用。
-    ///
-    /// framebuffer 是整屏行主序的原生 RGB565 u16，行跨度为 LCD_WIDTH，
-    /// 至少包含 LCD_WIDTH * LCD_HEIGHT 个像素。CPU 将窗口逐行打包为大端。
-    /// 成功调用依次发送一次 CASET、RASET 和四线 RAMWR，返回前等待完成。
-    /// 不要求四像素对齐；脏区扩边/对齐、重试及统计输出由调用方负责。
-    ///
-    /// # Panics
-    ///
-    /// 窗口倒置、超出面板、超过 MAX_CHUNK_ROWS 或帧缓冲太短时，
-    /// 在任何总线 I/O 前断言失败。出错可能已修改窗口或部分 GRAM；
-    /// 调用方应保留整个脏块重试。
-    pub fn write_chunk(
-        &mut self,
-        x1: u16,
-        y1: u16,
-        x2: u16,
-        y2: u16,
-        framebuffer: &[u16],
-    ) -> Result<(), esp_hal::spi::Error> {
-        // Validate every programmer precondition and pack before touching SPI.
-        let byte_count = packing::pack_rgb565(
-            framebuffer,
-            (board::LCD_WIDTH, board::LCD_HEIGHT),
-            (x1, y1, x2, y2),
-            MAX_CHUNK_ROWS,
-            self.staging.as_mut_slice(),
-        );
-        self.write_reg(
-            CMD_CASET,
-            &[(x1 >> 8) as u8, x1 as u8, (x2 >> 8) as u8, x2 as u8],
-        )?;
-        self.write_reg(
-            CMD_RASET,
-            &[(y1 >> 8) as u8, y1 as u8, (y2 >> 8) as u8, y2 as u8],
-        )?;
-        let result = self.spi.half_duplex_write(
-            DataMode::Quad,
-            Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
-            Address::_24Bit(GRAM_ADDR, DataMode::Single),
-            0,
-            &self.staging.as_mut_slice()[..byte_count],
-        );
-        self.record_transfer_result(result)
-    }
-
     /// 寄存器写: 单线 0x02 → 单线地址 reg<<8 → 单线参数。
     fn write_reg(&mut self, reg: u8, params: &[u8]) -> Result<(), esp_hal::spi::Error> {
-        let result = self.spi.half_duplex_write(
+        self.spi.half_duplex_write(
             DataMode::Single,
             Command::_8Bit(OP_WRITE_REG, DataMode::Single),
             Address::_24Bit((reg as u32) << 8, DataMode::Single),
             0,
             params,
-        );
-        self.record_transfer_result(result)
-    }
-
-    /// 亮度百分比；初始化必须已写 0x53=0x20 打开 BCTRL。
-    #[allow(dead_code)]
-    pub fn set_brightness(&mut self, percent: u8) -> Result<(), esp_hal::spi::Error> {
-        let hw = (percent.min(100) as u32 * 255 / 100) as u8;
-        self.write_reg(0x51, &[hw])
+        )
     }
 
     /// Fill the whole panel with black.
@@ -236,14 +158,13 @@ impl Display<Blocking> {
             self.write_reg(CMD_RASET, &[(y >> 8) as u8, y as u8, (y_end >> 8) as u8, y_end as u8])?;
             let rows = (y_end - y + 1) as usize;
             let bytes = rows * board::LCD_WIDTH as usize * 2;
-            let result = self.spi.half_duplex_write(
+            self.spi.half_duplex_write(
                 DataMode::Quad,
                 Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
                 Address::_24Bit(GRAM_ADDR, DataMode::Single),
                 0,
                 &self.staging.as_mut_slice()[..bytes],
-            );
-            self.record_transfer_result(result)?;
+            )?;
             y = y_end + 1;
         }
         log::info!("CO5300 GRAM cleared to black ({} bands)", board::LCD_HEIGHT / BAND_ROWS);
@@ -252,95 +173,23 @@ impl Display<Blocking> {
 
     /// 把已初始化、已验证的面板驱动切换为 DMA 异步模式。
     ///
-    /// 面板状态、暂存缓冲和错误计数保持不变；只把 `SpiDma` 换成
+    /// 面板状态和暂存缓冲保持不变；只把 `SpiDma` 换成
     /// `SpiDma<Async>` 并安装异步中断处理程序。
     pub fn into_async(self) -> Display<Async> {
         Display {
             spi: self.spi.into_async(),
             staging: self.staging,
-            error_count: self.error_count,
             _rst: self._rst,
         }
     }
 }
 
 impl Display<Async> {
-    /// 异步写入一个含端点的窗口；不拆块，不保留 framebuffer 引用。
-    ///
-    /// 与 [`Display::write_chunk`] 使用完全相同的 CO5300 命令序列，但
-    /// CASET、RASET 和四线 RAMWR 都通过 `SpiDma<Async>` 发起，DMA 传输
-    /// 期间 future 让出执行器。x 窗口在打包前经 [`DirtyRect::align_x4`]
-    /// 向两侧对齐并限制在面板内；y 不变。
-    ///
-    /// framebuffer 是整屏行主序原生 RGB565，行跨度 LCD_WIDTH，至少包含
-    /// LCD_WIDTH * LCD_HEIGHT 个像素。`area` 的高度必须 ≤
-    /// [`MAX_CHUNK_ROWS`]，更高的脏区由调用方按行拆分。
-    ///
-    /// # Panics
-    ///
-    /// 非空窗口越出面板、超过 MAX_CHUNK_ROWS 或帧缓冲太短时，在任何总线
-    /// I/O 前断言失败。I/O 出错时窗口可能已被部分改写；调用方应保留整个
-    /// 脏块重试。
-    pub async fn write_chunk_async(
-        &mut self,
-        area: DirtyRect,
-        frame: &[u16],
-    ) -> Result<(), esp_hal::spi::Error> {
-        if area.is_empty() {
-            return Ok(());
-        }
-        assert!(area.is_valid(), "async chunk outside panel: {area:?}");
-        let area = area.align_x4();
-        assert!(area.is_valid(), "aligned chunk outside panel: {area:?}");
-
-        // Validate every programmer precondition and pack before touching SPI.
-        let byte_count = packing::pack_rgb565(
-            frame,
-            (board::LCD_WIDTH, board::LCD_HEIGHT),
-            (area.x0, area.y0, area.x1, area.y1),
-            MAX_CHUNK_ROWS,
-            self.staging.as_mut_slice(),
-        );
-        self.write_reg_async(
-            CMD_CASET,
-            &[
-                (area.x0 >> 8) as u8,
-                area.x0 as u8,
-                (area.x1 >> 8) as u8,
-                area.x1 as u8,
-            ],
-        )
-        .await?;
-        self.write_reg_async(
-            CMD_RASET,
-            &[
-                (area.y0 >> 8) as u8,
-                area.y0 as u8,
-                (area.y1 >> 8) as u8,
-                area.y1 as u8,
-            ],
-        )
-        .await?;
-
-        let result = self
-            .spi
-            .half_duplex_write_async(
-                DataMode::Quad,
-                Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
-                Address::_24Bit(GRAM_ADDR, DataMode::Single),
-                0,
-                &self.staging.as_mut_slice()[..byte_count],
-            )
-            .await;
-        self.record_transfer_result(result)
-    }
-
     /// Upload one window from a tightly packed canvas.
     ///
-    /// The dedicated ball plane keeps its own character-sized buffer, so the source
-    /// stride is the canvas width, not the panel width. `dst` is the panel
-    /// window and must be 4-pixel aligned in x with a 4-multiple width (the
-    /// plane quantizes the drag offset to 4 px). `src` is the matching window
+    /// The canvas is smaller than the panel, so the source stride is the
+    /// canvas width, not the panel width. `dst` is the panel window and must
+    /// be 4-pixel aligned in x with a 4-multiple width. `src` is the matching window
     /// inside the canvas. The height must fit [`MAX_CHUNK_ROWS`].
     pub async fn write_canvas_async(
         &mut self,
@@ -353,13 +202,9 @@ impl Display<Async> {
         self.send_prepared(dst, byte_count).await
     }
 
-    /// Pack one canvas window into the internal staging buffer.
-    ///
-    /// The plane calls this **before** waiting for TE for the first chunk, so
-    /// the first QSPI byte leaves immediately at the frame boundary; a late
-    /// pack is what let the scanout run ahead of the canvas top on frames near
-    /// the panel edge. Returns the number of staged bytes.
-    pub fn prepare_canvas(
+    /// Pack one canvas window into the internal staging buffer and return the
+    /// number of staged bytes.
+    fn prepare_canvas(
         &mut self,
         dst: DirtyRect,
         src: DirtyRect,
@@ -396,7 +241,7 @@ impl Display<Async> {
     }
 
     /// Send a window previously packed by [`Display::prepare_canvas`].
-    pub async fn send_prepared(
+    async fn send_prepared(
         &mut self,
         dst: DirtyRect,
         byte_count: usize,
@@ -426,7 +271,7 @@ impl Display<Async> {
             ],
         )
         .await?;
-        let result = self
+        self
             .spi
             .half_duplex_write_async(
                 DataMode::Quad,
@@ -435,71 +280,12 @@ impl Display<Async> {
                 0,
                 &self.staging.as_mut_slice()[..byte_count],
             )
-            .await;
-        self.record_transfer_result(result)
-    }
-
-    /// Fill a panel window with one RGB565 color.
-    ///
-    /// Used by the ball plane to erase the vacated canvas bands. The window
-    /// must be 4-pixel aligned in x with a 4-multiple width and fit
-    /// [`MAX_CHUNK_ROWS`].
-    pub async fn write_solid_async(
-        &mut self,
-        area: DirtyRect,
-        color: u16,
-    ) -> Result<(), esp_hal::spi::Error> {
-        if area.is_empty() {
-            return Ok(());
-        }
-        assert!(area.is_valid(), "solid window outside panel: {area:?}");
-        // A narrow edge strip (4 px wide) can span the whole canvas height
-        // within the staging buffer; the byte budget is the real limit.
-        assert_eq!(area.x0 % 4, 0, "solid window x must be 4-aligned");
-        assert_eq!(area.width() % 4, 0, "solid window width must be 4-multiple");
-        let byte_count = area.width() * area.height() * 2;
-        assert!(byte_count <= CHUNK_BYTES, "solid window exceeds staging");
-        let [hi, lo] = color.to_be_bytes();
-        for pixel in self.staging.as_mut_slice()[..byte_count].chunks_exact_mut(2) {
-            pixel[0] = hi;
-            pixel[1] = lo;
-        }
-        self.write_reg_async(
-            CMD_CASET,
-            &[
-                (area.x0 >> 8) as u8,
-                area.x0 as u8,
-                (area.x1 >> 8) as u8,
-                area.x1 as u8,
-            ],
-        )
-        .await?;
-        self.write_reg_async(
-            CMD_RASET,
-            &[
-                (area.y0 >> 8) as u8,
-                area.y0 as u8,
-                (area.y1 >> 8) as u8,
-                area.y1 as u8,
-            ],
-        )
-        .await?;
-        let result = self
-            .spi
-            .half_duplex_write_async(
-                DataMode::Quad,
-                Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
-                Address::_24Bit(GRAM_ADDR, DataMode::Single),
-                0,
-                &self.staging.as_mut_slice()[..byte_count],
-            )
-            .await;
-        self.record_transfer_result(result)
+            .await
     }
 
     /// 异步寄存器写: 单线 0x02 → 单线地址 reg<<8 → 单线参数。
     async fn write_reg_async(&mut self, reg: u8, params: &[u8]) -> Result<(), esp_hal::spi::Error> {
-        let result = self
+        self
             .spi
             .half_duplex_write_async(
                 DataMode::Single,
@@ -508,12 +294,10 @@ impl Display<Async> {
                 0,
                 params,
             )
-            .await;
-        self.record_transfer_result(result)
+            .await
     }
 
-    /// 亮度百分比（异步版本）；语义同 [`Display::set_brightness`]。
-    #[allow(dead_code)]
+    /// 亮度百分比；初始化必须已写 0x53=0x20 打开 BCTRL。
     pub async fn set_brightness_async(&mut self, percent: u8) -> Result<(), esp_hal::spi::Error> {
         let hw = (percent.min(100) as u32 * 255 / 100) as u8;
         self.write_reg_async(0x51, &[hw]).await
@@ -587,7 +371,6 @@ pub fn init(
     let mut display: Display<Blocking> = Display {
         spi,
         staging: InternalStaging::new(),
-        error_count: 0,
         _rst: rst,
     };
 

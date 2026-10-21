@@ -1,9 +1,7 @@
 [workspace]
-# grok-ball is the shared host-testable core; mosaico-s31 is the ESP32-S31
-# firmware and host preview crate. The pre-grok-ball prototype is archived
-# under archive/crates-pre-grok-ball-20261020/ (not a member).
-members = ["crates/grok-ball", "crates/mosaico-s31"]
-default-members = ["crates/grok-ball"]
+# One crate: the ESP32-S31 firmware (bin) plus its host-testable library.
+# The earlier vector "grok-ball" core is in git history (before the fox).
+members = ["crates/mosaico-s31"]
 resolver = "2"
 
 [workspace.package]
