@@ -4,7 +4,7 @@
 use crate::behavior::affect::{
     AffectEngine, EventKind, EventSource, HapticPattern, ReactionReason, SensorEvent,
     DAWN_CURIOUS_MS, LIGHT_BRIGHT_MS, LIGHT_COVER_MAX_MS, LIGHT_DARK_MS, LIGHT_FAST_WINDOW_MS,
-    MIN_DWELL_MS, PIR_CURIOUS_MS, PIR_SATISFIED_MS,
+    MIN_DWELL_MS, PIR_CURIOUS_MS, PIR_SATISFIED_MS, PIR_VISIT_GAP_MS,
 };
 use crate::behavior::Expression;
 
@@ -234,6 +234,40 @@ fn pir_presence_rising_sustained_and_absence() {
     let asleep = gone + 200 + 60_000;
     assert_eq!(engine.tick(asleep - 1).state.expression, Expression::Idle);
     assert_eq!(engine.tick(asleep).state.expression, Expression::Sleep);
+}
+
+#[test]
+fn a_pulsing_pir_greets_once_per_visit() {
+    let mut engine = AffectEngine::new(0);
+    let mut curious = 0;
+    let mut last = Expression::Idle;
+    let mut satisfied = false;
+
+    // The module pulses: 2 s high, 3 s low, for a minute.
+    let mut at = 0u64;
+    while at < 60_000 {
+        let high = at % 5_000 < 2_000;
+        if at % 1_000 == 0 {
+            engine.on_event(presence(at, high));
+        }
+        let expression = engine.tick(at).state.expression;
+        if expression == Expression::Curious && last != Expression::Curious {
+            curious += 1;
+        }
+        satisfied |= expression == Expression::Satisfied;
+        last = expression;
+        at += 50;
+    }
+    assert_eq!(curious, 1, "one greeting for the whole visit");
+    assert!(satisfied, "a long pulsing visit still counts as sustained");
+
+    // A long quiet gap ends the visit; the next arrival greets again.
+    engine.on_event(presence(at, false));
+    at += PIR_VISIT_GAP_MS + 1_000;
+    engine.tick(at);
+    engine.on_event(presence(at, true));
+    at += 200;
+    assert_eq!(engine.tick(at).state.expression, Expression::Curious);
 }
 
 #[test]

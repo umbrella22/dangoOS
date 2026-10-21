@@ -3,7 +3,7 @@
 //! ```text
 //! startup:          raw I2C scan of I2C0 + I2C1 -> bus/address map
 //! 20 ms Ticker
-//!   ├─ every tick:    BMI270 status+accel+gyro burst -> Accel/Gyro events
+//!   ├─ every tick:    BMI270 FIFO drain (1-16 frames) -> Accel/Gyro events
 //!   ├─ every 2 ticks: BMM150 data-ready read         -> magnetic edges
 //!   ├─ every 2 ticks: Interaction LDR/PIR/KEY_L/KEY_R -> light/presence/key edges
 //!   ├─ every 5 s:     BQ27220 state of charge        -> BatteryLevel event
@@ -48,7 +48,9 @@ use log::{info, warn};
 use mosaico_s31::behavior::affect::{EventKind, EventSource, SensorEvent};
 
 use crate::drivers::battery::Bq27220;
-use crate::drivers::imu::{self, Bmi270, Bmm150, MagSample, MagneticClassifier, MagneticEvent};
+use crate::drivers::imu::{
+    self, Bmi270, Bmm150, ImuSample, MagSample, MagneticClassifier, MagneticEvent,
+};
 use crate::drivers::subboard::{self, Slot, Subboard};
 
 /// `SensorEvent` queue depth (RFC 0005 section 3.5).
@@ -68,6 +70,8 @@ pub static SENSOR_EDGE_DROPS: AtomicU32 = AtomicU32::new(0);
 
 /// 50 Hz base tick.
 const TICK_MS: u64 = 20;
+/// BMI270 output period (50 Hz ODR), used to back-date FIFO samples.
+const IMU_SAMPLE_MS: u64 = 20;
 /// BMM150 / module-input polls every second tick (25 Hz).
 const SLOW_DIVIDER: u32 = 2;
 /// Battery state-of-charge poll period. The gauge integrates over seconds, so
@@ -166,6 +170,9 @@ pub async fn sensor_task(mut subboard: Subboard) {
     let mut tick_late_active = false;
     let mut imu_read_us = 0u64;
     let mut imu_read_max_us = 0u64;
+    let mut imu_batch = [ImuSample::default(); imu::FIFO_MAX_FRAMES];
+    let mut imu_batch_max = 0usize;
+    let mut last_imu_at = 0u64;
 
     loop {
         ticker.next().await;
@@ -189,47 +196,58 @@ pub async fn sensor_task(mut subboard: Subboard) {
         next_tick_us = next_tick_us.saturating_add(tick_period_us);
         tick = tick.wrapping_add(1);
 
-        // ---- IMU: one 21-byte burst at 50 Hz ----
+        // ---- IMU: drain the BMI270 FIFO (every sample at the sensor ODR) ----
         if let Some(device) = &mut imu {
             let read_started_us = now_us();
-            let result = device.read().await;
+            let result = device.read_all(&mut imu_batch).await;
             imu_read_us = now_us().saturating_sub(read_started_us);
             if imu_read_us > imu_read_max_us {
                 imu_read_max_us = imu_read_us;
             }
             match result {
-                Ok(Some(sample)) => {
-                    let at = now_ms();
-                    if let Some([ax_mg, ay_mg, az_mg]) = sample.accel_mg {
-                        // A zero vector means the first conversion has not
-                        // landed; it would look like a 1 g dynamic shock.
-                        if ax_mg != 0 || ay_mg != 0 || az_mg != 0 {
+                Ok(0) => {
+                    imu_skips = imu_skips.saturating_add(1);
+                }
+                Ok(count) => {
+                    // The batch is oldest first and one ODR period apart.
+                    // Back-date each sample, but never before the previous
+                    // batch, so timestamps stay monotonic for the engine.
+                    let now = now_ms();
+                    for (index, sample) in imu_batch[..count].iter().enumerate() {
+                        let age = (count - 1 - index) as u64 * IMU_SAMPLE_MS;
+                        let at = now.saturating_sub(age).max(last_imu_at);
+                        last_imu_at = at;
+                        if let Some([ax_mg, ay_mg, az_mg]) = sample.accel_mg {
+                            // A zero vector means the first conversion has not
+                            // landed; it would look like a 1 g dynamic shock.
+                            if ax_mg != 0 || ay_mg != 0 || az_mg != 0 {
+                                publish(SensorEvent {
+                                    at_ms: at,
+                                    source: EventSource::Imu,
+                                    kind: EventKind::Accel {
+                                        ax_mg,
+                                        ay_mg,
+                                        az_mg,
+                                    },
+                                });
+                                imu_samples = imu_samples.saturating_add(1);
+                            }
+                        }
+                        if let Some([gx_dps, gy_dps, gz_dps]) = sample.gyro_dps {
                             publish(SensorEvent {
                                 at_ms: at,
                                 source: EventSource::Imu,
-                                kind: EventKind::Accel {
-                                    ax_mg,
-                                    ay_mg,
-                                    az_mg,
+                                kind: EventKind::Gyro {
+                                    gx_dps,
+                                    gy_dps,
+                                    gz_dps,
                                 },
                             });
-                            imu_samples = imu_samples.saturating_add(1);
                         }
                     }
-                    if let Some([gx_dps, gy_dps, gz_dps]) = sample.gyro_dps {
-                        publish(SensorEvent {
-                            at_ms: at,
-                            source: EventSource::Imu,
-                            kind: EventKind::Gyro {
-                                gx_dps,
-                                gy_dps,
-                                gz_dps,
-                            },
-                        });
+                    if count > imu_batch_max {
+                        imu_batch_max = count;
                     }
-                }
-                Ok(None) => {
-                    imu_skips = imu_skips.saturating_add(1);
                 }
                 Err(_) => {
                     imu_errors = imu_errors.saturating_add(1);
@@ -405,8 +423,9 @@ pub async fn sensor_task(mut subboard: Subboard) {
             // IMU timing is a separate line so the main stats line stays
             // below the 158-byte console record limit.
             info!(
-                "sensor timing: imu_read={imu_read_us}us imax={imu_read_max_us}us late={late_us}us lmax={late_max_us}us miss={missed_ticks}"
+                "sensor timing: imu_read={imu_read_us}us imax={imu_read_max_us}us late={late_us}us lmax={late_max_us}us miss={missed_ticks} batch={imu_batch_max}"
             );
+            imu_batch_max = 0;
 
             // Battery is on its own line: the gauge poll is 5 s and carries
             // voltage/current/temperature, which do not belong on the 1 s

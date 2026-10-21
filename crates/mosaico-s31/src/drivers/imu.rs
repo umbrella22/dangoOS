@@ -87,6 +87,29 @@ const IMU_BURST_LEN: usize = 21;
 const IMU_STATUS_ACC_READY: u8 = 0x80;
 const IMU_STATUS_GYR_READY: u8 = 0x40;
 
+// ---- BMI270 FIFO (datasheet 4.7, registers 0x24-0x26 and 0x48-0x49) ----
+//
+// Polling the data registers loses a sample whenever the cooperative executor
+// wakes the sensor task more than one ODR period late (a long UI raster), and
+// the sensor's own clock drifts against our 20 ms ticker. The FIFO buffers
+// every sample, so the stream is exactly the sensor ODR regardless of when the
+// task gets to run.
+const REG_FIFO_LENGTH_0: u8 = 0x24;
+const REG_FIFO_DATA: u8 = 0x26;
+const REG_FIFO_CONFIG_0: u8 = 0x48;
+const REG_FIFO_CONFIG_1: u8 = 0x49;
+/// Stream mode: overwrite the oldest frame when full.
+const FIFO_CONFIG_0_STREAM: u8 = 0x00;
+/// gyr_en | acc_en, headerless: every frame is gyro (6 B) then accel (6 B).
+const FIFO_CONFIG_1_ACC_GYR_HEADERLESS: u8 = 0xC0;
+const CMD_FIFO_FLUSH: u8 = 0xB0;
+const FIFO_FRAME_LEN: usize = 12;
+/// Most frames drained per call (320 ms at 50 Hz). A larger backlog drains on
+/// the following ticks.
+pub const FIFO_MAX_FRAMES: usize = 16;
+/// The BMI270 FIFO is 2 KiB; anything larger is a bad length read.
+const FIFO_CAPACITY: usize = 2048;
+
 // ---- BMM150 registers (Bosch BMM150 datasheet / SensorAPI) ----
 const BMM_CHIP_ID: u8 = 0x40;
 const BMM_DATA_X_LSB: u8 = 0x42;
@@ -429,9 +452,27 @@ pub struct ImuSample {
     pub gyro_dps: Option<[i16; 3]>,
 }
 
+/// One headerless FIFO frame: gyro XYZ then accel XYZ, little endian.
+fn parse_fifo_frame(frame: &[u8]) -> ImuSample {
+    let word = |index: usize| i16::from_le_bytes([frame[index], frame[index + 1]]);
+    ImuSample {
+        gyro_dps: Some([
+            scale_i16(word(0), 2000, 32768),
+            scale_i16(word(2), 2000, 32768),
+            scale_i16(word(4), 2000, 32768),
+        ]),
+        accel_mg: Some([
+            scale_i16(word(6), 1000, 16384),
+            scale_i16(word(8), 1000, 16384),
+            scale_i16(word(10), 1000, 16384),
+        ]),
+    }
+}
+
 /// The BMI270 driver.
 pub struct Bmi270 {
     addr: u8,
+    fifo: bool,
 }
 
 impl Bmi270 {
@@ -444,7 +485,7 @@ impl Bmi270 {
             match shared_i2c::read_regs_async(addr, REG_CHIP_ID, &mut id).await {
                 Some(Ok(())) if id[0] == BMI270_CHIP_ID => {
                     info!("BMI270 found at 0x{addr:02X} (chip id 0x{:02X})", id[0]);
-                    return Some(Self { addr });
+                    return Some(Self { addr, fifo: false });
                 }
                 Some(Ok(())) => {
                     info!(
@@ -501,11 +542,65 @@ impl Bmi270 {
         // datasheet start-up time before the first forced sample is requested.
         Timer::after(Duration::from_millis(100)).await;
 
+        self.fifo = self.enable_fifo().await.is_ok();
         info!(
-            "BMI270 ready @0x{:02X}: accel ±2 g 50 Hz, gyro ±2000 dps 50 Hz",
-            self.addr
+            "BMI270 ready @0x{:02X}: accel ±2 g 50 Hz, gyro ±2000 dps 50 Hz, {}",
+            self.addr,
+            if self.fifo { "FIFO" } else { "register poll" }
         );
         Ok(())
+    }
+
+    async fn enable_fifo(&mut self) -> Result<(), &'static str> {
+        self.write_reg(REG_FIFO_CONFIG_0, FIFO_CONFIG_0_STREAM)
+            .await?;
+        self.write_reg(REG_FIFO_CONFIG_1, FIFO_CONFIG_1_ACC_GYR_HEADERLESS)
+            .await?;
+        let mut check = [0u8; 1];
+        self.read_regs(REG_FIFO_CONFIG_1, &mut check).await?;
+        if check[0] & 0xD0 != FIFO_CONFIG_1_ACC_GYR_HEADERLESS {
+            return Err("BMI270 FIFO config did not stick");
+        }
+        self.write_reg(REG_CMD, CMD_FIFO_FLUSH).await
+    }
+
+    /// Drain up to [`FIFO_MAX_FRAMES`] buffered samples, oldest first.
+    ///
+    /// Falls back to one register burst when the FIFO is not enabled. Returns
+    /// the number of samples written to `out`; `Ok(0)` means nothing new.
+    pub async fn read_all(
+        &mut self,
+        out: &mut [ImuSample; FIFO_MAX_FRAMES],
+    ) -> Result<usize, &'static str> {
+        if !self.fifo {
+            return match self.read().await? {
+                Some(sample) => {
+                    out[0] = sample;
+                    Ok(1)
+                }
+                None => Ok(0),
+            };
+        }
+
+        let mut length = [0u8; 2];
+        self.read_regs(REG_FIFO_LENGTH_0, &mut length).await?;
+        let bytes = usize::from(length[0]) | (usize::from(length[1] & 0x3F) << 8);
+        if bytes > FIFO_CAPACITY {
+            self.write_reg(REG_CMD, CMD_FIFO_FLUSH).await?;
+            return Err("BMI270 FIFO length out of range");
+        }
+        let frames = (bytes / FIFO_FRAME_LEN).min(FIFO_MAX_FRAMES);
+        if frames == 0 {
+            return Ok(0);
+        }
+
+        let mut data = [0u8; FIFO_FRAME_LEN * FIFO_MAX_FRAMES];
+        let data = &mut data[..frames * FIFO_FRAME_LEN];
+        self.read_regs(REG_FIFO_DATA, data).await?;
+        for (slot, frame) in out.iter_mut().zip(data.chunks_exact(FIFO_FRAME_LEN)) {
+            *slot = parse_fifo_frame(frame);
+        }
+        Ok(frames)
     }
 
     /// Read status + accel + gyro in one burst.

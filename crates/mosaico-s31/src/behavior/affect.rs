@@ -45,6 +45,7 @@
 //! | Night | level `< 10` for `60 s`; wake at level `>= 20` (chosen wake level) |
 //! | PIR debounce | `200 ms` (plan) |
 //! | PIR sustained / cooldown | `10 s` / `30 s` (plan) |
+//! | PIR visit | lows shorter than `30 s` join one visit: one Curious greeting per visit (the sensor pulses every few seconds) |
 //! | PIR absence | `60 s` → Sleep (plan) |
 //! | BMM150 confidence | `>= 50` accepted (plan `>= 0.5`) |
 //! | Haptic rate limit | one pattern per `150 ms` (plan) |
@@ -345,6 +346,10 @@ pub(crate) const PIR_SATISFIED_MS: u64 = 3_000;
 const PIR_SATISFIED_COOLDOWN_MS: u64 = 30_000;
 const PIR_ABSENCE_SLEEP_MS: u64 = 60_000;
 pub(crate) const PIR_CURIOUS_MS: u64 = 4_000;
+/// A PIR low shorter than this is the same visit. The module pulses high for
+/// a couple of seconds and re-triggers while someone moves nearby, so without
+/// this every pulse would greet again.
+pub(crate) const PIR_VISIT_GAP_MS: u64 = 30_000;
 
 const BMM_APPROACH_MS: u64 = 2_000;
 const BMM_CONTACT_MS: u64 = 1_500;
@@ -552,6 +557,7 @@ pub struct AffectEngine {
     pir_sustained_fired: bool,
     pir_last_satisfied_ms: Option<u64>,
     pir_absence_since: Option<u64>,
+    pir_rise_ms: u64,
     magnetic_contacted: bool,
     module_right_present: bool,
     module_left_present: bool,
@@ -599,6 +605,7 @@ impl AffectEngine {
             pir_sustained_fired: false,
             pir_last_satisfied_ms: None,
             pir_absence_since: None,
+            pir_rise_ms: 0,
             magnetic_contacted: false,
             module_right_present: false,
             module_left_present: false,
@@ -895,30 +902,38 @@ impl AffectEngine {
                 let rising = self.pir_raw;
                 self.pir_debounced = rising;
                 if rising {
-                    self.pir_presence_since = Some(confirm_at);
-                    self.pir_sustained_fired = false;
+                    let same_visit = match self.pir_absence_since {
+                        Some(fell) => confirm_at < fell.saturating_add(PIR_VISIT_GAP_MS),
+                        None => self.pir_presence_since.is_some(),
+                    };
+                    self.pir_rise_ms = confirm_at;
                     self.pir_absence_since = None;
                     self.wake(confirm_at);
-                    self.fallback_since_ms = confirm_at;
-                    let _ = self.try_start_reaction(
-                        Expression::Curious,
-                        ReactionReason::Presence,
-                        PRIO_AMBIENT,
-                        confirm_at,
-                        PIR_CURIOUS_MS,
-                        None,
-                    );
+                    if !same_visit {
+                        self.pir_presence_since = Some(confirm_at);
+                        self.pir_sustained_fired = false;
+                        self.fallback_since_ms = confirm_at;
+                        let _ = self.try_start_reaction(
+                            Expression::Curious,
+                            ReactionReason::Presence,
+                            PRIO_AMBIENT,
+                            confirm_at,
+                            PIR_CURIOUS_MS,
+                            None,
+                        );
+                    }
                 } else {
-                    self.pir_presence_since = None;
+                    // Keep `pir_presence_since`: a quick return continues the visit.
                     self.pir_absence_since = Some(confirm_at);
-                    self.pir_sustained_fired = false;
                 }
             }
         }
 
         if self.pir_debounced {
             if let Some(since) = self.pir_presence_since {
-                let fire_at = since.saturating_add(PIR_SUSTAINED_MS);
+                // The visit may have had short lows; fire on the first high
+                // sample at or after the ten-second mark.
+                let fire_at = since.saturating_add(PIR_SUSTAINED_MS).max(self.pir_rise_ms);
                 if now >= fire_at && !self.pir_sustained_fired {
                     let allowed = match self.pir_last_satisfied_ms {
                         Some(last) => fire_at >= last.saturating_add(PIR_SATISFIED_COOLDOWN_MS),
@@ -942,6 +957,10 @@ impl AffectEngine {
         }
 
         if let Some(since) = self.pir_absence_since {
+            if now >= since.saturating_add(PIR_VISIT_GAP_MS) {
+                self.pir_presence_since = None;
+                self.pir_sustained_fired = false;
+            }
             let sleep_at = since.saturating_add(PIR_ABSENCE_SLEEP_MS);
             if !self.pir_debounced && now >= sleep_at && self.idle_expression != Expression::Sleep {
                 self.idle_expression = Expression::Sleep;
