@@ -1,4 +1,4 @@
-//! I2C0 sensor cluster for R1.5: BMI270 accelerometer/gyroscope and BMM150
+//! I2C0 sensor cluster: BMI270 accelerometer/gyroscope and BMM150
 //! magnetometers.
 //!
 //! ## Sources
@@ -477,7 +477,7 @@ pub struct Bmi270 {
 
 impl Bmi270 {
     /// Probe the documented addresses and return the device that answers with
-    /// chip ID `0x24`. `0x68` is tried first because the R1.5 task names it;
+    /// chip ID `0x24`. `0x68` is tried first because the BSP names it;
     /// `0x69` is the official BSP address.
     pub async fn probe() -> Option<Self> {
         for addr in [0x68u8, 0x69u8] {

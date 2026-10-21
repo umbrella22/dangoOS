@@ -18,8 +18,6 @@
 //! 队列满时丢弃最旧事件并递增 [`INPUT_DROPS`]，保证投递总是指向最新的
 //! 按下/抬起状态，绝不阻塞输入路径。
 
-#![allow(dead_code)] // 模块由 R1.3 的 `main` 声明并 spawn；此前保持独立可编译。
-
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use embassy_futures::select::{select, Either};

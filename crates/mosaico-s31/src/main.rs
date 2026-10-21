@@ -127,7 +127,7 @@ async fn main(spawner: Spawner) {
         peripherals.GPIO44,
     );
 
-    // Main I2C0: CST9220 at 0x5A (SDA=56, SCL=3, 400 kHz), async for R1.
+    // Main I2C0: CST9220 at 0x5A (SDA=56, SCL=3, 400 kHz), async.
     let i2c = I2c::new(
         peripherals.I2C0,
         esp_hal::i2c::master::Config::default().with_frequency(Rate::from_khz(400)),
@@ -213,7 +213,7 @@ async fn main(spawner: Spawner) {
         sensors::SENSOR_QUEUE_CAPACITY
     );
 
-    // H1.3 haptics: motor on GPIO8 (BSP BSP_MOTOR_GPIO, active high). The S31
+    // Haptics: motor on GPIO8 (BSP BSP_MOTOR_GPIO, active high). The S31
     // LEDC driver is not available in this esp-hal revision; the RMT TX
     // peripheral generates the same 5 kHz PWM in hardware.
     match Rmt::new(peripherals.RMT, Rate::from_mhz(1)) {

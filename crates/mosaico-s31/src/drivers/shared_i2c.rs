@@ -4,11 +4,11 @@
 //!
 //! 异步事务助手 [`write_async`]/[`read_async`]/[`write_read_async`] 会在
 //! 整笔事务期间持有互斥锁（CST9220 的一次写或读即一次事务），并用
-//! [`TRANSACTION_TIMEOUT`] 限制每次事务的软件超时。R1.5 的传感器读取复用
+//! [`TRANSACTION_TIMEOUT`] 限制每次事务的软件超时。传感器读取复用
 //! 同一把锁与同一组助手。
 //!
 //! v1.2 的扩展槽是**独立的 I2C1**（SDA=GPIO0 / SCL=GPIO1，见
-//! `docs/MOSAICO_V12_HARDWARE.md` §7.1 与 BSP `subboard.c`），因此 R1.5 的
+//! `docs/MOSAICO_V12_HARDWARE.md` §7.1 与 BSP `subboard.c`），因此
 //! 模块 EEPROM 走 [`install_subboard_async`] 安装的第二条异步总线，避免与
 //! 触摸/IMU 的 I2C0 争用。两条总线各有一把互斥锁和同样的 100 ms 事务超时。
 
@@ -51,7 +51,7 @@ unsafe impl Send for AsyncSlot {}
 static SHARED_I2C_ASYNC: AsyncMutex<CriticalSectionRawMutex, AsyncSlot> =
     AsyncMutex::new(AsyncSlot(RefCell::new(None)));
 
-/// v1.2 扩展槽异步槽位（I2C1: 右槽 EEPROM 0x51 等，仅 R1.5 模块扫描使用）。
+/// v1.2 扩展槽异步槽位（I2C1: 左右槽 EEPROM 与模块外设）。
 static SHARED_I2C_SUBBOARD_ASYNC: AsyncMutex<CriticalSectionRawMutex, AsyncSlot> =
     AsyncMutex::new(AsyncSlot(RefCell::new(None)));
 
@@ -62,7 +62,7 @@ pub fn install_async(i2c: SharedI2c) {
     install_slot(&SHARED_I2C_ASYNC, i2c, "shared I2C async slot");
 }
 
-/// 把 v1.2 扩展槽 I2C1 注册为共享（R1.5 路径）。
+/// 把 v1.2 扩展槽 I2C1 注册为共享。
 ///
 /// 只有模块扫描/描述符读取使用这条总线；触摸、IMU、BMM150 仍在 I2C0。
 pub fn install_subboard_async(i2c: SharedI2c) {
@@ -79,20 +79,6 @@ fn install_slot(
         .expect("shared I2C slot is locked during install");
     assert!(guard.0.borrow().is_none(), "{name} was already installed");
     *guard.0.borrow_mut() = Some(i2c);
-}
-
-/// 在异步互斥锁内执行一个同步闭包，访问共享的异步总线。
-///
-/// 接口冻结的闭包是同步的，无法在闭包内 `.await` 一笔 I2C 事务；真正的
-/// 异步事务请使用 [`write_async`]/[`read_async`]/[`write_read_async`]，
-/// 它们在同一个互斥锁内完成事务并施加 [`TRANSACTION_TIMEOUT`]。
-///
-/// 当前 R1.2 触摸路径不需要它，但它是接口冻结的一部分，留给 R1.5 使用。
-#[allow(dead_code)]
-pub async fn with_bus_async<R>(f: impl FnOnce(&mut SharedI2c) -> R) -> Option<R> {
-    let guard = SHARED_I2C_ASYNC.lock().await;
-    let result = guard.0.borrow_mut().as_mut().map(f);
-    result
 }
 
 /// 异步写事务，持有总线直到完成；总线未安装时返回 `None`。
@@ -122,9 +108,7 @@ pub async fn read_async(addr: u8, bytes: &mut [u8]) -> Option<Result<(), I2cErro
 }
 
 /// 异步写后读（单次重复起始事务），持有总线直到完成；总线未安装时返回
-/// `None`。CST9220 的寄存器读需要两次独立事务，见 `touch.rs`，因此本助手
-/// 留给 R1.5 的传感器读取。
-#[allow(dead_code)]
+/// `None`。传感器寄存器读用它；CST9220 需要两次独立事务，见 `touch.rs`。
 pub async fn write_read_async(
     addr: u8,
     write: &[u8],

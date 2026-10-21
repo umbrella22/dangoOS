@@ -1,4 +1,4 @@
-//! H1.3 haptic patterns on the vibration motor (`GPIO8`, active high).
+//! Haptic patterns on the vibration motor (`GPIO8`, active high).
 //!
 //! ## Pattern source
 //!
@@ -83,9 +83,7 @@ static WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// task. Returns whether the request was accepted (it is ignored only when a
 /// higher-priority pattern is already pending).
 ///
-/// H2's affect integration calls this with `AffectTick::haptic`; nothing in the
-/// current firmware calls it yet, so it is intentionally unused here.
-#[allow(dead_code)]
+/// The UI task calls this with each new `AffectTick::haptic`.
 pub fn play(pattern: HapticPattern) -> bool {
     let accepted = critical_section::with(|cs| {
         let mut pending = PENDING.borrow_ref_mut(cs);
