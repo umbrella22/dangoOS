@@ -20,6 +20,7 @@ lvgl-ui.workspace = true
 
 [target.'cfg(target_os = "none")'.dependencies]
 esp-hal.workspace = true
+esp32s31.workspace = true
 esp-alloc.workspace = true
 esp-backtrace.workspace = true
 esp-bootloader-esp-idf.workspace = true

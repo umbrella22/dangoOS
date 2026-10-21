@@ -7,9 +7,12 @@
 //! [`InteractionPort::activate`] applies the official pulls only once the
 //! EEPROM says an Interaction board is plugged in.
 //!
-//! The WS2812 light is driven by `tasks::lights` (right slot only). IR TX and
-//! the capacitive key mode (the S31 touch sensor on the KEY pins) are not
-//! driven yet.
+//! The keys are capacitive pads read by the S31 touch sensor
+//! (`drivers::touch_sens`), as in the official BSP. If the pads read
+//! implausibly the port falls back to plain GPIO keys (pull-up, active low).
+//!
+//! The WS2812 light is driven by `tasks::lights` (right slot only). IR TX is
+//! not driven.
 
 use esp_hal::{
     analog::adc::{Adc, AdcChannel, AdcConfig, AdcPin, Attenuation, RegisterAccess},
@@ -18,6 +21,12 @@ use esp_hal::{
 };
 
 use super::signal::{Debounce, LdrFilter};
+use super::touch_key::{self, TouchKey};
+use crate::drivers::touch_sens;
+use log::{info, warn};
+
+/// Samples between periodic touch logs (25 Hz sampling -> 5 s).
+const TOUCH_LOG_EVERY: u16 = 125;
 
 /// One sample of an active Interaction board.
 #[derive(Clone, Copy, Debug)]
@@ -26,9 +35,9 @@ pub struct InteractionInputs {
     pub light_level: u8,
     /// Debounced PIR edge (`true` = presence started).
     pub pir_edge: Option<bool>,
-    /// Debounced KEY_L edge (`true` = pressed; active low).
+    /// Debounced KEY_L edge (`true` = pressed).
     pub key_l_edge: Option<bool>,
-    /// Debounced KEY_R edge (`true` = pressed; active low).
+    /// Debounced KEY_R edge (`true` = pressed).
     pub key_r_edge: Option<bool>,
 }
 
@@ -79,12 +88,32 @@ where
     }
 }
 
+/// Capacitive keys being read through the touch block.
+struct TouchKeys {
+    /// Touch channels of KEY_L and KEY_R.
+    channels: [u8; 2],
+    keys: [TouchKey; 2],
+    /// Samples left before the benchmark is trusted.
+    warmup: u8,
+    log_countdown: u16,
+}
+
+enum KeyMode {
+    /// Port idle, keys not read.
+    Off,
+    Touch(TouchKeys),
+    Gpio,
+}
+
 /// The Interaction board pins of one slot.
 pub struct InteractionPort<P, A> {
     ldr: Ldr<P, A>,
     pir: Flex<'static>,
     key_l: Flex<'static>,
     key_r: Flex<'static>,
+    /// Touch channels of KEY_L / KEY_R, when both pins have one.
+    touch_channels: Option<[u8; 2]>,
+    key_mode: KeyMode,
     pir_debounce: Debounce,
     key_l_debounce: Debounce,
     key_r_debounce: Debounce,
@@ -103,8 +132,17 @@ where
         key_l: impl Pin + 'static,
         key_r: impl Pin + 'static,
     ) -> Self {
+        let touch_channels = match (
+            touch_sens::channel_of_gpio(key_l.number()),
+            touch_sens::channel_of_gpio(key_r.number()),
+        ) {
+            (Some(l), Some(r)) => Some([l, r]),
+            _ => None,
+        };
         let mut port = Self {
             ldr: Ldr::new(ldr, adc),
+            touch_channels,
+            key_mode: KeyMode::Off,
             pir: Flex::new(pir),
             key_l: Flex::new(key_l),
             key_r: Flex::new(key_r),
@@ -117,17 +155,27 @@ where
         port
     }
 
-    /// Apply the official pulls (PIR down, keys up) and start sampling.
+    /// Apply the official PIR pull, start the touch keys and sampling.
     pub fn activate(&mut self) {
-        for (pin, pull) in [
-            (&mut self.pir, Pull::Down),
-            (&mut self.key_l, Pull::Up),
-            (&mut self.key_r, Pull::Up),
-        ] {
-            pin.set_output_enable(false);
-            pin.apply_input_config(&InputConfig::default().with_pull(pull));
-            pin.set_input_enable(true);
-        }
+        Self::input_with_pull(&mut self.pir, Pull::Down);
+        // The key pins stay floating with the input buffer off, which is
+        // what the touch block needs.
+        self.key_mode = match self.touch_channels {
+            Some(channels) => {
+                touch_sens::start(&channels);
+                info!(
+                    "touch keys: KEY_L ch{} KEY_R ch{}, calibrating",
+                    channels[0], channels[1]
+                );
+                KeyMode::Touch(TouchKeys {
+                    channels,
+                    keys: [TouchKey::new(); 2],
+                    warmup: touch_key::WARMUP_SAMPLES,
+                    log_countdown: TOUCH_LOG_EVERY,
+                })
+            }
+            None => self.gpio_keys(),
+        };
         self.ldr.activate();
         self.pir_debounce = Debounce::new();
         self.key_l_debounce = Debounce::new();
@@ -135,8 +183,25 @@ where
         self.first_sample = true;
     }
 
+    fn input_with_pull(pin: &mut Flex<'static>, pull: Pull) {
+        pin.set_output_enable(false);
+        pin.apply_input_config(&InputConfig::default().with_pull(pull));
+        pin.set_input_enable(true);
+    }
+
+    /// Plain keys: pull-up, active low.
+    fn gpio_keys(&mut self) -> KeyMode {
+        Self::input_with_pull(&mut self.key_l, Pull::Up);
+        Self::input_with_pull(&mut self.key_r, Pull::Up);
+        KeyMode::Gpio
+    }
+
     /// Release the pins: no pull, input and output disabled.
     pub fn deactivate(&mut self) {
+        if matches!(self.key_mode, KeyMode::Touch(_)) {
+            touch_sens::stop();
+        }
+        self.key_mode = KeyMode::Off;
         for pin in [&mut self.pir, &mut self.key_l, &mut self.key_r] {
             pin.set_output_enable(false);
             pin.apply_input_config(&InputConfig::default().with_pull(Pull::None));
@@ -151,11 +216,66 @@ where
         if core::mem::take(&mut self.first_sample) {
             log::info!("Interaction LDR raw={raw} level={light_level}%");
         }
+        let (key_l, key_r) = self.read_keys();
         Some(InteractionInputs {
             light_level,
             pir_edge: self.pir_debounce.update(self.pir.is_high()),
-            key_l_edge: self.key_l_debounce.update(self.key_l.is_low()),
-            key_r_edge: self.key_r_debounce.update(self.key_r.is_low()),
+            key_l_edge: self.key_l_debounce.update(key_l),
+            key_r_edge: self.key_r_debounce.update(key_r),
         })
+    }
+
+    /// Raw key states (`true` = held).
+    fn read_keys(&mut self) -> (bool, bool) {
+        let touch = match &mut self.key_mode {
+            KeyMode::Off => return (false, false),
+            KeyMode::Gpio => return (self.key_l.is_low(), self.key_r.is_low()),
+            KeyMode::Touch(touch) => touch,
+        };
+        let r = touch.channels.map(touch_sens::read);
+        if touch.warmup > 0 {
+            touch.warmup -= 1;
+            if touch.warmup == 0 {
+                if r.iter().all(|r| touch_key::plausible(r.benchmark)) {
+                    for (&ch, r) in touch.channels.iter().zip(&r) {
+                        touch_sens::set_threshold(ch, touch_key::hardware_threshold(r.benchmark));
+                    }
+                    info!(
+                        "touch keys ready: L bm={} press>+{} R bm={} press>+{}",
+                        r[0].benchmark,
+                        touch_key::press_delta(r[0].benchmark),
+                        r[1].benchmark,
+                        touch_key::press_delta(r[1].benchmark)
+                    );
+                } else {
+                    warn!(
+                        "touch keys implausible (L {}/{} R {}/{}), using GPIO keys",
+                        r[0].smooth, r[0].benchmark, r[1].smooth, r[1].benchmark
+                    );
+                    touch_sens::stop();
+                    self.key_mode = self.gpio_keys();
+                }
+            }
+            return (false, false);
+        }
+        let before = [touch.keys[0].pressed(), touch.keys[1].pressed()];
+        let held = [
+            touch.keys[0].update(r[0].smooth, r[0].benchmark),
+            touch.keys[1].update(r[1].smooth, r[1].benchmark),
+        ];
+        touch.log_countdown = touch.log_countdown.saturating_sub(1);
+        if held != before || touch.log_countdown == 0 {
+            touch.log_countdown = TOUCH_LOG_EVERY;
+            info!(
+                "touch L {}/{} R {}/{} held={:?} hw={:#06x}",
+                r[0].smooth,
+                r[0].benchmark,
+                r[1].smooth,
+                r[1].benchmark,
+                held,
+                touch_sens::active_mask()
+            );
+        }
+        (held[0], held[1])
     }
 }

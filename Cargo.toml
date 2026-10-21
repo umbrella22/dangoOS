@@ -18,6 +18,8 @@ log = "0.4"
 critical-section = "1"
 esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31", "unstable"] }
 esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31"] }
+# The PAC esp-hal itself uses, for blocks esp-hal does not drive yet (touch).
+esp32s31 = { version = "0.2", features = ["critical-section"], git = "https://github.com/esp-rs/esp-pacs", rev = "5cd68d2" }
 esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31"] }
 esp-backtrace = { version = "0.20", features = ["esp32s31", "panic-handler", "println", "custom-halt"] }
 esp-println = { version = "0.18", default-features = false, features = ["esp32s31", "log-04", "jtag-serial", "colors"] }

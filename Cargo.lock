@@ -1446,6 +1446,7 @@ dependencies = [
  "esp-hal",
  "esp-println",
  "esp-rtos",
+ "esp32s31",
  "log",
  "lvgl",
  "lvgl-ui",

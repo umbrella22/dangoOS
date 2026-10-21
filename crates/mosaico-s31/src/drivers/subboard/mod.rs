@@ -36,6 +36,7 @@
 pub mod descriptor;
 pub mod interaction;
 pub mod signal;
+pub mod touch_key;
 
 use core::fmt;
 
@@ -191,13 +192,13 @@ impl Subboard {
         changes
     }
 
-    /// Sample the active Interaction board, if any. A few microseconds of
-    /// blocking ADC conversion; no I2C.
     /// Slot of the Interaction board being sampled, if any.
     pub fn active_slot(&self) -> Option<Slot> {
         self.active
     }
 
+    /// Sample the active Interaction board, if any. A few microseconds of
+    /// blocking ADC conversion and touch register reads; no I2C.
     pub fn poll_inputs(&mut self) -> Option<InteractionInputs> {
         match self.active? {
             Slot::Left => self.left.sample(),

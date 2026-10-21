@@ -6,6 +6,7 @@
 //! - [`battery`]: BQ27220 fuel gauge.
 //! - [`subboard`]: expansion slots: module detection on either side and the
 //!   Interaction board inputs.
+//! - [`touch_sens`]: the S31 capacitive touch block (Interaction board keys).
 //! - [`shared_i2c`]: I2C0 shared by touch and the sensors, plus the I2C1
 //!   subboard bus.
 //! - [`geometry`]: panel size and the inclusive window type.
@@ -21,3 +22,4 @@ pub mod memory;
 pub mod shared_i2c;
 pub mod subboard;
 pub mod touch;
+pub mod touch_sens;
