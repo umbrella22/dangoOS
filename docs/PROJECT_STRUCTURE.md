@@ -34,7 +34,7 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
 ├── .cargo/config.toml           cargo fw 别名、交叉编译工具链路径
 ├── rust-toolchain.toml          stable + riscv32imafc 目标
 ├── lvgl.rev                     ../lv_binding_rust 的已测版本
-├── assets/fox-dango/            角色素材与 Python 管线（生成 src/fox/data.rs、fox.bin）
+├── assets/fox-dango/            角色素材与 Python 管线（生成 src/fox/data.rs、src/assets/fox.bin）
 ├── scripts/
 │   ├── check.sh                 不需要板子的全部检查
 │   ├── test-drivers.sh          纯驱动模块的 rustc --test
@@ -52,6 +52,9 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
     │   └── splash_preview.rs    启动页与入场动画的 PPM 帧
     └── src/
         ├── lib.rs               库入口：模块表与常用 re-export
+        ├── assets/              编译期 include_bytes! 的二进制资源（见其 README）
+        │   ├── fox.bin          狐狸全部图像的行 RLE（fox_pack.py 生成）
+        │   └── bmi270-config.bin  Bosch BMI270 配置微码
         ├── behavior/            “狐狸怎么想”
         │   ├── mod.rs           Expression（16 个表情）
         │   ├── affect.rs        传感器事件 → 情绪 / 表情 / 马达（摇晃、光线、PIR、磁铁、电量…）
@@ -60,7 +63,7 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
         │   └── tests/           按场景分的时间线测试
         ├── fox/                 “狐狸长什么样、怎么动”
         │   ├── mod.rs           Img、FoxPose、Expression → 姿势映射
-        │   ├── data.rs, fox.bin 生成的调色板与 RLE 图像
+        │   ├── data.rs          生成的调色板与偏移表（图像本体在 assets/fox.bin）
         │   ├── scene.rs         Scene / Layer / Warp：一帧要画什么
         │   ├── animate.rs       FoxAnimator：表情 + 时间 → Scene
         │   ├── render.rs        FoxRenderer：Scene → RGB565
@@ -79,14 +82,18 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
         │   ├── plane.rs         上屏（中断执行器）
         │   ├── ui.rs            LVGL + behavior 运行时 + 渲染
         │   ├── input.rs         触摸读取
-        │   ├── sensors.rs       IMU、磁力计、电量、模块槽
+        │   ├── sensors.rs       IMU、磁力计、电量、左右扩展槽
         │   └── haptic.rs        马达（RMT 生成 PWM）
         └── drivers/             外设驱动
             ├── display.rs       CO5300 QSPI + DMA（display/packing.rs：窗口打包）
             ├── touch.rs         CST9220（touch/protocol.rs：报告解码）
             ├── imu.rs           BMI270 + BMM150
             ├── battery.rs       BQ27220
-            ├── module.rs        右侧模块槽
+            ├── subboard/        左右扩展槽
+            │   ├── mod.rs       槽位探测、模块分类、交互板仲裁
+            │   ├── interaction.rs  一侧交互板的引脚（LDR/PIR/双键）
+            │   ├── descriptor.rs   EEPROM 描述符解析（纯逻辑，host 测试）
+            │   └── signal.rs    去抖与 LDR 换算（纯逻辑，host 测试）
             ├── shared_i2c.rs    I2C0 / I2C1 异步互斥
             ├── geometry.rs      面板尺寸与窗口类型
             ├── memory.rs        稳定地址的像素内存
@@ -108,7 +115,7 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
 | 范围 | 命令 |
 | --- | --- |
 | 库（behavior、fox、ui、telemetry） | `cargo test -p mosaico-s31 --offline` |
-| 纯驱动模块（触摸解码、窗口打包、几何） | `./scripts/test-drivers.sh` |
+| 纯驱动模块（触摸解码、窗口打包、几何、槽位描述符、去抖与 LDR 换算） | `./scripts/test-drivers.sh` |
 | 全部（含示例和固件构建） | `./scripts/check.sh` |
 
 固件 bin 本身设置了 `test = false`，因为它只能为 RISC-V 目标编译。

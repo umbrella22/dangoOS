@@ -27,8 +27,9 @@ cargo fw --offline                                           # 固件 release �
 ## 改代码时放在哪里
 
 - 不碰硬件的逻辑放库里（`behavior/`、`fox/`、`ui/`、`telemetry/`），并补 host 测试。
-- 外设驱动放 `drivers/`；能写成纯函数的部分（报告解码、打包、几何）单独成文件，
+- 外设驱动放 `drivers/`；能写成纯函数的部分（报告解码、打包、几何、槽位描述符、去抖）单独成文件，
   加进 `scripts/test-drivers.sh`。
+- 编译期嵌入的二进制资源放 `src/assets/`，并在其 README 登记来源。
 - 新任务放 `tasks/`，在 `main.rs` 里 spawn。每个任务独占自己的硬件，任务之间只通过
   有界队列或原子量通信。
 - 结构说明见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)。
@@ -36,7 +37,7 @@ cargo fw --offline                                           # 固件 release �
 ## 改素材
 
 素材管线在 `assets/fox-dango/tools/`（需要 numpy、pillow、scipy）。生成的
-`src/fox/data.rs` 和 `src/fox/fox.bin` 入库，编译固件不需要 Python。流程和参数见
+`src/fox/data.rs` 和 `src/assets/fox.bin` 入库，编译固件不需要 Python。流程和参数见
 [FOX_RENDER_PIPELINE.md](FOX_RENDER_PIPELINE.md)。
 
 ## 烧录

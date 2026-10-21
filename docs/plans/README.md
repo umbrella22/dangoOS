@@ -1,5 +1,7 @@
 # Development plans
 
+> The grok-ball renderer has been replaced by the fox (`crates/mosaico-s31/src/fox`). Plans below keep their original wording; current structure is in [PROJECT_STRUCTURE.md](../PROJECT_STRUCTURE.md).
+
 **Start here:** [Execution order](ROADMAP.md) — the single source of truth for what runs first, what runs in parallel, and which dependencies gate device work.
 
 | Plan | Status | Scope | Execution record |
@@ -7,7 +9,7 @@
 | [RFC 0001: Configurable Rust Component Library](component-library-development-plan.md) | Draft; implementation not started | Unified configuration; component selection; verified native providers and CI; scoped component composition | [Execution ledger](component-library-execution-ledger.md) |
 | [RFC 0002: Mosaico UI Layer](mosaico-ui-layer-plan.md) | Implemented; host tests, RISC-V target build and gallery smoke run pass | Declarative `Node<Msg>`/`App`/`Ui` layer on LVGL 9.6; keyed lists; host gallery; S31 handoff boundary | [Execution ledger](mosaico-ui-layer-execution-ledger.md) |
 | [RFC 0003: Grok-Ball First Screen](grok-ball-first-screen-plan.md) | G0–G2 complete on hardware; G3 optional | Rust/LVGL port of the MIT grok-ball engine; six AI states; 240×240 device canvas; full-screen transparent Obj touch layer; only the ball redraws; P95 30 ms / 20 fps | [Execution ledger](grok-ball-first-screen-execution-ledger.md) |
-| [RFC 0004: Grok-Ball Sensor Reactions](grok-ball-sensor-reactions-plan.md) | H0, H1.1/H1.2 device complete; H1.3 target build; H2 next | Right-slot Interaction module, BMI270, BMM150 (both online), touch, keys and RMT haptics; 14 reachable expressions | [Execution ledger](grok-ball-sensor-reactions-execution-ledger.md) |
+| [RFC 0004: Grok-Ball Sensor Reactions](grok-ball-sensor-reactions-plan.md) | Reaction layer implemented and host-tested (now drives the fox); slot-adaptive module driver in `drivers/subboard`; Interaction inputs pending device acceptance; WS2812/SI12T/IR open | Interaction module in either slot, BMI270, BMM150 (both online), touch, keys and RMT haptics | [Execution ledger](grok-ball-sensor-reactions-execution-ledger.md) |
 | [RFC 0005: Platform Runtime](platform-runtime-plan.md) | R0/R1 complete; R1.5 device partial (H2/IMU rate pending) | `esp-rtos` + Embassy task skeleton, USB-OTG HS CDC console, async two-frame display/input, P95 gate, sensor task | [Execution ledger](platform-runtime-execution-ledger.md) |
 
 ## RFC 0002 compatibility report
@@ -43,7 +45,7 @@ W0 establishes acceptance, compatibility decisions and baseline evidence. W5 clo
 
 ## RFC 0004 at a glance
 
-1. **Hardware truth:** Interaction module in the right slot (`EEPROM 0x51`, type `0x16`), camera in the left; LDR/PIR/KEY_L/KEY_R map to `46/5/11/10`; BMI270, BMM150, CST9220 and the haptic motor stay on the main board.
+1. **Hardware truth:** Interaction module (type `0x16`) in either slot: left `EEPROM 0x50`, LDR/PIR/KEY_L/KEY_R `53/4/13/12`; right `EEPROM 0x51`, `46/5/11/10`. The camera (type `0x07`, EEPROM fixed `0x50`) works in the left slot only; BMI270, BMM150, CST9220 and the haptic motor stay on the main board.
 2. **Two layers:** SensorTask publishes timestamped events; AffectEngine selects expressions with priority, cooldowns and return states.
 3. **Reaction rules:** large shake → Panic → 5 s still → Confused; small bursts → Confused; 5–10 bursts → Angry 10 s; petting → Happy; light/PIR/keys/module hot-plug have explicit timelines.
 4. **Fourteen reachable:** Idle, Sleep, Curious, Happy, Puzzled, Surprised, Panic, Satisfied, Confused, Angry, Listening, Thinking, Speaking, Error; the 32-expression catalog remains data-only for the rest.

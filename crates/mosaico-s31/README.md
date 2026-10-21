@@ -23,7 +23,7 @@ Embassy tasks. The full tree is in
 | `plane_task` (`tasks/plane.rs`) | interrupt (FROM_CPU_INTR1, priority 2) | Sole owner of the CO5300. Takes the newest canvas-pool slot and uploads the 352×336 canvas at panel origin (64, 88) in 11 × 32-row async QSPI DMA chunks; animation frames wait for TE, touch-tagged frames skip it. |
 | `ui_task` (`tasks/ui.rs`) | thread | Sole owner of LVGL. Every 5 ms: drain sensor events and touches into `behavior::Runtime`, advance the fox widget (render into a free pool slot on its 50 ms cadence, or at once after a touch), hand the frame to the plane, log stats. LVGL never renders the screen. |
 | `input_task` (`tasks/input.rs`) | thread | Sole owner of the CST9220. GPIO6 edge + 5 ms fallback, async I2C reads into a bounded channel. |
-| `sensor_task` (`tasks/sensors.rs`) | thread | BMI270, two BMM150, BQ27220, right-slot Interaction module; bounded `SensorEvent` channel. |
+| `sensor_task` (`tasks/sensors.rs`) | thread | BMI270, two BMM150, BQ27220, both expansion slots (Interaction board on either side, camera detection); bounded `SensorEvent` channel. |
 | `haptic_task` (`tasks/haptic.rs`) | thread | Motor patterns on GPIO8 via RMT-generated 5 kHz PWM. |
 
 The console (`console.rs`) is a USB-OTG HS CDC-ACM device. `log` records are

@@ -20,7 +20,7 @@
 # 库的 host 测试（behavior / fox / ui / telemetry）
 cargo test -p mosaico-s31 --offline
 
-# 纯驱动模块（触摸报告解码、窗口打包、面板几何）
+# 纯驱动模块（触摸报告解码、窗口打包、面板几何、槽位描述符、去抖与 LDR 换算）
 ./scripts/test-drivers.sh
 
 # 16 表情 LVGL host 预览（480x480）

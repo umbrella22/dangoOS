@@ -6,7 +6,7 @@
 | 阶段 | 位置 | 运行在 |
 | --- | --- | --- |
 | 素材管线 | `assets/fox-dango/tools/*.py` | 开发机（Python，一次性） |
-| 打包产物 | `crates/mosaico-s31/src/fox/{data.rs,fox.bin}` | 编译期 `include_bytes!` |
+| 打包产物 | `crates/mosaico-s31/src/fox/data.rs`、`crates/mosaico-s31/src/assets/fox.bin` | 编译期 `include_bytes!` |
 | 动画 | `src/fox/animate.rs`、`src/fox/entrance.rs` | 设备 / host |
 | 渲染 | `src/fox/scene.rs`、`src/fox/render.rs` | 设备 / host |
 | 双缓冲 | `src/ui/canvas_pool.rs`、`src/ui/fox_widget.rs` | 设备 / host |
@@ -85,7 +85,7 @@ plane 任务 (中断执行器)：等 TE → 11 块 32 行 QSPI DMA → CO5300 (�
 - 每个 RGB565 值查回调色板索引（因为前面保证了图片是“565 精确”的，所以不会有未命中）。
 - 每行做 RLE：`(count 1..=255, index)` 字节对，一行的 count 之和等于图宽，
   索引 255 表示透明。
-- 产出 `fox.bin`（所有图的 RLE 拼在一起）和 `data.rs`（调色板 + 每张图的偏移、尺寸、位置）。
+- 产出 `src/assets/fox.bin`（所有图的 RLE 拼在一起）和 `src/fox/data.rs`（调色板 + 每张图的偏移、尺寸、位置）。
   两者都入库，所以编译固件不需要 Python。
 
 ## 2. 动画（每帧，设备上）

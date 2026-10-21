@@ -1,11 +1,18 @@
-# RFC 0004: Grok-Ball Sensor Reactions — Interaction Module, IMU, Touch and Haptics (Not Implemented)
+# RFC 0004: Grok-Ball Sensor Reactions — Interaction Module, IMU, Touch and Haptics
 
-> Status: **Draft implementation plan; no implementation work package is complete.**
+> **当前状态（2026-10-21，覆盖下方原始草案的 Status 行）**
+>
+> - 渲染对象已从 grok-ball 换成狐狸团子（`fox/`），grok-ball 代码已删除；本文的 BallExpression 即现在的 `behavior::Expression`。
+> - 反应层已实现并有 host 测试：`behavior/affect.rs`（摇晃、轻拍、光线、PIR、KEY_L/KEY_R、磁铁、电量、模块插拔），测试在 `behavior/tests/`。
+> - 模块驱动已改为左右槽自适应：`drivers/subboard/`。交互板插左（`0x50`）或插右（`0x51`）都能用；同时只读一块；相机固定按左槽报告。`ModuleInserted/ModuleRemoved` 现在带 `ModuleKind`，反应跟随模块类型而不是槽位。下文 §2.2、§7 里"交互板只在右槽、相机只在左槽"的假设已经放宽，规则见 [硬件文档 §7.2.1](../MOSAICO_V12_HARDWARE.md)。
+> - 仍未完成：交互板 LDR/PIR/按键在真机上的逐项验收；WS2812 心情灯；SI12T 触摸键模式；IR 发射（本 RFC 原本就不使用）。
+
+> Original status (2026-10-20): Draft implementation plan; no implementation work package is complete.
 > Plan ID: `mosaico-grok-ball-reactions-v1`; revision: `1`.
 > Baseline date: `2026-10-20` UTC.
 > Related plans: [RFC 0003 Grok-Ball First Screen](grok-ball-first-screen-plan.md), [RFC 0002 Mosaico UI Layer](mosaico-ui-layer-plan.md).
 > Hardware baseline: official `esp-mosaico-claw` board configuration and `esp-mosaico-bsp` Interaction module; Interaction module in the right slot, camera in the left slot.
-> Implementation authorization: **not granted by authoring this RFC.**
+> Implementation authorization: granted later by the user; see the current status above.
 
 Navigation: [Purpose](#1-purpose-and-runtime-rule) · [Hardware](#2-hardware-truth) · [Reaction layers](#3-reaction-layers) · [Event rules](#4-event-rules) · [Expression catalog](#5-expression-catalog) · [Haptics](#6-haptic-feedback) · [Module lifecycle](#7-module-lifecycle) · [Testing](#8-testing-and-acceptance) · [Milestones](#9-milestones-and-estimates) · [Risks](#10-risks-and-open-decisions) · [Handoff](#11-handoff)
 

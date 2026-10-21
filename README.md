@@ -3,7 +3,7 @@
 Rust firmware for the ESP-Mosaico v1.2 display terminal (ESP32-S31, CO5300
 480×480 QSPI AMOLED, CST9220 touch, BMI270/BMM150, BQ27220). The screen shows
 "fox-dango", a palette-sprite fox whose expression follows touch, motion,
-light, magnets, the module slot and the battery.
+light, magnets, the two expansion slots and the battery.
 
 ## Layout
 

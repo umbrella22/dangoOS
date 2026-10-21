@@ -164,7 +164,7 @@ CLK=20 / D=21 / Q=22 / CS=23 / HOLD=24 / WP=25（原理图 NAND_* → SD_*）。
 ## 7. 背部磁吸扩展槽（subboard）与模块生态
 
 > 来源: BSP `subboard.c/.h` + `mosaico_module_mgr` + 三模块组件（camera/joystick/interact）源码。
-> Rust 常量: `board::subboard`。
+> Rust 实现: `crates/mosaico-s31/src/drivers/subboard/`（槽位探测、描述符解析、两侧交互板引脚）。
 
 ### 7.1 槽位电气架构
 
@@ -181,7 +181,7 @@ CLK=20 / D=21 / Q=22 / CS=23 / HOLD=24 / WP=25（原理图 NAND_* → SD_*）。
 | H2 | GPIO53 | GPIO46 | 摇杆 Y / 交互 LDR / 相机 RESET |
 | H4 | GPIO48 | GPIO47 | 摇杆 X / 交互 IR / 相机 PWDN |
 | H6 | GPIO13 | GPIO11 | 摇杆键4 / 交互 KEY_L / 相机 D7 |
-| H8 | GPIO12 | GPIO10 | 摇杆键3 / 交互 KEY_R / 相机 D5（⚠️ 我们的 FAN_PWM） |
+| H8 | GPIO12 | GPIO10 | 摇杆键3 / 交互 KEY_R / 相机 D5（旧风扇方案曾占作 FAN_PWM，现已不用） |
 | H10 | GPIO14 | GPIO39 | **EEPROM A0 地址选择** / 相机 D4 |
 | H12 | GPIO4 | GPIO5 | 摇杆键1 / 交互 PIR / 相机 D3 |
 | 延长1 | GPIO16 | GPIO40 | 摇杆 B 键 / 相机 D0 / **音频 DIN** |
@@ -192,6 +192,16 @@ CLK=20 / D=21 / Q=22 / CS=23 / HOLD=24 / WP=25（原理图 NAND_* → SD_*）。
 | 延长6 | GPIO55 | GPIO49 | 相机 VSYNC / **音频 LRCLK** |
 
 **延长触点直通板上音频 I2S 总线**——插在右槽的模块可以拿到完整 I2S（音频模块的路），左槽相机则占用其中 DVP 复用脚。
+
+**LDR 极性左右相反**: 左槽 LDR 是 GPIO53 = ADC2 通道 3（奇数，P 侧），亮度越高读数越大，官方换算 `raw - 2196`（满量程 2197）；右槽 LDR 是 GPIO46 = ADC1 通道 4（偶数，N 侧），亮度越高读数越小，换算 `2196 - raw`（满量程 2196）。两边都再做 3:1 IIR 后缩放到 0..100（`mosaico_module_interact.c`，固件里是 `subboard/signal.rs` 的 `LdrFilter`）。
+
+### 7.2.1 固件的槽位自适应规则
+
+- 每 250 ms 分别探测 0x50 与 0x51，连续 3 次一致才确认插拔；插入后读 0x86 字节描述符，按 `board_type` 分成交互板（0x16）、相机（0x07）和其他。
+- 交互板插左插右都能用：两侧各有一组引脚（上表镜像），空闲侧引脚保持高阻、不加上下拉，不会影响插在同一侧的其他模块。
+- 同时只读一块交互板：先识别到的那块生效；它被拔掉时，如果另一侧也是交互板就自动接管。
+- 相机 EEPROM 固定 0x50，且只能在左槽工作（数据线占 GPIO14 等），所以不论插哪边都按左槽报告；相机在位时释放 GPIO14（不再驱动 A0 低电平，避免和相机 D4 输出冲突），拔掉后恢复。
+- 能同时插的组合: 左相机 + 右交互板；左交互板 + 右交互板（只读一块）。相机和交互板都想占左槽时只能二选一。
 
 ### 7.3 官方三模块引脚占用（canonical 左槽值，右槽经 map_gpio 镜像）
 
@@ -223,5 +233,5 @@ CORE 0x01 / **POWER 0x02（电池扩展）** / **DOCK 0x03（底座）** / HANDL
 2. **供电**: 主板自带 80mAh 电芯（BQ27220 计量, CEDV 曲线见 §3）只够短时; 长续航要等官方 POWER 模块或自制电池底座。
 3. **低功耗**: 官方 `low_power_wakeup` 示例 + `bsp_power_prepare_sleep()`（CO5300 Deep Standby 0x4F + CS 浮空 + NAND 待机 + gpio_hold）。
 4. **音频反馈**: ES8311 + PA 在主板上开箱即用; 槽位延长触点还能外接第二路 I2S。
-5. **⚠️ FAN_PWM(GPIO12) 冲突**: 左槽 H8 与摇杆键3/交互 KEY_R 复用——手持模式必须先 `module_mgr` 确认左槽无模块再启用风扇 PWM，或把风扇 PWM 挪脚（DOCK 自制底座方案下引脚自由）。
-6. **风扇底座（DOCK 0x03）建议**: 风扇 PWM/转速回读走底座连接器，主机拿走时底座断电——这正是官方 Dock 板类型的用途。
+5. （历史，风扇方案）FAN_PWM 曾计划用 GPIO12，与左槽 H8（摇杆键3/交互 KEY_R）复用。当前固件没有风扇，GPIO12 只作为左槽交互板 KEY_R。
+6. （历史，风扇方案）风扇底座建议走 DOCK 0x03 板类型：PWM 和转速回读走底座连接器，主机拿走时底座断电。
