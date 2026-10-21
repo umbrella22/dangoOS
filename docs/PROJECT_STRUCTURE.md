@@ -44,6 +44,7 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
 │   ├── FOX_RENDER_PIPELINE.md   渲染管线学习笔记
 │   ├── MOSAICO_V12_HARDWARE.md  引脚、电源、扩展槽
 │   ├── ASSET_REQUESTS.md        素材规格
+│   ├── lessons/                 真机调试复盘（现象、日志、原因、经验）
 │   ├── plans/                   RFC 与执行记录（历史，含 grok-ball 阶段）
 │   └── legacy/                  风扇 / Slint 时代的文档
 └── crates/mosaico-s31/
