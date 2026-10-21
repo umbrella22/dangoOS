@@ -100,7 +100,11 @@ impl MosaicoApp {
         Self {
             control,
             splash,
-            screen: Cell::new(if SHOW_SPLASH { Screen::Splash } else { Screen::Fox }),
+            screen: Cell::new(if SHOW_SPLASH {
+                Screen::Splash
+            } else {
+                Screen::Fox
+            }),
         }
     }
 
@@ -140,7 +144,8 @@ impl App for MosaicoApp {
                 }
             }
             AppMsg::Next => {
-                self.control.set_expression(next_ai_state(self.control.expression()));
+                self.control
+                    .set_expression(next_ai_state(self.control.expression()));
             }
         }
     }

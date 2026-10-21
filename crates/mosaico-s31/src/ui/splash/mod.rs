@@ -27,6 +27,7 @@
 //! Everything is a pure function of the elapsed time, so the host tests can
 //! assert exact frames and the device renders the same pixels.
 
+#[rustfmt::skip] // glyph table
 pub mod font;
 pub mod widget;
 
@@ -213,7 +214,10 @@ mod tests {
 
     #[test]
     fn the_timeline_is_ordered_and_finite() {
-        assert_eq!(TOTAL_MS, 5 * LETTER_STAGGER_MS + LETTER_REVEAL_MS + UNDERLINE_MS + HOLD_MS + FADE_MS);
+        assert_eq!(
+            TOTAL_MS,
+            5 * LETTER_STAGGER_MS + LETTER_REVEAL_MS + UNDERLINE_MS + HOLD_MS + FADE_MS
+        );
         assert!(TOTAL_MS > 1_000, "the splash is long enough to read");
         assert!(TOTAL_MS < 2_500, "the splash never delays a boot badly");
     }

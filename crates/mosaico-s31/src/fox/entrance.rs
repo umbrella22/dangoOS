@@ -123,7 +123,10 @@ mod tests {
 
         let landed = pose(FALL_MS);
         assert_eq!(landed.offset_y, 0);
-        assert!((landed.scale_y - (1.0 - IMPACT_SQUASH)).abs() < 0.01, "impact squash");
+        assert!(
+            (landed.scale_y - (1.0 - IMPACT_SQUASH)).abs() < 0.01,
+            "impact squash"
+        );
         assert!(landed.scale_x > 1.0, "impact widens the fox");
     }
 
@@ -172,8 +175,16 @@ mod tests {
         while t <= TOTAL_MS + 100 {
             let frame = pose(t);
             assert!(frame.scale_x.is_finite() && frame.scale_y.is_finite());
-            assert!((0.5..1.5).contains(&frame.scale_x), "scale_x {}", frame.scale_x);
-            assert!((0.5..1.5).contains(&frame.scale_y), "scale_y {}", frame.scale_y);
+            assert!(
+                (0.5..1.5).contains(&frame.scale_x),
+                "scale_x {}",
+                frame.scale_x
+            );
+            assert!(
+                (0.5..1.5).contains(&frame.scale_y),
+                "scale_y {}",
+                frame.scale_y
+            );
             assert!(frame.offset_y.abs() <= DROP_HEIGHT_PX + 1);
             t += 10;
         }

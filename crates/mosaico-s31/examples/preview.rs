@@ -256,8 +256,16 @@ fn canvas_position(canvas: *mut lvgl_sys::lv_obj_t) -> (i32, i32) {
             lvgl_sys::lv_obj_get_y(canvas),
         )
     };
-    assert_eq!(x, (DISPLAY_WIDTH as i32 - CANVAS_WIDTH as i32) / 2, "canvas horizontally centered");
-    assert_eq!(y, (DISPLAY_HEIGHT as i32 - CANVAS_HEIGHT as i32) / 2, "canvas vertically centered");
+    assert_eq!(
+        x,
+        (DISPLAY_WIDTH as i32 - CANVAS_WIDTH as i32) / 2,
+        "canvas horizontally centered"
+    );
+    assert_eq!(
+        y,
+        (DISPLAY_HEIGHT as i32 - CANVAS_HEIGHT as i32) / 2,
+        "canvas vertically centered"
+    );
     (x, y)
 }
 

@@ -33,7 +33,9 @@ fn blink_range(pose: FoxPose) -> Option<(u32, u32)> {
         FoxPose::Tired => Some((2000, 4000)),
         FoxPose::Speaking => Some((2500, 5000)),
         _ if pose.data().blink.is_empty() => None,
-        FoxPose::Idle | FoxPose::Curious | FoxPose::Listening | FoxPose::Charging => Some((2500, 6000)),
+        FoxPose::Idle | FoxPose::Curious | FoxPose::Listening | FoxPose::Charging => {
+            Some((2500, 6000))
+        }
         _ => Some((3000, 6000)),
     }
 }
@@ -54,7 +56,12 @@ pub struct FoxInput {
 }
 
 impl FoxInput {
-    pub const REST: Self = Self { scale_x: 1.0, scale_y: 1.0, offset_y: 0, look_x: 0.0 };
+    pub const REST: Self = Self {
+        scale_x: 1.0,
+        scale_y: 1.0,
+        offset_y: 0,
+        look_x: 0.0,
+    };
 }
 
 /// Expression player: time, blinks and switch transitions.
@@ -160,7 +167,11 @@ impl FoxAnimator {
         // Switch pop: damped spring squash, pose swaps at the deepest point.
         if self.prev.is_some() && t < POP_MS {
             let tt = t as f32 / 1000.0;
-            let amp = if shown == FoxPose::Surprised { -0.10 } else { 0.12 };
+            let amp = if shown == FoxPose::Surprised {
+                -0.10
+            } else {
+                0.12
+            };
             let k = amp * exp_neg(tt / 0.10) * cos(TAU * tt / 0.24);
             sy -= k;
             sx += k * 0.6;
@@ -218,7 +229,11 @@ impl FoxAnimator {
             FoxPose::Sleep => {
                 for (n, img) in pose.symbols.iter().enumerate() {
                     let ph = phase(t, 2400, 2400 - (n as u32 * 600) % 2400);
-                    let fade = if ph < 0.05 { 0.0 } else { (3.0 * (1.0 - ph)).min(1.0) };
+                    let fade = if ph < 0.05 {
+                        0.0
+                    } else {
+                        (3.0 * (1.0 - ph)).min(1.0)
+                    };
                     s.over.push(Layer {
                         img,
                         dx: (ph * 6.0) as i16,
@@ -246,19 +261,31 @@ impl FoxAnimator {
                     if img.over_bg {
                         s.over.push(layer);
                     } else {
-                        s.under.push(Layer { dx: 0, dy: 0, fade: 16, ..layer });
+                        s.under.push(Layer {
+                            dx: 0,
+                            dy: 0,
+                            fade: 16,
+                            ..layer
+                        });
                     }
                 }
                 let on = (t / 120) % 2 == 0;
                 for img in pose.tremble {
-                    s.over.push(Layer { dx: if on { 1 } else { -1 }, fade: if on { 16 } else { 10 }, ..Layer::at(img) });
+                    s.over.push(Layer {
+                        dx: if on { 1 } else { -1 },
+                        fade: if on { 16 } else { 10 },
+                        ..Layer::at(img)
+                    });
                 }
             }
             FoxPose::Charging => {
                 for (n, img) in pose.symbols.iter().enumerate() {
                     if n == 0 {
                         let bob = round(4.0 * sin(TAU * phase(t, 1200, 0)));
-                        s.over.push(Layer { dy: bob as i16, ..Layer::at(img) });
+                        s.over.push(Layer {
+                            dy: bob as i16,
+                            ..Layer::at(img)
+                        });
                     } else if (t / 250 + n as u32 * 7 / 4) % 4 < 3 {
                         s.over.push(Layer::at(img));
                     }
@@ -283,7 +310,10 @@ impl FoxAnimator {
             FoxPose::Angry => {
                 let big = (t / 400) % 2 == 0;
                 for img in pose.symbols {
-                    s.under.push(Layer { scale_q8: if big { 302 } else { 236 }, ..Layer::at(img) });
+                    s.under.push(Layer {
+                        scale_q8: if big { 302 } else { 236 },
+                        ..Layer::at(img)
+                    });
                 }
                 let st = t % 1500;
                 if st < 300 {
@@ -296,7 +326,10 @@ impl FoxAnimator {
             FoxPose::Puzzled => {
                 let bob = round(-4.0 * (0.5 - 0.5 * cos(TAU * phase(t, 1200, 0))));
                 for img in pose.symbols {
-                    s.over.push(Layer { dy: bob as i16, ..Layer::at(img) });
+                    s.over.push(Layer {
+                        dy: bob as i16,
+                        ..Layer::at(img)
+                    });
                 }
             }
             FoxPose::Annoyed => {
@@ -311,7 +344,12 @@ impl FoxAnimator {
                     if img.over_bg {
                         s.over.push(layer);
                     } else {
-                        s.under.push(Layer { fade: 16, dx: 0, dy: 0, ..layer });
+                        s.under.push(Layer {
+                            fade: 16,
+                            dx: 0,
+                            dy: 0,
+                            ..layer
+                        });
                     }
                 }
                 if ph < 0.12 {
@@ -355,7 +393,12 @@ impl FoxAnimator {
 
         sx *= input.scale_x;
         sy *= input.scale_y;
-        s.warp = Warp { sx: clamp(sx, 0.5, 1.2), sy: clamp(sy, 0.5, 1.2), dx, dy: dy + input.offset_y };
+        s.warp = Warp {
+            sx: clamp(sx, 0.5, 1.2),
+            sy: clamp(sy, 0.5, 1.2),
+            dx,
+            dy: dy + input.offset_y,
+        };
         s
     }
 }

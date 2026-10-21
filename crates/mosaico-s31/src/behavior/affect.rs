@@ -874,10 +874,7 @@ impl AffectEngine {
 
         if let Some(since) = self.pir_absence_since {
             let sleep_at = since.saturating_add(PIR_ABSENCE_SLEEP_MS);
-            if !self.pir_debounced
-                && now >= sleep_at
-                && self.idle_expression != Expression::Sleep
-            {
+            if !self.pir_debounced && now >= sleep_at && self.idle_expression != Expression::Sleep {
                 self.idle_expression = Expression::Sleep;
                 self.fallback_since_ms = sleep_at;
             }

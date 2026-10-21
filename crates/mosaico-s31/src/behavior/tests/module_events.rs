@@ -71,19 +71,10 @@ fn right_slot_remove_plays_surprised_then_confused() {
     assert_eq!(surprised.haptic, Some(HapticPattern::ModuleRemove));
 
     // Surprised [4000, 4400)
-    assert_eq!(
-        engine.tick(4_399).state.expression,
-        Expression::Surprised
-    );
+    assert_eq!(engine.tick(4_399).state.expression, Expression::Surprised);
     // Confused [4400, 6400)
-    assert_eq!(
-        engine.tick(4_400).state.expression,
-        Expression::Confused
-    );
-    assert_eq!(
-        engine.tick(6_399).state.expression,
-        Expression::Confused
-    );
+    assert_eq!(engine.tick(4_400).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(6_399).state.expression, Expression::Confused);
     assert_eq!(engine.tick(6_400).state.expression, Expression::Idle);
 }
 
@@ -121,10 +112,7 @@ fn left_camera_insert_and_remove_use_short_reactions() {
     assert_eq!(remove.state.reason, ReactionReason::ModuleRemove);
     assert_eq!(remove.haptic, Some(HapticPattern::ModuleRemove));
 
-    assert_eq!(
-        engine.tick(3_499).state.expression,
-        Expression::Confused
-    );
+    assert_eq!(engine.tick(3_499).state.expression, Expression::Confused);
     assert_eq!(engine.tick(3_500).state.expression, Expression::Idle);
 }
 
@@ -145,14 +133,8 @@ fn insertion_overlays_activity_and_returns_to_it() {
 
     // Removal also overlays and returns.
     engine.on_event(removed(4_000, EventSource::ModuleRight));
-    assert_eq!(
-        engine.tick(4_000).state.expression,
-        Expression::Surprised
-    );
-    assert_eq!(
-        engine.tick(6_400).state.expression,
-        Expression::Listening
-    );
+    assert_eq!(engine.tick(4_000).state.expression, Expression::Surprised);
+    assert_eq!(engine.tick(6_400).state.expression, Expression::Listening);
 }
 
 #[test]

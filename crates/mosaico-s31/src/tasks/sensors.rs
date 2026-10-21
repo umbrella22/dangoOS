@@ -44,8 +44,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_time::{Duration, Ticker};
-use mosaico_s31::behavior::affect::{EventKind, EventSource, SensorEvent};
 use log::{info, warn};
+use mosaico_s31::behavior::affect::{EventKind, EventSource, SensorEvent};
 
 use crate::drivers::battery::Bq27220;
 use crate::drivers::imu::{self, Bmi270, Bmm150, MagSample, MagneticClassifier, MagneticEvent};

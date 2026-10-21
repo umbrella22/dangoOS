@@ -43,10 +43,7 @@ fn sudden_dark_is_confused_for_2000_ms() {
     assert_eq!(dark.state.reason, ReactionReason::Light);
     assert_eq!(dark.haptic, Some(HapticPattern::Confused));
 
-    assert_eq!(
-        engine.tick(2_099).state.expression,
-        Expression::Confused
-    );
+    assert_eq!(engine.tick(2_099).state.expression, Expression::Confused);
     assert_eq!(engine.tick(2_100).state.expression, Expression::Idle);
 }
 
@@ -61,10 +58,7 @@ fn sudden_bright_is_surprised_for_1500_ms() {
     assert_eq!(bright.state.reason, ReactionReason::Light);
     assert_eq!(bright.haptic, Some(HapticPattern::Surprised));
 
-    assert_eq!(
-        engine.tick(1_599).state.expression,
-        Expression::Surprised
-    );
+    assert_eq!(engine.tick(1_599).state.expression, Expression::Surprised);
     assert_eq!(engine.tick(1_600).state.expression, Expression::Idle);
 }
 
@@ -84,10 +78,7 @@ fn dark_then_bright_recovery_replaces_confused() {
     assert_eq!(recovered.state.reason, ReactionReason::Light);
     assert!(recovered.changed);
 
-    assert_eq!(
-        engine.tick(1_999).state.expression,
-        Expression::Surprised
-    );
+    assert_eq!(engine.tick(1_999).state.expression, Expression::Surprised);
     assert_eq!(engine.tick(2_000).state.expression, Expression::Idle);
 }
 
@@ -124,14 +115,8 @@ fn gradual_dawn_is_curious_not_surprised() {
     }
 
     // The 30 s rise reaches +30 and produces Curious 2 s.
-    assert_eq!(
-        engine.tick(30_000).state.expression,
-        Expression::Curious
-    );
-    assert_eq!(
-        engine.tick(31_999).state.expression,
-        Expression::Curious
-    );
+    assert_eq!(engine.tick(30_000).state.expression, Expression::Curious);
+    assert_eq!(engine.tick(31_999).state.expression, Expression::Curious);
     assert_eq!(engine.tick(32_000).state.expression, Expression::Idle);
 }
 
@@ -193,10 +178,7 @@ fn pir_presence_rising_sustained_and_absence() {
     assert_eq!(sustained.state.expression, Expression::Satisfied);
     assert_eq!(sustained.haptic, Some(HapticPattern::Satisfied));
 
-    assert_eq!(
-        engine.tick(11_799).state.expression,
-        Expression::Satisfied
-    );
+    assert_eq!(engine.tick(11_799).state.expression, Expression::Satisfied);
     assert_eq!(engine.tick(11_800).state.expression, Expression::Idle);
 
     // Falling edge: no immediate reaction.

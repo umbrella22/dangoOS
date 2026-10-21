@@ -226,31 +226,16 @@ fn short_physical_and_ambient_reactions_overlay_activity() {
     engine.on_event(touch(200, EventKind::TouchPoke));
     assert_eq!(engine.tick(200).state.expression, Expression::Puzzled);
     assert_eq!(engine.tick(1_699).state.expression, Expression::Puzzled);
-    assert_eq!(
-        engine.tick(1_700).state.expression,
-        Expression::Listening
-    );
+    assert_eq!(engine.tick(1_700).state.expression, Expression::Listening);
 
     // Ambient overlay.
     engine.on_event(activity(2_000, Expression::Thinking));
-    assert_eq!(
-        engine.tick(2_000).state.expression,
-        Expression::Thinking
-    );
+    assert_eq!(engine.tick(2_000).state.expression, Expression::Thinking);
     engine.on_event(light(2_100, 80));
     engine.on_event(light(2_200, 50));
-    assert_eq!(
-        engine.tick(2_200).state.expression,
-        Expression::Confused
-    );
-    assert_eq!(
-        engine.tick(4_199).state.expression,
-        Expression::Confused
-    );
-    assert_eq!(
-        engine.tick(4_200).state.expression,
-        Expression::Thinking
-    );
+    assert_eq!(engine.tick(2_200).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(4_199).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(4_200).state.expression, Expression::Thinking);
 }
 
 #[test]
@@ -269,14 +254,8 @@ fn panic_interrupts_activity_and_it_resumes_after_the_sequence() {
     assert_eq!(after_panic.state.reason, ReactionReason::Idle);
 
     assert_eq!(engine.tick(6_699).state.expression, Expression::Idle);
-    assert_eq!(
-        engine.tick(6_700).state.expression,
-        Expression::Confused
-    );
-    assert_eq!(
-        engine.tick(9_699).state.expression,
-        Expression::Confused
-    );
+    assert_eq!(engine.tick(6_700).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(9_699).state.expression, Expression::Confused);
     let resumed = engine.tick(9_700);
     assert_eq!(resumed.state.expression, Expression::Thinking);
     assert_eq!(resumed.state.reason, ReactionReason::Activity);

@@ -55,11 +55,18 @@ pub struct FoxRenderer {
 
 impl FoxRenderer {
     pub fn new() -> Self {
-        Self { idx: vec![0; PIXELS], scratch: Vec::new(), signature: 0, reused: 0 }
+        Self {
+            idx: vec![0; PIXELS],
+            scratch: Vec::new(),
+            signature: 0,
+            reused: 0,
+        }
     }
 
     fn compose(&mut self, scene: &Scene) {
-        let sig = scene.under.signature(0xcbf2_9ce4_8422_2325 ^ scene.pose as u64);
+        let sig = scene
+            .under
+            .signature(0xcbf2_9ce4_8422_2325 ^ scene.pose as u64);
         if sig == self.signature {
             self.reused = self.reused.wrapping_add(1);
             return;
@@ -75,7 +82,14 @@ impl FoxRenderer {
     fn layer_into_idx(&mut self, l: &Layer) {
         let img = l.img;
         if l.scale_q8 == 256 && l.fade >= 16 {
-            stamp(&mut self.idx, W, H, img, img.x as i32 + l.dx as i32, img.y as i32 + l.dy as i32);
+            stamp(
+                &mut self.idx,
+                W,
+                H,
+                img,
+                img.x as i32 + l.dx as i32,
+                img.y as i32 + l.dy as i32,
+            );
             return;
         }
         let (w, h) = (img.w as usize, img.h as usize);
@@ -115,7 +129,13 @@ impl FoxRenderer {
         assert!(out.len() >= PIXELS, "fox canvas too short");
         self.compose(scene);
         let pal = &data::PALETTE;
-        let lookup = |v: u8| -> u16 { if (v as usize) < pal.len() { pal[v as usize] } else { 0 } };
+        let lookup = |v: u8| -> u16 {
+            if (v as usize) < pal.len() {
+                pal[v as usize]
+            } else {
+                0
+            }
+        };
 
         let warp = scene.warp;
         if warp == Warp::IDENTITY {
@@ -128,7 +148,11 @@ impl FoxRenderer {
             let mut xlut = [0i16; W];
             for (x, slot) in xlut.iter_mut().enumerate() {
                 let sx = round(ax + (x as f32 - warp.dx as f32 - ax) / warp.sx);
-                *slot = if sx >= 0 && sx < W as i32 { sx as i16 } else { -1 };
+                *slot = if sx >= 0 && sx < W as i32 {
+                    sx as i16
+                } else {
+                    -1
+                };
             }
             for y in 0..H {
                 let row = &mut out[y * W..(y + 1) * W];
@@ -149,7 +173,8 @@ impl FoxRenderer {
             let (fx, fy) = warp.forward(img.x as f32 + l.dx as f32, img.y as f32 + l.dy as f32);
             let (x0, y0) = (round(fx), round(fy));
             self.scratch.clear();
-            self.scratch.resize(img.w as usize * img.h as usize, TRANSPARENT);
+            self.scratch
+                .resize(img.w as usize * img.h as usize, TRANSPARENT);
             stamp(&mut self.scratch, img.w as usize, img.h as usize, img, 0, 0);
             for sy in 0..img.h as i32 {
                 let y = y0 + sy;

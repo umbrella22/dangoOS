@@ -44,20 +44,11 @@ fn large_shake_panics_then_confuses_after_five_still_seconds() {
     assert_eq!(panic.haptic, Some(HapticPattern::Panic));
 
     // Panic is [t0, t0 + 1.5 s).
-    assert_eq!(
-        tick_expression(&mut engine, t0 + 1_499),
-        Expression::Panic
-    );
-    assert_eq!(
-        tick_expression(&mut engine, t0 + 1_500),
-        Expression::Idle
-    );
+    assert_eq!(tick_expression(&mut engine, t0 + 1_499), Expression::Panic);
+    assert_eq!(tick_expression(&mut engine, t0 + 1_500), Expression::Idle);
 
     // Device is still: no motion until t0 + 6.5 s.
-    assert_eq!(
-        tick_expression(&mut engine, t0 + 6_499),
-        Expression::Idle
-    );
+    assert_eq!(tick_expression(&mut engine, t0 + 6_499), Expression::Idle);
     assert_eq!(
         tick_expression(&mut engine, t0 + 6_500),
         Expression::Confused
@@ -68,10 +59,7 @@ fn large_shake_panics_then_confuses_after_five_still_seconds() {
         tick_expression(&mut engine, t0 + 9_499),
         Expression::Confused
     );
-    assert_eq!(
-        tick_expression(&mut engine, t0 + 9_500),
-        Expression::Idle
-    );
+    assert_eq!(tick_expression(&mut engine, t0 + 9_500), Expression::Idle);
 }
 
 #[test]
@@ -84,10 +72,7 @@ fn small_shake_confuses_for_2500_ms() {
     assert_eq!(confused.state.reason, ReactionReason::ShakeSmall);
     assert_eq!(confused.haptic, Some(HapticPattern::Confused));
 
-    assert_eq!(
-        tick_expression(&mut engine, 3_499),
-        Expression::Confused
-    );
+    assert_eq!(tick_expression(&mut engine, 3_499), Expression::Confused);
     assert_eq!(tick_expression(&mut engine, 3_500), Expression::Idle);
 }
 
@@ -159,20 +144,14 @@ fn continuous_shaking_counts_as_one_burst() {
         at += 50;
     }
 
-    assert_eq!(
-        engine.tick(4_000).state.expression,
-        Expression::Confused
-    );
+    assert_eq!(engine.tick(4_000).state.expression, Expression::Confused);
 
     // The burst closes 300 ms after the last motion; the count is one.
     let closed = engine.tick(4_300);
     assert_eq!(closed.state.expression, Expression::Confused);
     assert_ne!(closed.state.expression, Expression::Angry);
 
-    assert_eq!(
-        tick_expression(&mut engine, 6_499),
-        Expression::Confused
-    );
+    assert_eq!(tick_expression(&mut engine, 6_499), Expression::Confused);
     assert_eq!(tick_expression(&mut engine, 6_500), Expression::Idle);
 }
 

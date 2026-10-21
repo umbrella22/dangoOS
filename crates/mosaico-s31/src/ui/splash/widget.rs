@@ -136,7 +136,9 @@ impl CustomWidget for SplashWidget {
 
         self.buffer = Some(buffer);
         self.created = true;
-        self.control.creates.set(self.control.creates.get().saturating_add(1));
+        self.control
+            .creates
+            .set(self.control.creates.get().saturating_add(1));
 
         match CustomObject::new(parent, canvas) {
             Ok(object) => Ok(object),
@@ -152,7 +154,9 @@ impl CustomWidget for SplashWidget {
     }
 
     fn update(&mut self, object: &mut CustomObject, elapsed_ms: u32) -> Result<(), UiError> {
-        self.control.updates.set(self.control.updates.get().saturating_add(1));
+        self.control
+            .updates
+            .set(self.control.updates.get().saturating_add(1));
         let Some(buffer) = self.buffer.as_mut() else {
             return Err(UiError::InvalidProperty);
         };
@@ -175,7 +179,9 @@ impl CustomWidget for SplashWidget {
 
         let finished = super::render(buffer.as_mut_slice(), elapsed);
         self.last_painted = Some(elapsed);
-        self.control.frames.set(self.control.frames.get().saturating_add(1));
+        self.control
+            .frames
+            .set(self.control.frames.get().saturating_add(1));
         object.invalidate();
         self.control
             .invalidations

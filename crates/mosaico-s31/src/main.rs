@@ -147,10 +147,8 @@ async fn main(spawner: Spawner) {
     // CO5300 tearing-effect output (GPIO43). The panel's TE signal marks the
     // start of a frame; `plane_task` starts animation transfers on it so
     // an animated frame is not split by a scanout boundary.
-    let panel_te = esp_hal::gpio::Input::new(
-        peripherals.GPIO43,
-        esp_hal::gpio::InputConfig::default(),
-    );
+    let panel_te =
+        esp_hal::gpio::Input::new(peripherals.GPIO43, esp_hal::gpio::InputConfig::default());
 
     let (plane_ui, plane_display) = plane::new();
 

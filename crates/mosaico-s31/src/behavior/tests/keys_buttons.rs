@@ -107,10 +107,7 @@ fn both_keys_together_are_satisfied() {
     engine.on_event(key(300, EventSource::KeyLeft, false));
     engine.on_event(key(320, EventSource::KeyRight, false));
 
-    assert_eq!(
-        engine.tick(2_249).state.expression,
-        Expression::Satisfied
-    );
+    assert_eq!(engine.tick(2_249).state.expression, Expression::Satisfied);
     assert_eq!(engine.tick(2_250).state.expression, Expression::Idle);
 }
 
@@ -175,10 +172,7 @@ fn key_left_happy_returns_to_listening() {
     engine.on_event(key(250, EventSource::KeyLeft, false));
 
     assert_eq!(engine.tick(1_749).state.expression, Expression::Happy);
-    assert_eq!(
-        engine.tick(1_750).state.expression,
-        Expression::Listening
-    );
+    assert_eq!(engine.tick(1_750).state.expression, Expression::Listening);
 }
 
 #[test]

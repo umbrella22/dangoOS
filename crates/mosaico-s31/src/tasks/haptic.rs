@@ -62,8 +62,8 @@ use esp_hal::{
     },
     Blocking,
 };
-use mosaico_s31::behavior::affect::HapticPattern;
 use log::{info, warn};
+use mosaico_s31::behavior::affect::HapticPattern;
 
 /// RMT TX channel configured in `main` and owned by the haptic task.
 pub type HapticChannel = Channel<'static, Blocking, Tx>;

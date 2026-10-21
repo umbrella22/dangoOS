@@ -33,9 +33,9 @@ impl DisplayPort {
     /// this value, and the process must not delete the display separately.
     pub unsafe fn new() -> Self {
         let format = sys::lv_color_format_t_LV_COLOR_FORMAT_RGB565;
-        let stride =
-            unsafe { sys::lv_draw_buf_width_to_stride(crate::drivers::geometry::WIDTH as u32, format) }
-                as usize;
+        let stride = unsafe {
+            sys::lv_draw_buf_width_to_stride(crate::drivers::geometry::WIDTH as u32, format)
+        } as usize;
         let draw = PixelMemory::new(stride, false);
 
         let display = NonNull::new(unsafe {
@@ -62,7 +62,6 @@ impl DisplayPort {
             _draw: draw,
         }
     }
-
 }
 
 impl Drop for DisplayPort {

@@ -80,13 +80,22 @@ mod tests {
     fn helpers_are_close_to_std() {
         let mut x = -10.0f32;
         while x < 10.0 {
-            assert!((sin(x) - std::primitive::f32::sin(x)).abs() < 2e-3, "sin {x}");
-            assert!((cos(x) - std::primitive::f32::cos(x)).abs() < 2e-3, "cos {x}");
+            assert!(
+                (sin(x) - std::primitive::f32::sin(x)).abs() < 2e-3,
+                "sin {x}"
+            );
+            assert!(
+                (cos(x) - std::primitive::f32::cos(x)).abs() < 2e-3,
+                "cos {x}"
+            );
             x += 0.01;
         }
         let mut x = 0.0f32;
         while x < 8.0 {
-            assert!((exp_neg(x) - std::primitive::f32::exp(-x)).abs() < 0.02, "exp {x}");
+            assert!(
+                (exp_neg(x) - std::primitive::f32::exp(-x)).abs() < 0.02,
+                "exp {x}"
+            );
             x += 0.05;
         }
         for v in [0.25f32, 1.0, 2.0, 100.0] {

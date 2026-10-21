@@ -113,19 +113,12 @@ impl Cst9220 {
     async fn identify(&mut self) -> Result<(), &'static str> {
         let mut command_mode = false;
         for _ in 0..PROBE_RETRIES {
-            if self
-                .write_reg_raw(REG_PROTOCOL_PROBE, &[])
-                .await
-                .is_err()
-            {
+            if self.write_reg_raw(REG_PROTOCOL_PROBE, &[]).await.is_err() {
                 continue;
             }
             Timer::after(Duration::from_millis(1)).await;
             let mut mode = [0u8; 2];
-            if self
-                .read_reg(REG_MODE_STATUS, &mut mode)
-                .await
-                .is_ok()
+            if self.read_reg(REG_MODE_STATUS, &mut mode).await.is_ok()
                 && mode[1] == REG_PROTOCOL_PROBE as u8
             {
                 command_mode = true;

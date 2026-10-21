@@ -470,7 +470,10 @@ impl CustomWidget for FoxWidget {
             // on_event handler needs real pointer events.
             lvgl_sys::lv_obj_set_clickable(canvas.as_ptr(), true);
             if plane {
-                lvgl_sys::lv_obj_add_flag(canvas.as_ptr(), lvgl_sys::lv_obj_flag_t_LV_OBJ_FLAG_HIDDEN);
+                lvgl_sys::lv_obj_add_flag(
+                    canvas.as_ptr(),
+                    lvgl_sys::lv_obj_flag_t_LV_OBJ_FLAG_HIDDEN,
+                );
             }
         }
 
@@ -479,7 +482,9 @@ impl CustomWidget for FoxWidget {
                 self.pool = Some(pool);
                 self.shown = shown;
                 self.canvas = Some(canvas);
-                self.control.creates.set(self.control.creates.get().saturating_add(1));
+                self.control
+                    .creates
+                    .set(self.control.creates.get().saturating_add(1));
                 // The first update renders the initial expression at once.
                 self.control.mark_urgent();
                 Ok(object)
@@ -513,7 +518,9 @@ impl CustomWidget for FoxWidget {
         let animate_started = mono_us();
         self.animator.advance(elapsed_ms);
         let input = self.compose_input(elapsed_ms);
-        self.control.last_animate_us.set(elapsed_us(animate_started));
+        self.control
+            .last_animate_us
+            .set(elapsed_us(animate_started));
 
         self.since_frame_ms = self.since_frame_ms.saturating_add(elapsed_ms);
         let frame_due = self.since_frame_ms >= FRAME_INTERVAL_MS;
@@ -550,7 +557,9 @@ impl CustomWidget for FoxWidget {
     }
 
     fn delete(&mut self, _object: &mut CustomObject) {
-        self.control.deletes.set(self.control.deletes.get().saturating_add(1));
+        self.control
+            .deletes
+            .set(self.control.deletes.get().saturating_add(1));
         self.canvas = None;
         // Nothing to free: the pool belongs to the control and is leaked, so
         // the native canvas (deleted by the reconciler after this hook) never
@@ -567,10 +576,7 @@ mod tests {
     use crate::test_support;
 
     /// Mount the widget on a 480x480 memory display and return the live UI.
-    fn mount<'a>(
-        control: &Rc<FoxControl>,
-        display: &'a Display,
-    ) -> lvgl_ui::Ui<()> {
+    fn mount<'a>(control: &Rc<FoxControl>, display: &'a Display) -> lvgl_ui::Ui<()> {
         struct App {
             control: Rc<FoxControl>,
         }
@@ -697,11 +703,11 @@ mod tests {
             elapsed += 50;
         }
         assert!(!control.entrance_active(), "the entrance completed");
-        assert!(control.take_entrance_finished(), "the finish edge is reported");
         assert!(
-            !control.take_entrance_finished(),
-            "the edge is one-shot"
+            control.take_entrance_finished(),
+            "the finish edge is reported"
         );
+        assert!(!control.take_entrance_finished(), "the edge is one-shot");
 
         ui.unmount();
         drop(ui);

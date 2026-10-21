@@ -25,10 +25,7 @@
 use core::sync::atomic::Ordering;
 
 use embassy_futures::select::{select, Either};
-use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex,
-    signal::Signal,
-};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::Input;
 use log::{info, warn};
@@ -174,7 +171,11 @@ async fn run_plane(
                     let wait_us = wait_started.elapsed().as_micros().min(u32::MAX as u64) as u32;
                     let old = TE_WAIT_AVG_US.load(Ordering::Relaxed);
                     TE_WAIT_AVG_US.store(
-                        if old == 0 { wait_us } else { (old * 7 + wait_us) / 8 },
+                        if old == 0 {
+                            wait_us
+                        } else {
+                            (old * 7 + wait_us) / 8
+                        },
                         Ordering::Relaxed,
                     );
                     TE_SYNCS.fetch_add(1, Ordering::Relaxed);
@@ -269,9 +270,7 @@ async fn run_plane(
         drop(job);
 
         if frames == 1 || frames.is_multiple_of(LOG_EVERY_FRAMES) || !completed {
-            info!(
-                "plane: frame={frames} chunks={chunks} transfer={elapsed_us}us ok={completed}"
-            );
+            info!("plane: frame={frames} chunks={chunks} transfer={elapsed_us}us ok={completed}");
         }
     }
 }

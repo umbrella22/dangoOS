@@ -109,7 +109,10 @@ pub async fn ui_task(mut plane: PlaneUi) {
     // during boot must not interrupt the drop.
     runtime.ignore_touch_until(boot_ms + MosaicoApp::touch_hold_off_ms());
 
-    let plane_size = (fox_widget::CANVAS_WIDTH as u16, fox_widget::CANVAS_HEIGHT as u16);
+    let plane_size = (
+        fox_widget::CANVAS_WIDTH as u16,
+        fox_widget::CANVAS_HEIGHT as u16,
+    );
     info!(
         "ui_task: plane path, fox {}x{} @ {}ms, 2 canvas slots",
         plane_size.0,

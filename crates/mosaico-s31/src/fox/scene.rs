@@ -19,7 +19,13 @@ pub struct Layer {
 
 impl Layer {
     pub fn at(img: &'static Img) -> Self {
-        Self { img, dx: 0, dy: 0, scale_q8: 256, fade: 16 }
+        Self {
+            img,
+            dx: 0,
+            dy: 0,
+            scale_q8: 256,
+            fade: 16,
+        }
     }
 }
 
@@ -34,7 +40,10 @@ pub struct Layers {
 
 impl Layers {
     pub const fn new() -> Self {
-        Self { items: [None; MAX_LAYERS], n: 0 }
+        Self {
+            items: [None; MAX_LAYERS],
+            n: 0,
+        }
     }
 
     pub fn push(&mut self, layer: Layer) {
@@ -65,7 +74,13 @@ impl Layers {
     /// Cheap identity of the list, used to skip recomposition.
     pub(super) fn signature(&self, mut h: u64) -> u64 {
         for l in self.iter() {
-            for v in [l.img.off as u64, l.dx as u64, l.dy as u64, l.scale_q8 as u64, l.fade as u64] {
+            for v in [
+                l.img.off as u64,
+                l.dx as u64,
+                l.dy as u64,
+                l.scale_q8 as u64,
+                l.fade as u64,
+            ] {
                 h = (h ^ v).wrapping_mul(0x100_0000_01b3);
             }
         }
@@ -89,13 +104,21 @@ pub struct Warp {
 }
 
 impl Warp {
-    pub const IDENTITY: Self = Self { sx: 1.0, sy: 1.0, dx: 0, dy: 0 };
+    pub const IDENTITY: Self = Self {
+        sx: 1.0,
+        sy: 1.0,
+        dx: 0,
+        dy: 0,
+    };
 
     /// Where a source point lands on the output canvas.
     pub(super) fn forward(&self, x: f32, y: f32) -> (f32, f32) {
         let ax = W as f32 / 2.0;
         let ay = (H - 1) as f32;
-        (ax + (x - ax) * self.sx + self.dx as f32, ay - (ay - y) * self.sy + self.dy as f32)
+        (
+            ax + (x - ax) * self.sx + self.dx as f32,
+            ay - (ay - y) * self.sy + self.dy as f32,
+        )
     }
 }
 
@@ -112,6 +135,11 @@ pub struct Scene {
 
 impl Scene {
     pub fn still(pose: FoxPose) -> Self {
-        Self { pose, under: Layers::new(), warp: Warp::IDENTITY, over: Layers::new() }
+        Self {
+            pose,
+            under: Layers::new(),
+            warp: Warp::IDENTITY,
+            over: Layers::new(),
+        }
     }
 }

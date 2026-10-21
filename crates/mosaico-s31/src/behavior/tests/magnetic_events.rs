@@ -38,10 +38,7 @@ fn contact_is_satisfied_and_uses_the_magnetic_haptic() {
     assert_eq!(contact.state.reason, ReactionReason::Magnetic);
     assert_eq!(contact.haptic, Some(HapticPattern::MagneticContact));
 
-    assert_eq!(
-        engine.tick(1_599).state.expression,
-        Expression::Satisfied
-    );
+    assert_eq!(engine.tick(1_599).state.expression, Expression::Satisfied);
     assert_eq!(engine.tick(1_600).state.expression, Expression::Idle);
 }
 
@@ -73,20 +70,14 @@ fn release_requires_a_contact() {
     assert_eq!(engine.tick(100).state.expression, Expression::Idle);
 
     engine.on_event(magnetic(1_000, EventKind::MagneticContact));
-    assert_eq!(
-        engine.tick(1_000).state.expression,
-        Expression::Satisfied
-    );
+    assert_eq!(engine.tick(1_000).state.expression, Expression::Satisfied);
 
     engine.on_event(magnetic(1_200, EventKind::MagneticRelease));
     let release = engine.tick(1_200);
     assert_eq!(release.state.expression, Expression::Confused);
     assert_eq!(release.state.reason, ReactionReason::Magnetic);
 
-    assert_eq!(
-        engine.tick(3_199).state.expression,
-        Expression::Confused
-    );
+    assert_eq!(engine.tick(3_199).state.expression, Expression::Confused);
     assert_eq!(engine.tick(3_200).state.expression, Expression::Idle);
 }
 
@@ -104,10 +95,7 @@ fn duplicate_release_does_not_restart_confused() {
     assert_eq!(duplicate.state.expression, Expression::Confused);
 
     // Confused started at 200 and ends at 2200, not 2400.
-    assert_eq!(
-        engine.tick(2_199).state.expression,
-        Expression::Confused
-    );
+    assert_eq!(engine.tick(2_199).state.expression, Expression::Confused);
     assert_eq!(engine.tick(2_200).state.expression, Expression::Idle);
 }
 
@@ -121,10 +109,7 @@ fn orbit_is_surprised_for_1200_ms() {
     assert_eq!(orbit.state.reason, ReactionReason::Magnetic);
     assert_eq!(orbit.haptic, Some(HapticPattern::Surprised));
 
-    assert_eq!(
-        engine.tick(1_299).state.expression,
-        Expression::Surprised
-    );
+    assert_eq!(engine.tick(1_299).state.expression, Expression::Surprised);
     assert_eq!(engine.tick(1_300).state.expression, Expression::Idle);
 }
 

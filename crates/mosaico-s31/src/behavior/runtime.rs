@@ -34,7 +34,9 @@
 use alloc::rc::Rc;
 
 use crate::behavior::affect::{AffectEngine, AffectState, HapticPattern, SensorEvent};
-use crate::behavior::personality::{PersonalityEngine, PersonaOutput, PersonaReaction, PointerSample};
+use crate::behavior::personality::{
+    PersonaOutput, PersonaReaction, PersonalityEngine, PointerSample,
+};
 use crate::behavior::Expression;
 
 use crate::ui::fox_widget::{FoxControl, FoxVisual};
@@ -214,10 +216,7 @@ fn is_urgent(expression: Expression) -> bool {
 ///
 /// Urgent affect states win; otherwise an active personality reaction wins;
 /// otherwise the affect engine's (possibly resting) expression shows.
-pub fn merge_expression(
-    persona: Option<Expression>,
-    affect: Expression,
-) -> Expression {
+pub fn merge_expression(persona: Option<Expression>, affect: Expression) -> Expression {
     if is_urgent(affect) {
         return affect;
     }

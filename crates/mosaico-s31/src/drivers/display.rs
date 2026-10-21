@@ -143,7 +143,15 @@ impl Display<Blocking> {
     /// buffer is allocated.
     pub fn clear_black(&mut self) -> Result<(), esp_hal::spi::Error> {
         const BAND_ROWS: u16 = MAX_CHUNK_ROWS;
-        self.write_reg(CMD_CASET, &[0, 0, ((board::LCD_WIDTH - 1) >> 8) as u8, (board::LCD_WIDTH - 1) as u8])?;
+        self.write_reg(
+            CMD_CASET,
+            &[
+                0,
+                0,
+                ((board::LCD_WIDTH - 1) >> 8) as u8,
+                (board::LCD_WIDTH - 1) as u8,
+            ],
+        )?;
 
         // One packed band of zeroes is reused for every row window.
         let pixels_per_band = board::LCD_WIDTH as usize * BAND_ROWS as usize;
@@ -155,7 +163,10 @@ impl Display<Blocking> {
         let mut y = 0u16;
         while y < board::LCD_HEIGHT {
             let y_end = (y + BAND_ROWS - 1).min(board::LCD_HEIGHT - 1);
-            self.write_reg(CMD_RASET, &[(y >> 8) as u8, y as u8, (y_end >> 8) as u8, y_end as u8])?;
+            self.write_reg(
+                CMD_RASET,
+                &[(y >> 8) as u8, y as u8, (y_end >> 8) as u8, y_end as u8],
+            )?;
             let rows = (y_end - y + 1) as usize;
             let bytes = rows * board::LCD_WIDTH as usize * 2;
             self.spi.half_duplex_write(
@@ -167,7 +178,10 @@ impl Display<Blocking> {
             )?;
             y = y_end + 1;
         }
-        log::info!("CO5300 GRAM cleared to black ({} bands)", board::LCD_HEIGHT / BAND_ROWS);
+        log::info!(
+            "CO5300 GRAM cleared to black ({} bands)",
+            board::LCD_HEIGHT / BAND_ROWS
+        );
         Ok(())
     }
 
@@ -219,7 +233,10 @@ impl Display<Async> {
         assert!(src.is_valid(), "canvas source outside panel: {src:?}");
         assert_eq!(dst.width(), src.width(), "canvas window/source width");
         assert_eq!(dst.height(), src.height(), "canvas window/source height");
-        assert!(src.x1 < canvas_w && src.y1 < canvas_h, "canvas source outside canvas");
+        assert!(
+            src.x1 < canvas_w && src.y1 < canvas_h,
+            "canvas source outside canvas"
+        );
         assert!(
             canvas.len() >= canvas_w as usize * canvas_h as usize,
             "canvas buffer too short",
@@ -271,8 +288,7 @@ impl Display<Async> {
             ],
         )
         .await?;
-        self
-            .spi
+        self.spi
             .half_duplex_write_async(
                 DataMode::Quad,
                 Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
@@ -285,8 +301,7 @@ impl Display<Async> {
 
     /// 异步寄存器写: 单线 0x02 → 单线地址 reg<<8 → 单线参数。
     async fn write_reg_async(&mut self, reg: u8, params: &[u8]) -> Result<(), esp_hal::spi::Error> {
-        self
-            .spi
+        self.spi
             .half_duplex_write_async(
                 DataMode::Single,
                 Command::_8Bit(OP_WRITE_REG, DataMode::Single),

@@ -88,7 +88,11 @@ fn write_ppm_rgb565(path: &Path, pixels: &[u16], width: usize, height: usize) {
         let r = ((pixel >> 11) & 0x1f) as u8;
         let g = ((pixel >> 5) & 0x3f) as u8;
         let b = (pixel & 0x1f) as u8;
-        bytes.extend_from_slice(&[(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)]);
+        bytes.extend_from_slice(&[
+            (r << 3) | (r >> 2),
+            (g << 2) | (g >> 4),
+            (b << 3) | (b >> 2),
+        ]);
     }
     let mut file = fs::File::create(path).expect("create PPM");
     write!(file, "P6\n{width} {height}\n255\n").expect("write PPM header");
