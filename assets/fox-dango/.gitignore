@@ -1,0 +1,3 @@
+# Hi-res masters (~21 MB); kept locally, regenerate device/ with tools/fox_build.py
+source/
+__pycache__/

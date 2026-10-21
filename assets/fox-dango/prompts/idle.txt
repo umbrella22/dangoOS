@@ -1,0 +1,5 @@
+Redesign this character as a minimal mascot for a tiny 480x480 AMOLED screen driven by a microcontroller. Keep the identity: a round, soft white mochi "fox dango" blob body; silver-white bob hair with blunt straight bangs covering the top of the head; two large fox ears with smoky charcoal-black tips; big red eyes with a golden-yellow lower half and a vertical diamond-shaped dark pupil plus one small white highlight; a tiny red flame mark on the forehead; a tiny gold diamond hairpin; two round pale-pink paws resting in front; a tiny "v" cat mouth.
+Style: flat cel-shaded vector illustration, clean dark outlines, about 12 flat colors with at most one shadow tone per color, no textures, no painterly gradients, no glow, no background scene.
+Pure solid black background (#000000). Front view, centered, symmetrical, the whole character fully visible with margin (nothing cropped), filling about 75% of the frame width.
+Remove the earrings, flowers and dangling ornaments; keep only the small hairpin.
+Expression: calm, neutral, looking straight at the viewer.
