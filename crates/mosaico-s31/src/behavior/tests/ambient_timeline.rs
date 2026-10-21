@@ -3,6 +3,8 @@
 
 use crate::behavior::affect::{
     AffectEngine, EventKind, EventSource, HapticPattern, ReactionReason, SensorEvent,
+    DAWN_CURIOUS_MS, LIGHT_BRIGHT_MS, LIGHT_DARK_MS, MIN_DWELL_MS, PIR_CURIOUS_MS,
+    PIR_SATISFIED_MS,
 };
 use crate::behavior::Expression;
 
@@ -31,7 +33,7 @@ fn touch(at_ms: u64, kind: EventKind) -> SensorEvent {
 }
 
 #[test]
-fn sudden_dark_is_confused_for_2000_ms() {
+fn sudden_dark_is_confused_for_the_hold_time() {
     let mut engine = AffectEngine::new(0);
 
     engine.on_event(light(0, 80));
@@ -43,12 +45,13 @@ fn sudden_dark_is_confused_for_2000_ms() {
     assert_eq!(dark.state.reason, ReactionReason::Light);
     assert_eq!(dark.haptic, Some(HapticPattern::Confused));
 
-    assert_eq!(engine.tick(2_099).state.expression, Expression::Confused);
-    assert_eq!(engine.tick(2_100).state.expression, Expression::Idle);
+    let end = 100 + LIGHT_DARK_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 }
 
 #[test]
-fn sudden_bright_is_surprised_for_1500_ms() {
+fn sudden_bright_is_surprised_for_the_hold_time() {
     let mut engine = AffectEngine::new(0);
 
     engine.on_event(light(0, 50));
@@ -58,8 +61,9 @@ fn sudden_bright_is_surprised_for_1500_ms() {
     assert_eq!(bright.state.reason, ReactionReason::Light);
     assert_eq!(bright.haptic, Some(HapticPattern::Surprised));
 
-    assert_eq!(engine.tick(1_599).state.expression, Expression::Surprised);
-    assert_eq!(engine.tick(1_600).state.expression, Expression::Idle);
+    let end = 100 + LIGHT_BRIGHT_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Surprised);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 }
 
 #[test]
@@ -78,8 +82,9 @@ fn dark_then_bright_recovery_replaces_confused() {
     assert_eq!(recovered.state.reason, ReactionReason::Light);
     assert!(recovered.changed);
 
-    assert_eq!(engine.tick(1_999).state.expression, Expression::Surprised);
-    assert_eq!(engine.tick(2_000).state.expression, Expression::Idle);
+    let end = 500 + LIGHT_BRIGHT_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Surprised);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 }
 
 #[test]
@@ -114,10 +119,11 @@ fn gradual_dawn_is_curious_not_surprised() {
         assert_ne!(expression, Expression::Confused);
     }
 
-    // The 30 s rise reaches +30 and produces Curious 2 s.
+    // The 30 s rise reaches +30 and produces Curious.
+    let end = 30_000 + DAWN_CURIOUS_MS;
     assert_eq!(engine.tick(30_000).state.expression, Expression::Curious);
-    assert_eq!(engine.tick(31_999).state.expression, Expression::Curious);
-    assert_eq!(engine.tick(32_000).state.expression, Expression::Idle);
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Curious);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 }
 
 #[test]
@@ -152,7 +158,10 @@ fn bright_light_wakes_from_sleep() {
     let woken = engine.tick(60_100);
     assert_eq!(woken.state.expression, Expression::Surprised);
 
-    assert_eq!(engine.tick(61_600).state.expression, Expression::Idle);
+    assert_eq!(
+        engine.tick(60_100 + LIGHT_BRIGHT_MS).state.expression,
+        Expression::Idle
+    );
 }
 
 #[test]
@@ -169,8 +178,9 @@ fn pir_presence_rising_sustained_and_absence() {
     assert_eq!(curious.state.reason, ReactionReason::Presence);
     assert_eq!(curious.haptic, None);
 
-    assert_eq!(engine.tick(3_299).state.expression, Expression::Curious);
-    assert_eq!(engine.tick(3_300).state.expression, Expression::Idle);
+    let end = 300 + PIR_CURIOUS_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Curious);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 
     // Ten seconds of continuous presence, measured from the confirmed edge.
     assert_eq!(engine.tick(10_299).state.expression, Expression::Idle);
@@ -178,17 +188,20 @@ fn pir_presence_rising_sustained_and_absence() {
     assert_eq!(sustained.state.expression, Expression::Satisfied);
     assert_eq!(sustained.haptic, Some(HapticPattern::Satisfied));
 
-    assert_eq!(engine.tick(11_799).state.expression, Expression::Satisfied);
-    assert_eq!(engine.tick(11_800).state.expression, Expression::Idle);
+    let end = 10_300 + PIR_SATISFIED_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Satisfied);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 
     // Falling edge: no immediate reaction.
-    engine.on_event(presence(12_000, false));
-    assert_eq!(engine.tick(12_000).state.expression, Expression::Idle);
-    assert_eq!(engine.tick(12_200).state.expression, Expression::Idle);
+    let gone = end + 200;
+    engine.on_event(presence(gone, false));
+    assert_eq!(engine.tick(gone).state.expression, Expression::Idle);
+    assert_eq!(engine.tick(gone + 200).state.expression, Expression::Idle);
 
-    // Absence timer: 60 s after the confirmed falling edge (12_200).
-    assert_eq!(engine.tick(72_199).state.expression, Expression::Idle);
-    assert_eq!(engine.tick(72_200).state.expression, Expression::Sleep);
+    // Absence timer: 60 s after the confirmed falling edge.
+    let asleep = gone + 200 + 60_000;
+    assert_eq!(engine.tick(asleep - 1).state.expression, Expression::Idle);
+    assert_eq!(engine.tick(asleep).state.expression, Expression::Sleep);
 }
 
 #[test]
@@ -203,4 +216,28 @@ fn short_pir_pulse_is_ignored_by_debounce() {
         assert_ne!(expression, Expression::Curious);
         assert_ne!(expression, Expression::Satisfied);
     }
+}
+
+#[test]
+fn a_fresh_face_is_not_replaced_by_another_passive_sensor() {
+    let mut engine = AffectEngine::new(0);
+
+    // PIR Curious at 300 ms.
+    engine.on_event(presence(100, true));
+    engine.on_event(light(100, 50));
+    assert_eq!(engine.tick(300).state.expression, Expression::Curious);
+
+    // A light jump right after does not replace it.
+    engine.on_event(light(400, 80));
+    let held = engine.tick(400);
+    assert_eq!(held.state.expression, Expression::Curious);
+    assert_eq!(held.state.reason, ReactionReason::Presence);
+
+    // After the minimum stay a new light jump does.
+    let later = 300 + MIN_DWELL_MS;
+    engine.on_event(light(later - 100, 50));
+    engine.on_event(light(later, 80));
+    let replaced = engine.tick(later);
+    assert_eq!(replaced.state.expression, Expression::Surprised);
+    assert_eq!(replaced.state.reason, ReactionReason::Light);
 }

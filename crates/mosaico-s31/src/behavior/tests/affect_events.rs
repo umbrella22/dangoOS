@@ -2,7 +2,8 @@
 //! time, and return to the prior activity.
 
 use crate::behavior::affect::{
-    AffectEngine, EventKind, EventSource, HapticPattern, ReactionReason, SensorEvent, SystemCommand,
+    AffectEngine, EventKind, EventSource, HapticPattern, ReactionReason, SensorEvent,
+    SystemCommand, LIGHT_DARK_MS,
 };
 use crate::behavior::Expression;
 
@@ -234,8 +235,9 @@ fn short_physical_and_ambient_reactions_overlay_activity() {
     engine.on_event(light(2_100, 80));
     engine.on_event(light(2_200, 50));
     assert_eq!(engine.tick(2_200).state.expression, Expression::Confused);
-    assert_eq!(engine.tick(4_199).state.expression, Expression::Confused);
-    assert_eq!(engine.tick(4_200).state.expression, Expression::Thinking);
+    let end = 2_200 + LIGHT_DARK_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(end).state.expression, Expression::Thinking);
 }
 
 #[test]

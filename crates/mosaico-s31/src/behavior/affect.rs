@@ -208,6 +208,16 @@ pub enum ReactionReason {
     Error,
 }
 
+impl ReactionReason {
+    /// Sensors that react to the surroundings rather than to the user's hand.
+    fn is_passive(self) -> bool {
+        matches!(
+            self,
+            ReactionReason::Light | ReactionReason::Presence | ReactionReason::Magnetic
+        )
+    }
+}
+
 /// The resolved expression plus its provenance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AffectState {
@@ -290,31 +300,31 @@ const TOUCH_POKE_MS: u64 = 1_500;
 const RAPID_POKE_WINDOW_MS: u64 = 1_500;
 const RAPID_POKE_COUNT: u8 = 3;
 
-const KEY_HAPPY_MS: u64 = 1_500;
-const KEY_PUZZLED_MS: u64 = 1_500;
+pub(crate) const KEY_HAPPY_MS: u64 = 3_000;
+pub(crate) const KEY_PUZZLED_MS: u64 = 3_000;
 const KEY_TRIPLE_WINDOW_MS: u64 = 1_500;
 const KEY_TRIPLE_COUNT: u8 = 3;
 const HUG_WINDOW_MS: u64 = 300;
-const HUG_MS: u64 = 2_000;
+pub(crate) const HUG_MS: u64 = 3_500;
 
 const LIGHT_HISTORY: usize = 16;
 const LIGHT_FAST_WINDOW_MS: u64 = 300;
 const LIGHT_FAST_DELTA: i32 = 25;
-const LIGHT_BRIGHT_MS: u64 = 1_500;
-const LIGHT_DARK_MS: u64 = 2_000;
+pub(crate) const LIGHT_BRIGHT_MS: u64 = 3_000;
+pub(crate) const LIGHT_DARK_MS: u64 = 3_000;
 const LIGHT_DARK_LEVEL: u8 = 10;
 const LIGHT_WAKE_LEVEL: u8 = 20;
 const NIGHT_SLEEP_MS: u64 = 60_000;
 const DAWN_WINDOW_MS: u64 = 30_000;
 const DAWN_RISE: u8 = 20;
-const DAWN_CURIOUS_MS: u64 = 2_000;
+pub(crate) const DAWN_CURIOUS_MS: u64 = 3_000;
 
 const PIR_DEBOUNCE_MS: u64 = 200;
 const PIR_SUSTAINED_MS: u64 = 10_000;
-const PIR_SATISFIED_MS: u64 = 1_500;
+pub(crate) const PIR_SATISFIED_MS: u64 = 3_000;
 const PIR_SATISFIED_COOLDOWN_MS: u64 = 30_000;
 const PIR_ABSENCE_SLEEP_MS: u64 = 60_000;
-const PIR_CURIOUS_MS: u64 = 3_000;
+pub(crate) const PIR_CURIOUS_MS: u64 = 4_000;
 
 const BMM_APPROACH_MS: u64 = 2_000;
 const BMM_CONTACT_MS: u64 = 1_500;
@@ -323,15 +333,21 @@ const BMM_ORBIT_MS: u64 = 1_200;
 const BMM_EDGE_MS: u64 = 1_500;
 const BMM_CONFIDENCE_MIN: u8 = 50;
 
-const INTERACTION_INSERT_SURPRISED_MS: u64 = 500;
-const INTERACTION_INSERT_CURIOUS_MS: u64 = 1_500;
-const INTERACTION_INSERT_HAPPY_MS: u64 = 1_200;
-const INTERACTION_REMOVE_SURPRISED_MS: u64 = 400;
-const INTERACTION_REMOVE_CONFUSED_MS: u64 = 2_000;
-const CAMERA_INSERT_CURIOUS_MS: u64 = 1_500;
-const CAMERA_REMOVE_CONFUSED_MS: u64 = 1_500;
+pub(crate) const INTERACTION_INSERT_SURPRISED_MS: u64 = 800;
+pub(crate) const INTERACTION_INSERT_CURIOUS_MS: u64 = 2_000;
+pub(crate) const INTERACTION_INSERT_HAPPY_MS: u64 = 2_000;
+pub(crate) const INTERACTION_REMOVE_SURPRISED_MS: u64 = 800;
+pub(crate) const INTERACTION_REMOVE_CONFUSED_MS: u64 = 2_500;
+pub(crate) const CAMERA_INSERT_CURIOUS_MS: u64 = 2_500;
+pub(crate) const CAMERA_REMOVE_CONFUSED_MS: u64 = 2_500;
 
 const HAPTIC_RATE_LIMIT_MS: u64 = 150;
+
+/// A reaction stays on screen at least this long before a passive sensor
+/// (light, PIR, magnet) from a different source may replace it at the same
+/// priority. Deliberate input (keys, touch, shaking) and follow-ups from the
+/// same source still switch at once.
+pub(crate) const MIN_DWELL_MS: u64 = 1_200;
 
 /// Tire below this state of charge.
 const BATTERY_TIRED_PCT: u8 = 15;
@@ -975,6 +991,13 @@ impl AffectEngine {
                     return false;
                 }
                 if priority == current.priority && priority >= PRIO_ANGRY {
+                    return false;
+                }
+                if priority == current.priority
+                    && reason.is_passive()
+                    && reason != current.reason
+                    && at < current.started_ms.saturating_add(MIN_DWELL_MS)
+                {
                     return false;
                 }
             }

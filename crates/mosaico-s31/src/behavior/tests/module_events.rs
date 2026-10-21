@@ -3,8 +3,26 @@
 
 use crate::behavior::affect::{
     AffectEngine, EventKind, EventSource, HapticPattern, ModuleKind, ReactionReason, SensorEvent,
+    CAMERA_INSERT_CURIOUS_MS, CAMERA_REMOVE_CONFUSED_MS, INTERACTION_INSERT_CURIOUS_MS,
+    INTERACTION_INSERT_HAPPY_MS, INTERACTION_INSERT_SURPRISED_MS, INTERACTION_REMOVE_CONFUSED_MS,
+    INTERACTION_REMOVE_SURPRISED_MS,
 };
 use crate::behavior::Expression;
+
+/// Stage boundaries of the Interaction insert sequence started at `at`:
+/// Surprised -> Curious -> Happy -> back.
+fn insert_stages(at: u64) -> (u64, u64, u64) {
+    let curious = at + INTERACTION_INSERT_SURPRISED_MS;
+    let happy = curious + INTERACTION_INSERT_CURIOUS_MS;
+    (curious, happy, happy + INTERACTION_INSERT_HAPPY_MS)
+}
+
+/// Stage boundaries of the Interaction remove sequence started at `at`:
+/// Surprised -> Confused -> back.
+fn remove_stages(at: u64) -> (u64, u64) {
+    let confused = at + INTERACTION_REMOVE_SURPRISED_MS;
+    (confused, confused + INTERACTION_REMOVE_CONFUSED_MS)
+}
 
 fn module(at_ms: u64, source: EventSource, kind: EventKind) -> SensorEvent {
     SensorEvent {
@@ -48,21 +66,21 @@ fn right_slot_insert_plays_the_three_stage_sequence() {
     assert_eq!(surprised.state.reason, ReactionReason::ModuleInsert);
     assert_eq!(surprised.haptic, Some(HapticPattern::ModuleInsert));
 
-    // Surprised [100, 600)
-    assert_eq!(engine.tick(599).state.expression, Expression::Surprised);
-    // Curious [600, 2100)
-    assert_eq!(engine.tick(600).state.expression, Expression::Curious);
-    assert_eq!(engine.tick(2_099).state.expression, Expression::Curious);
-    // Happy [2100, 3300)
-    assert_eq!(engine.tick(2_100).state.expression, Expression::Happy);
-    assert_eq!(engine.tick(3_299).state.expression, Expression::Happy);
-    // Return at 3300.
-    let back = engine.tick(3_300);
+    let (curious, happy, done) = insert_stages(100);
+    assert_eq!(
+        engine.tick(curious - 1).state.expression,
+        Expression::Surprised
+    );
+    assert_eq!(engine.tick(curious).state.expression, Expression::Curious);
+    assert_eq!(engine.tick(happy - 1).state.expression, Expression::Curious);
+    assert_eq!(engine.tick(happy).state.expression, Expression::Happy);
+    assert_eq!(engine.tick(done - 1).state.expression, Expression::Happy);
+    let back = engine.tick(done);
     assert_eq!(back.state.expression, Expression::Idle);
     assert!(back.changed);
 
     // Only the insertion transition produced a haptic.
-    assert_eq!(engine.tick(4_000).haptic, None);
+    assert_eq!(engine.tick(done + 700).haptic, None);
 }
 
 #[test]
@@ -70,20 +88,25 @@ fn right_slot_remove_plays_surprised_then_confused() {
     let mut engine = AffectEngine::new(0);
 
     engine.on_event(inserted(100, EventSource::ModuleRight));
-    assert_eq!(engine.tick(3_300).state.expression, Expression::Idle);
+    assert_eq!(
+        engine.tick(insert_stages(100).2).state.expression,
+        Expression::Idle
+    );
 
-    engine.on_event(removed(4_000, EventSource::ModuleRight));
-    let surprised = engine.tick(4_000);
+    engine.on_event(removed(10_000, EventSource::ModuleRight));
+    let surprised = engine.tick(10_000);
     assert_eq!(surprised.state.expression, Expression::Surprised);
     assert_eq!(surprised.state.reason, ReactionReason::ModuleRemove);
     assert_eq!(surprised.haptic, Some(HapticPattern::ModuleRemove));
 
-    // Surprised [4000, 4400)
-    assert_eq!(engine.tick(4_399).state.expression, Expression::Surprised);
-    // Confused [4400, 6400)
-    assert_eq!(engine.tick(4_400).state.expression, Expression::Confused);
-    assert_eq!(engine.tick(6_399).state.expression, Expression::Confused);
-    assert_eq!(engine.tick(6_400).state.expression, Expression::Idle);
+    let (confused, done) = remove_stages(10_000);
+    assert_eq!(
+        engine.tick(confused - 1).state.expression,
+        Expression::Surprised
+    );
+    assert_eq!(engine.tick(confused).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(done - 1).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(done).state.expression, Expression::Idle);
 }
 
 #[test]
@@ -111,17 +134,19 @@ fn left_camera_insert_and_remove_use_short_reactions() {
     assert_eq!(insert.state.reason, ReactionReason::ModuleInsert);
     assert_eq!(insert.haptic, Some(HapticPattern::ModuleInsert));
 
-    assert_eq!(engine.tick(1_599).state.expression, Expression::Curious);
-    assert_eq!(engine.tick(1_600).state.expression, Expression::Idle);
+    let end = 100 + CAMERA_INSERT_CURIOUS_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Curious);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 
-    engine.on_event(removed(2_000, EventSource::ModuleLeft));
-    let remove = engine.tick(2_000);
+    engine.on_event(removed(5_000, EventSource::ModuleLeft));
+    let remove = engine.tick(5_000);
     assert_eq!(remove.state.expression, Expression::Confused);
     assert_eq!(remove.state.reason, ReactionReason::ModuleRemove);
     assert_eq!(remove.haptic, Some(HapticPattern::ModuleRemove));
 
-    assert_eq!(engine.tick(3_499).state.expression, Expression::Confused);
-    assert_eq!(engine.tick(3_500).state.expression, Expression::Idle);
+    let end = 5_000 + CAMERA_REMOVE_CONFUSED_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 }
 
 #[test]
@@ -134,15 +159,19 @@ fn insertion_overlays_activity_and_returns_to_it() {
     engine.on_event(inserted(100, EventSource::ModuleRight));
     assert_eq!(engine.tick(100).state.expression, Expression::Surprised);
 
-    assert_eq!(engine.tick(3_299).state.expression, Expression::Happy);
-    let back_to_activity = engine.tick(3_300);
+    let done = insert_stages(100).2;
+    assert_eq!(engine.tick(done - 1).state.expression, Expression::Happy);
+    let back_to_activity = engine.tick(done);
     assert_eq!(back_to_activity.state.expression, Expression::Listening);
     assert_eq!(back_to_activity.state.reason, ReactionReason::Activity);
 
     // Removal also overlays and returns.
-    engine.on_event(removed(4_000, EventSource::ModuleRight));
-    assert_eq!(engine.tick(4_000).state.expression, Expression::Surprised);
-    assert_eq!(engine.tick(6_400).state.expression, Expression::Listening);
+    engine.on_event(removed(10_000, EventSource::ModuleRight));
+    assert_eq!(engine.tick(10_000).state.expression, Expression::Surprised);
+    assert_eq!(
+        engine.tick(remove_stages(10_000).1).state.expression,
+        Expression::Listening
+    );
 }
 
 #[test]
@@ -157,8 +186,9 @@ fn duplicate_insert_does_not_restart_the_sequence() {
     assert_eq!(duplicate.state.expression, Expression::Surprised);
     assert_eq!(duplicate.haptic, None);
 
-    // The original 500 ms Surprised stage still ends at 600.
-    assert_eq!(engine.tick(600).state.expression, Expression::Curious);
+    // The original Surprised stage still ends on time.
+    let (curious, _, _) = insert_stages(100);
+    assert_eq!(engine.tick(curious).state.expression, Expression::Curious);
 }
 
 #[test]
@@ -194,16 +224,18 @@ fn interaction_in_the_left_slot_plays_the_interaction_sequence() {
 
     let kind = EventKind::ModuleInserted(ModuleKind::Interaction);
     engine.on_event(module(100, EventSource::ModuleLeft, kind));
+    let (curious, happy, done) = insert_stages(100);
     assert_eq!(engine.tick(100).state.expression, Expression::Surprised);
-    assert_eq!(engine.tick(600).state.expression, Expression::Curious);
-    assert_eq!(engine.tick(2_100).state.expression, Expression::Happy);
-    assert_eq!(engine.tick(3_300).state.expression, Expression::Idle);
+    assert_eq!(engine.tick(curious).state.expression, Expression::Curious);
+    assert_eq!(engine.tick(happy).state.expression, Expression::Happy);
+    assert_eq!(engine.tick(done).state.expression, Expression::Idle);
 
     let kind = EventKind::ModuleRemoved(ModuleKind::Interaction);
-    engine.on_event(module(4_000, EventSource::ModuleLeft, kind));
-    assert_eq!(engine.tick(4_000).state.expression, Expression::Surprised);
-    assert_eq!(engine.tick(4_400).state.expression, Expression::Confused);
-    assert_eq!(engine.tick(6_400).state.expression, Expression::Idle);
+    engine.on_event(module(10_000, EventSource::ModuleLeft, kind));
+    let (confused, done) = remove_stages(10_000);
+    assert_eq!(engine.tick(10_000).state.expression, Expression::Surprised);
+    assert_eq!(engine.tick(confused).state.expression, Expression::Confused);
+    assert_eq!(engine.tick(done).state.expression, Expression::Idle);
 }
 
 #[test]
@@ -212,11 +244,14 @@ fn each_slot_tracks_its_own_presence() {
 
     let insert = EventKind::ModuleInserted(ModuleKind::Interaction);
     engine.on_event(module(100, EventSource::ModuleRight, insert));
-    assert_eq!(engine.tick(3_300).state.expression, Expression::Idle);
+    assert_eq!(
+        engine.tick(insert_stages(100).2).state.expression,
+        Expression::Idle
+    );
 
     // A second board on the other side is a new insertion, not a duplicate.
-    engine.on_event(module(4_000, EventSource::ModuleLeft, insert));
-    let second = engine.tick(4_000);
+    engine.on_event(module(10_000, EventSource::ModuleLeft, insert));
+    let second = engine.tick(10_000);
     assert_eq!(second.state.expression, Expression::Surprised);
     assert_eq!(second.haptic, Some(HapticPattern::ModuleInsert));
 }

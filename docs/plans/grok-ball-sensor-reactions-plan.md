@@ -5,6 +5,7 @@
 > - 渲染对象已从 grok-ball 换成狐狸团子（`fox/`），grok-ball 代码已删除；本文的 BallExpression 即现在的 `behavior::Expression`。
 > - 反应层已实现并有 host 测试：`behavior/affect.rs`（摇晃、轻拍、光线、PIR、KEY_L/KEY_R、磁铁、电量、模块插拔），测试在 `behavior/tests/`。
 > - 模块驱动已改为左右槽自适应：`drivers/subboard/`。交互板插左（`0x50`）或插右（`0x51`）都能用；同时只读一块；相机固定按左槽报告。`ModuleInserted/ModuleRemoved` 现在带 `ModuleKind`，反应跟随模块类型而不是槽位。下文 §2.2、§7 里"交互板只在右槽、相机只在左槽"的假设已经放宽，规则见 [硬件文档 §7.2.1](../MOSAICO_V12_HARDWARE.md)。
+> - 2026-10-21 真机试用后调慢了交互板相关表情：按键、光线、PIR 和插拔序列的停留时间加长（下文表格已同步），并加了 1.2 s 最短停留——光线、PIR、磁铁这类被动传感器不能在 1.2 s 内用另一来源的反应顶掉刚出现的表情；按键、触摸、摇晃和同一来源的后续反应不受限。常量在 `behavior/affect.rs`，测试直接引用这些常量。
 > - 仍未完成：交互板 LDR/PIR/按键在真机上的逐项验收；WS2812 心情灯；SI12T 触摸键模式；IR 发射（本 RFC 原本就不使用）。
 
 > Original status (2026-10-20): Draft implementation plan; no implementation work package is complete.
@@ -225,9 +226,9 @@ Touch events use the existing `InputQueue` timestamps. The gesture detector runs
 
 | Event | Rule | Reaction | Return |
 | --- | --- | --- | --- |
-| Sudden bright | +25 points or more within 300 ms | `Surprised` 1.5 s | Prior state |
-| Sudden dark/cover | −25 points or more within 300 ms | `Confused` 2 s | Prior state |
-| Gradual dawn | Slow rise over 30 s | `Curious` 2 s → `Idle` | Idle |
+| Sudden bright | +25 points or more within 300 ms | `Surprised` 3 s | Prior state |
+| Sudden dark/cover | −25 points or more within 300 ms | `Confused` 3 s | Prior state |
+| Gradual dawn | Slow rise over 30 s | `Curious` 3 s → `Idle` | Idle |
 | Night | Level below 10 for 60 s | `Sleep` | Any touch, PIR or bright light wakes |
 
 Absolute level does not select an expression. A slow daylight change must not trigger `Surprised`.
@@ -236,8 +237,8 @@ Absolute level does not select an expression. A slow daylight change must not tr
 
 | Event | Rule | Reaction | Return |
 | --- | --- | --- | --- |
-| Presence rising | Debounced 0→1 | `Curious` 3 s | Idle |
-| Presence sustained | 10 s continuous presence | `Satisfied` 1.5 s | Idle; no repeat within 30 s |
+| Presence rising | Debounced 0→1 | `Curious` 4 s | Idle |
+| Presence sustained | 10 s continuous presence | `Satisfied` 3 s | Idle; no repeat within 30 s |
 | Presence falling | Debounced 1→0 | No immediate reaction | 60 s absence → `Sleep` |
 
 PIR pulses shorter than 200 ms are ignored. The sensor is sampled; the absence timer starts on the confirmed falling edge.
@@ -246,11 +247,11 @@ PIR pulses shorter than 200 ms are ignored. The sensor is sampled; the absence t
 
 | Input | Action | Reaction | Haptic |
 | --- | --- | --- | --- |
-| KEY_L short | Soothe | `Happy` 1.5 s | Soft tick |
+| KEY_L short | Soothe | `Happy` 3 s (held: until release + 3 s) | Soft tick |
 | KEY_L hold | Continued soothe | `Happy` while held | Soft tick on entry |
-| KEY_R short | Poke | `Puzzled` 1.5 s | Double tick |
+| KEY_R short | Poke | `Puzzled` 3 s | Double tick |
 | KEY_R triple within 1.5 s | Repeated poke | `Angry` 10 s | Strong double pulse |
-| KEY_L + KEY_R within 300 ms | Hug | `Satisfied` 2 s | Soft double tick |
+| KEY_L + KEY_R within 300 ms | Hug | `Satisfied` 3.5 s | Soft double tick |
 | `button_power` short | Voice PTT | `Listening` | Short tick |
 | `button_power` long 500 ms | Hub/drawer | No expression change | Long tick |
 | `button_power` double | Stop/cancel | Stop the active session | Double tick |
@@ -277,10 +278,10 @@ Saturated samples, low confidence, and calibration failures produce no expressio
 
 | Event | Reaction | Haptic |
 | --- | --- | --- |
-| Right-slot Interaction inserted | `Surprised` 0.5 s → `Curious` 1.5 s → `Happy` 1.2 s → prior state | Single tick |
-| Right-slot Interaction removed | `Surprised` 0.4 s → `Confused` 2 s → prior state | Double tick |
-| Left-slot camera inserted | `Curious` 1.5 s → prior state | Single soft tick |
-| Left-slot camera removed | `Confused` 1.5 s → prior state | Double soft tick |
+| Interaction inserted (either slot) | `Surprised` 0.8 s → `Curious` 2 s → `Happy` 2 s → prior state | Single tick |
+| Interaction removed (either slot) | `Surprised` 0.8 s → `Confused` 2.5 s → prior state | Double tick |
+| Camera inserted (left slot) | `Curious` 2.5 s → prior state | Single soft tick |
+| Camera removed (left slot) | `Confused` 2.5 s → prior state | Double soft tick |
 
 Insertion and removal are derived from EEPROM presence and board type, not from the LDR/PIR pins. The module watcher reports a stable event after three consecutive scans. A wrong board type, an EEPROM read error, or an unreadable descriptor produces no expression and increments a diagnostic counter.
 

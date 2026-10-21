@@ -2,7 +2,8 @@
 //! short/long/double, and the debug-only boot button.
 
 use crate::behavior::affect::{
-    AffectEngine, EventKind, EventSource, HapticPattern, ReactionReason, SensorEvent, SystemCommand,
+    AffectEngine, EventKind, EventSource, HapticPattern, ReactionReason, SensorEvent,
+    SystemCommand, HUG_MS, KEY_HAPPY_MS, KEY_PUZZLED_MS,
 };
 use crate::behavior::Expression;
 
@@ -36,19 +37,21 @@ fn key_left_soothes_happy_while_held_and_after_release() {
     assert_eq!(pressed.state.reason, ReactionReason::KeyLeft);
     assert_eq!(pressed.haptic, Some(HapticPattern::Happy));
 
-    // Still held after 1.5 s: the reaction is extended.
-    assert_eq!(engine.tick(1_000).state.expression, Expression::Happy);
+    // Held past the hold time: the reaction is extended.
+    let release = 100 + KEY_HAPPY_MS + 500;
+    assert_eq!(engine.tick(release - 1).state.expression, Expression::Happy);
 
-    engine.on_event(key(1_200, EventSource::KeyLeft, false));
-    assert_eq!(engine.tick(1_200).state.expression, Expression::Happy);
+    engine.on_event(key(release, EventSource::KeyLeft, false));
+    assert_eq!(engine.tick(release).state.expression, Expression::Happy);
 
-    // Release + 1.5 s.
-    assert_eq!(engine.tick(2_699).state.expression, Expression::Happy);
-    assert_eq!(engine.tick(2_700).state.expression, Expression::Idle);
+    // Release + hold time.
+    let end = release + KEY_HAPPY_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Happy);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 }
 
 #[test]
-fn key_right_pokes_puzzled_for_1500_ms() {
+fn key_right_pokes_puzzled_for_the_hold_time() {
     let mut engine = AffectEngine::new(0);
 
     engine.on_event(key(100, EventSource::KeyRight, true));
@@ -57,8 +60,9 @@ fn key_right_pokes_puzzled_for_1500_ms() {
     assert_eq!(pressed.state.reason, ReactionReason::KeyRight);
 
     engine.on_event(key(200, EventSource::KeyRight, false));
-    assert_eq!(engine.tick(1_599).state.expression, Expression::Puzzled);
-    assert_eq!(engine.tick(1_600).state.expression, Expression::Idle);
+    let end = 100 + KEY_PUZZLED_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Puzzled);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 }
 
 #[test]
@@ -107,8 +111,9 @@ fn both_keys_together_are_satisfied() {
     engine.on_event(key(300, EventSource::KeyLeft, false));
     engine.on_event(key(320, EventSource::KeyRight, false));
 
-    assert_eq!(engine.tick(2_249).state.expression, Expression::Satisfied);
-    assert_eq!(engine.tick(2_250).state.expression, Expression::Idle);
+    let end = 250 + HUG_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Satisfied);
+    assert_eq!(engine.tick(end).state.expression, Expression::Idle);
 }
 
 #[test]
@@ -171,8 +176,9 @@ fn key_left_happy_returns_to_listening() {
     assert_eq!(engine.tick(200).state.expression, Expression::Happy);
     engine.on_event(key(250, EventSource::KeyLeft, false));
 
-    assert_eq!(engine.tick(1_749).state.expression, Expression::Happy);
-    assert_eq!(engine.tick(1_750).state.expression, Expression::Listening);
+    let end = 250 + KEY_HAPPY_MS;
+    assert_eq!(engine.tick(end - 1).state.expression, Expression::Happy);
+    assert_eq!(engine.tick(end).state.expression, Expression::Listening);
 }
 
 #[test]
