@@ -2,48 +2,81 @@
 
 所有命令在仓库根目录执行。`rust-toolchain.toml` 选择 stable Rust，并声明 S31 使用的 RISC-V target。
 
-## 桌面预览
+## 当前状态
+
+G0/H0/G1/R0/R1/G2 与 H1 已在真机验收；H2（传感器→表情→马达）和 H3（人味交互、启动页、电量）已完成 host 侧并通过目标构建，**待真机手感验收**。
+
+- `grok-ball`：110 个 host 测试。
+- `lvgl-ui`：51 个测试（含 10 个自定义控件测试）。
+- `mosaico-s31`：球体首屏 + 启动页/出场动画 + 交互运行时 + R1 异步显示/输入 + 传感器与电量任务 + USB-OTG HS CDC；44 个 host 测试。
+- R0 真机证据：CDC、心跳、整帧 480×480、黑底+三色带、触摸。
+- R1 真机证据：100 次触摸 P50 29–33ms、P95 36–41ms、76 秒无复位。
+- G2 真机证据：球体 240×240，6 状态点按切换；100 次标签触摸 P50 28–29ms、P95 30ms、20–21fps；全屏透明触摸层，只有球体 240×240/8 块被重绘。
+- H1.2：两颗 BMM150 在主板 I2C0 `0x11/0x12`，chip ID `0x32`，20Hz；模块 `interact(0x16)`；IMU 35–46Hz。
+- 当前镜像：`target/mosaico-s31-h3-fixed4.bin`（945,920 B，SHA-256 `367b148b...`，固定球平面、无拖拽）；G2/R0/R1 验证镜像仍在 `target/`。
+- 缺失美术素材清单见 [docs/ASSET_REQUESTS.md](docs/ASSET_REQUESTS.md)。
+- 详细顺序见 [docs/plans/ROADMAP.md](docs/plans/ROADMAP.md)。
+
+## 常用命令
 
 ```bash
-cargo desktop
+# 核心 host 测试
+cargo test -p grok-ball --offline
+
+# 六态 320x320 PPM
+cargo run -p grok-ball --example states --offline
+
+# 16 表情 BallWidget host 预览（480x480）
+cargo run -p mosaico-s31 --example preview --offline
+
+# 启动页 / 出场下落 / 猫耳狐狸耳皮肤（PPM）
+cargo run -p mosaico-s31 --example splash_preview --offline
+
+# WebP/GIF 素材 -> RGB565 Rust 表
+python3 crates/grok-ball/tools/sprite_pack.py --input art/x.webp --name x --size 240
+
+# 固件目标构建
+cargo build -p mosaico-s31 --release --target riscv32imafc-unknown-none-elf
+
+# LVGL UI 层测试
+cargo test -p lvgl-ui --manifest-path ../lv_binding_rust/Cargo.toml -- --test-threads=1
 ```
 
-打开 480×480 方屏预览（Mosaico 同尺寸）。桌面数据由模拟设备生成，按秒更新。macOS、Windows 和 Linux 使用 Slint 桌面后端；Linux 需要对应后端的窗口系统开发库。
+如果 registry 很慢，在命令前加 `CARGO_NET_OFFLINE=true`。依赖缓存和 `Cargo.lock` 已完整。
 
-## 编译固件
+## 烧录 R0
+
+R0 镜像只写 `main_app`（`0x210000`），不要动 bootloader、分区表或 `0x20000` 的 `vibe_mode`。
 
 ```bash
-rustup target add riscv32imafc-unknown-none-elf
-cargo firmware --locked
+espflash save-image --chip esp32s31 \
+  target/riscv32imafc-unknown-none-elf/release/mosaico-s31-fw \
+  target/mosaico-s31-r0.bin
+
+esptool --chip esp32s31 --port <PORT> --baud 115200 \
+  --before no-reset --after hard-reset \
+  write_flash 0x210000 target/mosaico-s31-r0.bin
+
+espflash monitor --chip esp32s31
 ```
 
-ELF 输出到 `target/riscv32imafc-unknown-none-elf/release/fan-control-fw`。固件启动时自检 eFuse 硬件版本（仅接受 v1.1/v1.2 引脚映射）。真机运行使用 release 构建。
+R0 控制台是 **USB-OTG HS CDC-ACM**，不是 USB-Serial-JTAG。验证镜像会枚举为 `/dev/cu.usbmodemmosaico_s31_r01`，并每 5 秒重放：
 
-## 烧录和串口
+```text
+[boot] Mosaico S31 R0 cdc=true drops=0 q=0/32 disp=true chunks=30 ms=38 hb=10
+```
 
-安装支持 `esp32s31` 的 `espflash` 后，连接板载 Type-C UART：
+`disp=true` 表示整帧已传输，`hb` 是当前 `ui_task` 心跳；触摸会打印 `touch down at (x, y)` / `touch release`。读取命令：
 
 ```bash
-cargo flash --locked
+espflash monitor --chip esp32s31 --port /dev/cu.usbmodemmosaico_s31_r01
 ```
 
-该命令会写入设备并打开串口。串口为 115200 8N1。仅编译使用 `cargo firmware`。
+## 目录
 
-## 生成交付包
+- `crates/grok-ball`：数据、球体引擎、RGB565 光栅、表情引擎
+- `crates/mosaico-s31`：S31 固件（R0）和 BallWidget host 预览
+- `../lv_binding_rust/lvgl-ui`：`App`/`Node`/`Ui` 声明式 UI 层
+- `archive/crates-pre-s31-20261019`：旧 Slint/风扇 crates 的本地归档，不参与 workspace 构建
 
-```bash
-./scripts/make-release.sh v17
-```
-
-`v17` 是版本名示例。脚本执行锁定依赖的 release 构建，输出 `releases/fan-control-<版本>-<日期>/` 及同名 ZIP。镜像烧录地址和校验步骤位于包内 README。
-
-## 检查代码
-
-```bash
-cargo test-core
-./scripts/check.sh
-```
-
-检查脚本分别构建桌面和 MCU 目标。该 workspace 混合 `std` 桌面程序与 `no_std` 固件，构建时按 crate 和 target 选择，不使用单一 target 的 `cargo build --workspace`。
-
-详细入口见 [开发指南](docs/DEVELOPMENT.md)；引脚与扩展槽见 [Mosaico v1.2 硬件真相](docs/MOSAICO_V12_HARDWARE.md)。
+引脚、电源轨和扩展槽定义见 [Mosaico v1.2 硬件真相](docs/MOSAICO_V12_HARDWARE.md)。

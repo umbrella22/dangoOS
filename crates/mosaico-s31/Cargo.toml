@@ -1,0 +1,40 @@
+[package]
+name = "mosaico-s31"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "ESP-Mosaico S31 platform firmware (R1 async display/input, LVGL UI task)"
+publish = false
+
+[lib]
+name = "mosaico_s31"
+path = "src/lib.rs"
+
+[dependencies]
+log.workspace = true
+# Host-buildable UI dependencies. The BallWidget and its host preview build
+# with the plain host toolchain; the ESP HAL/RTOS dependencies stay target
+# gated.
+lvgl.workspace = true
+lvgl-ui.workspace = true
+grok-ball = { path = "../grok-ball" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+esp-hal.workspace = true
+esp-alloc.workspace = true
+esp-backtrace.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-println.workspace = true
+esp-rtos.workspace = true
+embassy-executor.workspace = true
+embassy-time.workspace = true
+embassy-usb = { version = "0.6", default-features = false }
+embassy-futures = "0.1"
+embassy-sync = "0.8"
+critical-section.workspace = true
+
+[[bin]]
+name = "mosaico-s31-fw"
+path = "src/main.rs"
+test = false
+bench = false

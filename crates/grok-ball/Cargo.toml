@@ -1,0 +1,12 @@
+[package]
+name = "grok-ball"
+version = "0.1.0"
+edition = "2021"
+description = "Host-testable grok-ball expression data, engine, rasterizer and sensor affect engine"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]

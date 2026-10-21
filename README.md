@@ -1,51 +1,133 @@
-# ikaros 风扇控制系统
+# ESP-Mosaico S31 — grok-ball first screen
 
-Rust + Slint 风扇控制界面，包含桌面模拟器和 ESP-Mosaico (v1.2) 真机固件。当前真机配置为 CO5300 480×480 QSPI AMOLED、CST9220 触摸及 GPIO12 的 RMT PWM。应用使用 `no_std` 和 `esp-hal`，显示/触摸协议对齐官方 esp-mosaico BSP 与组件。
+Rust firmware and a host-testable core for the ESP-Mosaico v1.2 display terminal
+(ESP32-S31, CO5300 480×480 QSPI AMOLED, CST9220 touch). The UI layer is
+[`lv_binding_rust/lvgl-ui`](../lv_binding_rust/lvgl-ui/README.md); the first
+screen is a Rust port of the MIT-licensed grok-ball engine.
 
-## Rust workspace
+## Workspace
 
-| Crate | 职责 |
+| Path | Responsibility |
 | --- | --- |
-| [`fan-core`](crates/fan-core/) | 与平台无关的 AUTO 温度曲线和功率估算，`no_std` |
-| [`fan-ui`](crates/fan-ui/) | 共享 Slint 布局、生成的组件和中文字体 |
-| [`fan-desktop`](crates/fan-desktop/) | 桌面入口、Slint 事件循环和模拟设备 |
-| [`fan-firmware`](crates/fan-firmware/) | S31 启动、板级配置、显示/触摸/风扇驱动和 Slint 平台 |
+| `crates/grok-ball` | `no_std` data, ball engine, RGB565 rasterizer, sensor affect engine, touch personality, character skins and sprite playback; 110 host tests |
+| `crates/mosaico-s31` | S31 firmware: R0 `esp-rtos`/Embassy task skeleton, ported display/touch drivers, and the `BallWidget` host preview |
+| `../lv_binding_rust/lvgl-ui` | Declarative `App`/`Node`/`Ui` layer plus `CustomWidget` and `Ui::tick` |
+| `archive/crates-pre-grok-ball-20261020` | Archived single-threaded S31 prototype; not a workspace member |
+| `archive/crates-pre-s31-20261019` | Archived Slint/fan crates; not a workspace member |
 
-根目录为虚拟 workspace，统一维护依赖、`Cargo.lock`、工具链和 release 配置。默认成员是桌面程序；硬件代码在 `crates/fan-firmware/src/`。
+## Commands
 
-## 常用命令
-
-在仓库根目录执行：
+Run from the repository root:
 
 ```bash
-cargo run                             # 480×480 桌面预览
-cargo desktop                        # 480×480 方屏预览
-cargo firmware                        # 构建 S31 release 固件
-cargo flash                           # 构建、烧录并打开串口
-cargo test-core                       # 共享控制策略测试
-./scripts/check.sh                    # 桌面、固件及依赖隔离检查
-./scripts/make-release.sh v17          # 生成版本包；版本名按实际发布填写
+# Host core: data parity, engine, raster, affect timelines
+cargo test -p grok-ball --offline
+
+# Six 320x320 PPM frames (Idle/Listening/Thinking/Speaking/Happy/Error)
+cargo run -p grok-ball --example states --offline
+
+# 16-expression BallWidget preview on a 480x480 host display
+cargo run -p mosaico-s31 --example preview --offline
+
+# Boot wordmark, entrance drop and cat/fox skins as PPM frames
+cargo run -p mosaico-s31 --example splash_preview --offline
+
+# Firmware target build
+cargo build -p mosaico-s31 --release --target riscv32imafc-unknown-none-elf
+
+# UI layer tests in the sibling binding repository
+cargo test -p lvgl-ui --manifest-path ../lv_binding_rust/Cargo.toml -- --test-threads=1
 ```
 
-MCU 目标为 `riscv32imafc-unknown-none-elf`，根目录 `.cargo/config.toml` 按目标设置链接参数。桌面与固件构建无需切换配置文件。
+If the crates.io index is slow, prefix the commands with
+`CARGO_NET_OFFLINE=true`; the dependency cache and `Cargo.lock` are complete.
 
-打包需要支持 `esp32s31` 的 `espflash` 和 Python 3.11+，产物写入 `releases/`，包括 app、4MB 合并镜像、ELF、`BUILD.json` 和校验和。已有同名包会报错，防止覆盖。
+## Current status
 
-## 当前能力
+- **G0 complete:** 25 eye-ring sets, 96-point body, 32 seeds, 8 data-parity
+  tests, 10 engine tests, 7 raster tests. The six-state frames are written under
+  `target/grok-ball-states/`.
+- **H0 complete:** 56 affect timeline tests for shake, touch, light, PIR, keys,
+  BMM150, module hot-plug, haptics, and the `Activity/Error` input.
+- **G1 complete:** `CustomWidget`/`Ui::tick` in `lvgl-ui` (51 tests) and the
+  `BallWidget` host preview with 14 expressions and a single create/delete
+  lifecycle. Frames are written under `target/ball-widget-preview/`.
+- **R0 complete on hardware:** USB-OTG HS CDC console, continuous `ui_task`
+  heartbeats, full-frame 480×480 transfer, black field plus the color bar, and
+  touch down/release logs. Verified image `target/mosaico-s31-r0.bin`,
+  167,856 bytes, SHA-256 `6b0ca615...`.
+- **R1 complete on hardware:** async QSPI + two-frame presenter, GPIO6/async I2C
+  input, LVGL `ui_task`. 100-touch firmware metric: P50 29–33 ms, P95 36–41 ms,
+  max 101 ms, zero queue drops, 76-second run without reset. Verified image
+  `target/mosaico-s31-r1.bin`, 764,448 bytes, SHA-256 `e362f5a9...`.
+- **G2 complete on hardware:** the grok-ball first screen runs on the R1
+  pipeline: 240×240 canvas, tap cycles the six AI states, firmware P95 30 ms,
+  20 fps, canvas damage 8 chunks / ~16 ms. The touch layer is a full-screen
+  transparent clickable `Obj`: a tap anywhere cycles the ball, while only the
+  240×240 ball area is redrawn.
+- **H1.2 sensor hardware online:** both BMM150s on main I2C0 `0x11/0x12`
+  (chip ID `0x32`, 20 Hz, ~556 µT), right-slot module `interact(0x16)`, IMU
+  35–46 Hz, zero edge drops.
+- **Pending:** H2 AffectEngine + RMT haptics, IMU 50 Hz tuning, G3 optional full
+  catalog/effects, and the later Hub/C3/voice/Lua work.
 
-- 启动页显示 `ikaros` 标识渐显与短线展开，约 1 秒后切入主界面；桌面和固件共享该效果。
-- 真机显示采用 PSRAM 双帧缓冲、4×10 行内部 RAM bounce buffer 和 AXI DMA 连续扫描。显示驱动显式配置 `OUT_EOF_MODE=0`；故障证据和验证范围见 [v16 说明](docs/releases/v16.md)。
-- 触摸选择 0/25/50/75/100/AUTO；固件以 25kHz PWM 控制风扇。
-- 真机温度、CPU 温度和转速显示仍为模拟数据，功率为估算值；实际温度传感器和 TACH 反馈尚未接入。
-- 桌面与固件共用 480×480 方屏布局。Mosaico QSPI 显示与 CST9220 触摸驱动已实现（对齐官方 BSP v1.2），待真机验收。
-- `esp-bootloader-esp-idf` 提供应用元数据，版本包使用已有的预编译 bootloader；应用运行时为 Rust / esp-hal，构建不需要安装 ESP-IDF。
+The current firmware is the ball + sensor image
+`target/mosaico-s31-g2-r15.bin` (905,200 bytes, SHA-256 `2e8e3e48...`); it
+shows the ball, cycles the six AI states on tap, and logs both magnetometers,
+the module and the IMU.
 
-## 文档
+## Firmware flash path
 
-- [快速开始](QUICKSTART.md)
-- [crate 与源码结构](docs/PROJECT_STRUCTURE.md)
-- [开发、检查和发布](docs/DEVELOPMENT.md)
-- [feature 与编译边界](docs/TREE_SHAKING.md)
-- [Mosaico v1.2 硬件真相](docs/MOSAICO_V12_HARDWARE.md)
-- [固件说明](crates/fan-firmware/README.md)
-- [历史参考](docs/legacy/README.md)：未参与构建的早期驱动草稿和旧设计说明
+Build the image, then write only the `main_app` region:
+
+```bash
+cargo build -p mosaico-s31 --release --target riscv32imafc-unknown-none-elf
+espflash save-image --chip esp32s31 \
+  target/riscv32imafc-unknown-none-elf/release/mosaico-s31-fw \
+  target/mosaico-s31-r0.bin
+
+esptool --chip esp32s31 --port <PORT> --baud 115200 \
+  --before no-reset --after hard-reset \
+  write_flash 0x210000 target/mosaico-s31-r0.bin
+```
+
+Verified images:
+
+- R0: 167,856 bytes, SHA-256
+  `6b0ca61529d2cb3f5bb130d6fd6f0155404e80f2a18e5518c9af7f1e8ab04f13`.
+- R1: 764,448 bytes, SHA-256
+  `e362f5a9bd40327f0bef9eb8748c79b7df340c2ef06ae5bbf9940fab92cb4785`.
+- G2.1/G2.2 (ball + sensors): 905,200 bytes, SHA-256
+  `2e8e3e48...`; it also carries the BMM150 power-up fix and the persistent
+  I2C scan.
+
+Do **not** rewrite the bootloader, the partition table or `vibe_mode` at
+`0x20000`. The official v0.5.0 layout keeps `main_app` at `0x210000`.
+
+Console:
+
+```bash
+espflash monitor --chip esp32s31
+# or: espflash monitor --chip esp32s31 --port /dev/cu.usbmodem1101
+```
+
+The console is a USB-OTG HS CDC-ACM device (`Usb::new_hs` + `embassy-usb`), not
+USB-Serial-JTAG. The verified R0 image enumerates as
+`/dev/cu.usbmodemmosaico_s31_r01` and replays a boot summary every 5 seconds:
+
+```text
+[boot] Mosaico S31 R0 cdc=true drops=0 q=0/32 disp=true chunks=30 ms=38 hb=10
+```
+
+`disp=true` means the full frame was transferred; `hb` is the current `ui_task`
+heartbeat. `input_task` logs `touch down at (x, y)` and `touch release`. Use
+`espflash monitor --chip esp32s31 --port /dev/cu.usbmodemmosaico_s31_r01`.
+
+## Documents
+
+- [Execution order](docs/plans/ROADMAP.md) — what runs first and what is blocked
+- [RFC 0003 grok-ball first screen](docs/plans/grok-ball-first-screen-plan.md)
+- [RFC 0004 sensor reactions](docs/plans/grok-ball-sensor-reactions-plan.md)
+- [RFC 0005 platform runtime](docs/plans/platform-runtime-plan.md)
+- [Mosaico v1.2 hardware notes](docs/MOSAICO_V12_HARDWARE.md)
+- [Legacy fan/Slint material](docs/legacy/README.md)

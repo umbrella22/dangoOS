@@ -1,0 +1,199 @@
+//! H0 module timelines: right-slot Interaction insertion/removal sequences,
+//! left-slot camera reactions, duplicate suppression, and overlay return.
+
+use grok_ball::affect::{
+    AffectEngine, EventKind, EventSource, HapticPattern, ReactionReason, SensorEvent,
+};
+use grok_ball::types::BallExpression;
+
+fn module(at_ms: u64, source: EventSource, kind: EventKind) -> SensorEvent {
+    SensorEvent {
+        at_ms,
+        source,
+        kind,
+    }
+}
+
+fn inserted(at_ms: u64, source: EventSource) -> SensorEvent {
+    module(at_ms, source, EventKind::ModuleInserted)
+}
+
+fn removed(at_ms: u64, source: EventSource) -> SensorEvent {
+    module(at_ms, source, EventKind::ModuleRemoved)
+}
+
+fn button(at_ms: u64, kind: EventKind) -> SensorEvent {
+    SensorEvent {
+        at_ms,
+        source: EventSource::ButtonPower,
+        kind,
+    }
+}
+
+#[test]
+fn right_slot_insert_plays_the_three_stage_sequence() {
+    let mut engine = AffectEngine::new(0);
+
+    engine.on_event(inserted(100, EventSource::ModuleRight));
+    let surprised = engine.tick(100);
+    assert_eq!(surprised.state.expression, BallExpression::Surprised);
+    assert_eq!(surprised.state.reason, ReactionReason::ModuleInsert);
+    assert_eq!(surprised.haptic, Some(HapticPattern::ModuleInsert));
+
+    // Surprised [100, 600)
+    assert_eq!(engine.tick(599).state.expression, BallExpression::Surprised);
+    // Curious [600, 2100)
+    assert_eq!(engine.tick(600).state.expression, BallExpression::Curious);
+    assert_eq!(engine.tick(2_099).state.expression, BallExpression::Curious);
+    // Happy [2100, 3300)
+    assert_eq!(engine.tick(2_100).state.expression, BallExpression::Happy);
+    assert_eq!(engine.tick(3_299).state.expression, BallExpression::Happy);
+    // Return at 3300.
+    let back = engine.tick(3_300);
+    assert_eq!(back.state.expression, BallExpression::Idle);
+    assert!(back.changed);
+
+    // Only the insertion transition produced a haptic.
+    assert_eq!(engine.tick(4_000).haptic, None);
+}
+
+#[test]
+fn right_slot_remove_plays_surprised_then_confused() {
+    let mut engine = AffectEngine::new(0);
+
+    engine.on_event(inserted(100, EventSource::ModuleRight));
+    assert_eq!(engine.tick(3_300).state.expression, BallExpression::Idle);
+
+    engine.on_event(removed(4_000, EventSource::ModuleRight));
+    let surprised = engine.tick(4_000);
+    assert_eq!(surprised.state.expression, BallExpression::Surprised);
+    assert_eq!(surprised.state.reason, ReactionReason::ModuleRemove);
+    assert_eq!(surprised.haptic, Some(HapticPattern::ModuleRemove));
+
+    // Surprised [4000, 4400)
+    assert_eq!(
+        engine.tick(4_399).state.expression,
+        BallExpression::Surprised
+    );
+    // Confused [4400, 6400)
+    assert_eq!(
+        engine.tick(4_400).state.expression,
+        BallExpression::Confused
+    );
+    assert_eq!(
+        engine.tick(6_399).state.expression,
+        BallExpression::Confused
+    );
+    assert_eq!(engine.tick(6_400).state.expression, BallExpression::Idle);
+}
+
+#[test]
+fn removal_without_presence_is_ignored() {
+    let mut engine = AffectEngine::new(0);
+
+    engine.on_event(removed(100, EventSource::ModuleRight));
+    let tick = engine.tick(100);
+    assert_eq!(tick.state.expression, BallExpression::Idle);
+    assert_eq!(tick.haptic, None);
+
+    engine.on_event(removed(200, EventSource::ModuleLeft));
+    let tick = engine.tick(200);
+    assert_eq!(tick.state.expression, BallExpression::Idle);
+    assert_eq!(tick.haptic, None);
+}
+
+#[test]
+fn left_camera_insert_and_remove_use_short_reactions() {
+    let mut engine = AffectEngine::new(0);
+
+    engine.on_event(inserted(100, EventSource::ModuleLeft));
+    let insert = engine.tick(100);
+    assert_eq!(insert.state.expression, BallExpression::Curious);
+    assert_eq!(insert.state.reason, ReactionReason::ModuleInsert);
+    assert_eq!(insert.haptic, Some(HapticPattern::ModuleInsert));
+
+    assert_eq!(engine.tick(1_599).state.expression, BallExpression::Curious);
+    assert_eq!(engine.tick(1_600).state.expression, BallExpression::Idle);
+
+    engine.on_event(removed(2_000, EventSource::ModuleLeft));
+    let remove = engine.tick(2_000);
+    assert_eq!(remove.state.expression, BallExpression::Confused);
+    assert_eq!(remove.state.reason, ReactionReason::ModuleRemove);
+    assert_eq!(remove.haptic, Some(HapticPattern::ModuleRemove));
+
+    assert_eq!(
+        engine.tick(3_499).state.expression,
+        BallExpression::Confused
+    );
+    assert_eq!(engine.tick(3_500).state.expression, BallExpression::Idle);
+}
+
+#[test]
+fn insertion_overlays_activity_and_returns_to_it() {
+    let mut engine = AffectEngine::new(0);
+
+    engine.on_event(button(0, EventKind::ButtonShort));
+    assert_eq!(engine.tick(0).state.expression, BallExpression::Listening);
+
+    engine.on_event(inserted(100, EventSource::ModuleRight));
+    assert_eq!(engine.tick(100).state.expression, BallExpression::Surprised);
+
+    assert_eq!(engine.tick(3_299).state.expression, BallExpression::Happy);
+    let back_to_activity = engine.tick(3_300);
+    assert_eq!(back_to_activity.state.expression, BallExpression::Listening);
+    assert_eq!(back_to_activity.state.reason, ReactionReason::Activity);
+
+    // Removal also overlays and returns.
+    engine.on_event(removed(4_000, EventSource::ModuleRight));
+    assert_eq!(
+        engine.tick(4_000).state.expression,
+        BallExpression::Surprised
+    );
+    assert_eq!(
+        engine.tick(6_400).state.expression,
+        BallExpression::Listening
+    );
+}
+
+#[test]
+fn duplicate_insert_does_not_restart_the_sequence() {
+    let mut engine = AffectEngine::new(0);
+
+    engine.on_event(inserted(100, EventSource::ModuleRight));
+    assert_eq!(engine.tick(100).haptic, Some(HapticPattern::ModuleInsert));
+
+    engine.on_event(inserted(300, EventSource::ModuleRight));
+    let duplicate = engine.tick(300);
+    assert_eq!(duplicate.state.expression, BallExpression::Surprised);
+    assert_eq!(duplicate.haptic, None);
+
+    // The original 500 ms Surprised stage still ends at 600.
+    assert_eq!(engine.tick(600).state.expression, BallExpression::Curious);
+}
+
+#[test]
+fn insertion_while_angry_is_ignored() {
+    let mut engine = AffectEngine::new(0);
+
+    for at in [0u64, 100, 200] {
+        engine.on_event(SensorEvent {
+            at_ms: at,
+            source: EventSource::KeyRight,
+            kind: EventKind::KeyDown,
+        });
+        engine.tick(at);
+        engine.on_event(SensorEvent {
+            at_ms: at + 50,
+            source: EventSource::KeyRight,
+            kind: EventKind::KeyUp,
+        });
+    }
+    assert_eq!(engine.tick(200).state.expression, BallExpression::Angry);
+
+    engine.on_event(inserted(300, EventSource::ModuleRight));
+    let during_angry = engine.tick(300);
+    assert_eq!(during_angry.state.expression, BallExpression::Angry);
+    assert_eq!(during_angry.haptic, None);
+
+    assert_eq!(engine.tick(10_200).state.expression, BallExpression::Idle);
+}

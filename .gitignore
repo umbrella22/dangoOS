@@ -1,4 +1,5 @@
 /target
 /releases/
+/archive/
 .DS_Store
 cargo-espflash.toml

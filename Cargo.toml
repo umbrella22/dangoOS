@@ -1,12 +1,10 @@
 [workspace]
-members = ["crates/fan-core", "crates/fan-ui", "crates/fan-desktop", "crates/fan-firmware", "crates/lvgl-demo"]
-default-members = ["crates/fan-desktop"]
-exclude = ["vendor/i-slint-renderer-software"]
+# The validated mosaico-s31 prototype is archived under
+# archive/crates-pre-grok-ball-20261020/. The grok-ball crate is the shared
+# host-testable core; the platform crate is added by the R0 work package.
+members = ["crates/grok-ball", "crates/mosaico-s31"]
+default-members = ["crates/grok-ball"]
 resolver = "2"
-
-[patch.crates-io]
-# Slint 1.17.1 paths must honor dirty regions when rendering retained buffers.
-i-slint-renderer-software = { path = "vendor/i-slint-renderer-software" }
 
 [workspace.package]
 version = "0.2.0"
@@ -14,30 +12,26 @@ edition = "2021"
 authors = ["Kiro", "Claude", "GLM"]
 
 [workspace.dependencies]
-fan-core = { path = "crates/fan-core" }
-fan-ui = { path = "crates/fan-ui", default-features = false }
-# Slint 1.18.0/1.18.1 path rendering does not compile on the no_std MCU target.
-slint = { version = "=1.17.1", default-features = false, features = ["compat-1-2"] }
-slint-build = "=1.17.1"
-rand = "0.10.3"
+lvgl = { path = "../lv_binding_rust/lvgl", default-features = false, features = ["alloc", "unsafe_no_autoinit"] }
+lvgl-ui = { path = "../lv_binding_rust/lvgl-ui", default-features = false, features = ["alloc", "no-autoinit"] }
 log = "0.4"
-libm = "0.2"
 critical-section = "1"
-# esp-hal 1.2.2 does not expose LCD_CAM on S31; retain the revision with LCD support.
 esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31", "unstable"] }
-# The published bootloader helper conflicts with this HAL's esp-rom-sys links.
 esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31"] }
-# The HAL still has a transitive Git PAC; direct register access uses this release.
-esp32s31 = "=0.3.0"
-# esp-alloc 也锁同 rev: esp-radio 依赖 git 版, 双版本会各自 build 且 git 版缺芯片上下文
 esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31"] }
 esp-backtrace = { version = "0.20", features = ["esp32s31", "panic-handler", "println", "custom-halt"] }
-# UART logging must not mask the DMA refill interrupt.
-esp-println = { version = "0.18", default-features = false, features = ["esp32s31", "log-04", "auto", "colors"] }
-# ⚠️ WiFi(M4): Rust 生态 S31 尚无 esp-wifi-sys(esp-radio 此 rev 的芯片表无 s31)。
-# 官方固件的 WiFi 走 IDF C 侧。待 esp-wifi-sys 发布 s31 后按 docs/MOSAICO_UI_ROADMAP.md M4 接入。
+esp-println = { version = "0.18", default-features = false, features = ["esp32s31", "log-04", "jtag-serial", "colors"] }
+# esp-rtos 0.4.0 from the pinned esp-hal revision. Taking it from the esp-hal
+# repository (rather than crates.io) keeps esp-hal and esp-rom-sys at the exact
+# same revision: the registry esp-rtos links a second esp-rom-sys, which Cargo
+# rejects because both packages declare `links = "esp_rom_sys"`.
+esp-rtos = { version = "0.4.0", git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31", "embassy", "log-04"] }
+embassy-executor = "0.10"
+embassy-time = "0.5"
 
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+
+
