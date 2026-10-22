@@ -150,6 +150,7 @@ pub struct FoxControl {
     deletes: Cell<u32>,
     updates: Cell<u64>,
     rendered: Cell<u64>,
+    rendered_pose: Cell<Option<FoxPose>>,
     invalidations: Cell<u64>,
     entrance_active: Cell<bool>,
     entrance_elapsed_ms: Cell<u64>,
@@ -177,6 +178,7 @@ impl FoxControl {
             deletes: Cell::new(0),
             updates: Cell::new(0),
             rendered: Cell::new(0),
+            rendered_pose: Cell::new(None),
             invalidations: Cell::new(0),
             entrance_active: Cell::new(false),
             entrance_elapsed_ms: Cell::new(0),
@@ -294,6 +296,14 @@ impl FoxControl {
     /// Number of `CustomWidget::update` calls observed.
     pub fn update_count(&self) -> u64 {
         self.updates.get()
+    }
+
+    /// True only when this tick published a real Sleep scene, not the old
+    /// face retained by the animator during its expression swap.
+    pub fn shutdown_sleep_frame_since(&self, before: u64) -> bool {
+        self.rendered.get() > before
+            && self.rendered_pose.get() == Some(FoxPose::Sleep)
+            && !self.entrance_active()
     }
 
     /// Number of frames rendered and published.
@@ -571,6 +581,7 @@ impl CustomWidget for FoxWidget {
         self.control.last_render_us.set(elapsed_us(render_started));
         FoxControl::bump(&self.control.rendered);
         lease.publish();
+        self.control.rendered_pose.set(Some(scene.pose));
 
         if !self.control.plane_mode() {
             self.show_latest(pool, object);
@@ -652,6 +663,40 @@ mod tests {
         unsafe { display.delete() };
         // SAFETY: the display is gone.
         unsafe { lvgl::deinit() };
+    }
+
+    #[test]
+    fn shutdown_receipt_rejects_the_old_face_during_the_sleep_swap() {
+        let _guard = test_support::lock();
+        unsafe { lvgl::deinit() };
+        lvgl::init();
+        let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
+        let control = FoxControl::new(Expression::Idle);
+        let mut ui = mount(&control, &display);
+        ui.tick(50).unwrap();
+        control.set_expression(Expression::Sleep);
+        let before = control.rendered_frames();
+        ui.tick(5).unwrap();
+        assert!(
+            control.rendered_frames() > before,
+            "new frame still contains the old pose during SWAP_MS"
+        );
+        assert_eq!(control.rendered_pose.get(), Some(FoxPose::Idle));
+        assert!(!control.shutdown_sleep_frame_since(before));
+        let before = control.rendered_frames();
+        ui.tick(60).unwrap();
+        assert_eq!(control.rendered_pose.get(), Some(FoxPose::Sleep));
+        assert!(control.shutdown_sleep_frame_since(before));
+        assert!(
+            !control.shutdown_sleep_frame_since(control.rendered_frames()),
+            "stale frame is not a receipt"
+        );
+        ui.unmount();
+        drop(ui);
+        unsafe {
+            display.delete();
+            lvgl::deinit()
+        };
     }
 
     #[test]

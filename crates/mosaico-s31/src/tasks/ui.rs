@@ -484,8 +484,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
             if let Some(canvas) = control.take_frame() {
                 plane.submit(PlaneJob {
                     shutdown_sleep: buttons::shutdown_requested()
-                        && !control.entrance_active()
-                        && control.rendered_frames() > rendered_before_tick,
+                        && control.shutdown_sleep_frame_since(rendered_before_tick),
                     canvas: Frame::Pool(canvas),
                     size: plane_size,
                     at: None,
