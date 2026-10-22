@@ -20,7 +20,7 @@ extern crate std;
 mod call;
 mod ffi;
 mod hardware;
-pub use hardware::{ButtonEdge, HapticPreset, HardwareRequest, HardwareSnapshot};
+pub use hardware::{ButtonEdge, HapticPreset, HardwareRequest, HardwareSnapshot, OnboardButtons};
 pub mod jpeg;
 mod platform;
 mod vm;

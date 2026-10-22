@@ -112,6 +112,19 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
     info!("esp-rtos scheduler started (TIMG0 timer, FROM_CPU_INTR0)");
 
+    // BSP power switch is open-drain, active low: high means released, never
+    // push-pull high. Inputs are low-active with pull-ups, including BOOT.
+    let mut shutdown = Output::new(
+        peripherals.GPIO57,
+        Level::High,
+        OutputConfig::default().with_drive_mode(esp_hal::gpio::DriveMode::OpenDrain),
+    );
+    shutdown.set_pad_hold(false);
+    let button_config = esp_hal::gpio::InputConfig::default().with_pull(esp_hal::gpio::Pull::Up);
+    let ai = esp_hal::gpio::Input::new(peripherals.GPIO7, button_config);
+    let boot = esp_hal::gpio::Input::new(peripherals.GPIO61, button_config);
+    spawner.spawn(tasks::buttons::button_task(ai, boot, shutdown).unwrap());
+
     // The console comes up first so that later boot steps can be seen. After
     // a panic, wait (bounded) for the host so the record is read before the
     // same step can fail again.

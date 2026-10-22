@@ -167,6 +167,7 @@ impl Drop for DeviceHost {
 impl Host for DeviceHost {
     fn hardware_snapshot(&mut self) -> mosaico_lua::HardwareSnapshot {
         let mut snapshot = super::sensors::lua_snapshot();
+        snapshot.onboard = super::buttons::snapshot();
         snapshot.led_generation = super::lights::generation();
         if super::haptic::available() {
             snapshot.available |= 32;

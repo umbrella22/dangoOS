@@ -24,6 +24,7 @@ typedef struct {
     int32_t button_pins[2];
     uint32_t button_pressed[2], led_generation, button_generation, button_sequence;
     edge_t button_edges[16];
+    struct { uint32_t ready, pressed[2], sequence; edge_t edges[16]; } onboard;
 } snapshot_t;
 
 extern void mosaico_host_hardware_snapshot(snapshot_t *);
@@ -91,6 +92,20 @@ static int snapshot(lua_State *L)
         lua_rawseti(L, -2, i + 1);
     }
     lua_setfield(L, -2, "edges");
+    number(L, "onboard_ready", s.onboard.ready);
+    number(L, "onboard_sequence", s.onboard.sequence);
+    for (int i = 0; i < 2; i++) values[i] = s.onboard.pressed[i];
+    vector(L, "onboard_pressed", values, 2);
+    lua_createtable(L, 16, 0);
+    for (int i = 0; i < 16; i++) {
+        lua_newtable(L);
+        number(L, "sequence", s.onboard.edges[i].sequence);
+        number(L, "at", s.onboard.edges[i].at_ms);
+        number(L, "key", s.onboard.edges[i].key + 1);
+        number(L, "pressed", s.onboard.edges[i].pressed);
+        lua_rawseti(L, -2, i + 1);
+    }
+    lua_setfield(L, -2, "onboard_edges");
     return 1;
 }
 

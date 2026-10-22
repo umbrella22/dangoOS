@@ -29,6 +29,8 @@ pub struct HardwareSnapshot {
     /// Sequence of most recent edge; wrapping, starts at zero.
     pub button_sequence: u32,
     pub button_edges: [ButtonEdge; 16],
+    /// Independent onboard buttons (AI GPIO7, BOOT GPIO61); never slot generations.
+    pub onboard: OnboardButtons,
 }
 
 /// Fixed six-pixel GRB-strip frame; a request is staged by the Lua handle and
@@ -143,5 +145,27 @@ mod tests {
             s.button_sequence, 20,
             "generation, not sequence reset, invalidates readers"
         );
+    }
+}
+
+/// Independent stable button domain, merged by the firmware Lua host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct OnboardButtons {
+    pub ready: u32,
+    pub pressed: [u32; 2],
+    pub sequence: u32,
+    pub edges: [ButtonEdge; 16],
+}
+impl OnboardButtons {
+    pub fn edge(&mut self, key: usize, pressed: bool, at_ms: u32) {
+        self.pressed[key] = pressed as u32;
+        self.sequence = self.sequence.wrapping_add(1);
+        self.edges[(self.sequence % 16) as usize] = ButtonEdge {
+            sequence: self.sequence,
+            at_ms,
+            key: key as u32,
+            pressed: pressed as u32,
+        };
     }
 }

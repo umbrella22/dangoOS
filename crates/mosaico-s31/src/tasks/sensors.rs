@@ -598,7 +598,7 @@ pub async fn sensor_task(mut subboard: Subboard) {
 /// non-edge event is dropped; an incoming edge event is counted in
 /// [`SENSOR_EDGE_DROPS`] and logged. The rotation is synchronous, so no other
 /// executor task observes an intermediate queue state.
-fn publish(event: SensorEvent) {
+pub(super) fn publish(event: SensorEvent) {
     if SENSOR_EVENTS.try_send(event).is_ok() {
         return;
     }

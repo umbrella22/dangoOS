@@ -21,6 +21,17 @@ do
   local function elapsed(a, b)
     return (a - b) & 0xffffffff
   end
+  -- AI/BOOT have an independent edge ring; slot generation changes must not
+  -- invalidate their handles. Interaction keys retain the original domain.
+  local function domain(s, onboard)
+    if not onboard then return s end
+    return {
+      available = s.onboard_ready ~= 0 and 8 or 0,
+      valid = s.onboard_ready ~= 0 and 64 or 0,
+      pins = {7, 61}, pressed = s.onboard_pressed, generation = 0,
+      sequence = s.onboard_sequence, edges = s.onboard_edges,
+    }
+  end
   function button.new(...)
     local n = select("#", ...)
     check(n >= 1 and n <= 4, "wrong number of arguments")
@@ -36,9 +47,10 @@ do
     if short == 0 then
       short = 180
     end
-    local s = host.snapshot()
+    local onboard = pin == 7 or pin == 61
+    local s = domain(host.snapshot(), onboard)
     if s.available & 8 == 0 then
-      return nil, "interaction board unavailable"
+      return nil, onboard and "onboard buttons unavailable" or "interaction board unavailable"
     end
     local key
     for i = 1, 2 do
@@ -57,6 +69,7 @@ do
     end
     local h = {
       pin = pin,
+      onboard = onboard,
       key = key,
       active = active,
       long = long,
@@ -112,7 +125,7 @@ do
     exact(1, ...)
     local h = ...
     bvalid(h)
-    local s = host.snapshot()
+    local s = domain(host.snapshot(), h.onboard)
     if s.available & 8 == 0 or s.generation ~= h.generation or s.valid & 64 == 0 then
       return nil, "button unavailable or board changed"
     end
@@ -123,7 +136,7 @@ do
     check(not dispatching, "button.dispatch is not reentrant")
     dispatching = true
     local function run()
-      local s = host.snapshot()
+      local snapshot = host.snapshot()
       local now = host.now() & 0xffffffff
       local pending = {}
       local function emit(h, event, duration)
@@ -162,6 +175,7 @@ do
         end
       end
       for _, h in pairs(buttons) do
+        local s = domain(snapshot, h.onboard)
         if s.available & 8 == 0 or s.generation ~= h.generation or s.valid & 64 == 0 then
           h.callbacks = {}
           h.closed = true

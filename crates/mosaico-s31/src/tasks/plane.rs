@@ -107,6 +107,8 @@ impl Frame {
 
 /// One canvas upload.
 pub struct PlaneJob {
+    /// Set only for Sleep frames after the entrance finished during shutdown.
+    pub shutdown_sleep: bool,
     /// Exclusive read access to the rendered frame for the whole upload.
     pub canvas: Frame,
     /// Canvas width and height in pixels.
@@ -363,6 +365,8 @@ async fn run_plane(
             }
             y = y2 + 1;
         }
+
+        super::buttons::frame_uploaded(job.shutdown_sleep, completed);
 
         let elapsed_us = started.elapsed().as_micros();
         let elapsed_ms = (elapsed_us / 1000) as u32;

@@ -435,3 +435,74 @@ fn button_thresholds_use_zero_defaults_and_uint16_boundaries() {
     );
     finish(&mut vm);
 }
+
+#[test]
+fn onboard_button_domains_survive_slot_detach_and_reinsert_with_real_lua_callbacks() {
+    let mut board = Board::present();
+    board.snapshot.onboard.ready = 1;
+    let mut vm = vm(
+        board,
+        r#"
+        local b=require('button'); local d=require('delay')
+        local ai=assert(b.new(7)); local boot=assert(b.new(61)); local slot=assert(b.new(11))
+        local short,double,long=0,0,0
+        b.on(ai,'single_click',function() short=short+1 end)
+        b.on(boot,'double_click',function() double=double+1 end)
+        b.on(boot,'long_press_start',function(e) assert(e.pressed_time_ms>=1500);long=long+1 end)
+        d.delay_ms(1000)
+        assert(b.get_key_level(slot)==nil)
+        assert(b.get_key_level(ai)==1 and b.get_key_level(boot)==1)
+        b.dispatch(); assert(short==1 and double==1 and long==0)
+        d.delay_ms(2000)
+        assert(b.get_key_level(ai)==1); b.dispatch(); assert(long==1)
+        d.delay_ms(1000)
+        b.dispatch(); assert(long==1 and short==1 and double==1)
+        assert(b.close(ai));assert(b.close(boot))
+    "#,
+    );
+    sleep(&mut vm);
+    let s = &mut vm.host_mut::<Board>().unwrap().snapshot;
+    s.button_board(None);
+    s.onboard.edge(0, true, 1100);
+    s.onboard.edge(0, false, 1140);
+    s.onboard.edge(1, true, 1200);
+    s.onboard.edge(1, false, 1240);
+    s.onboard.edge(1, true, 1300);
+    s.onboard.edge(1, false, 1340);
+    sleep(&mut vm);
+    let s = &mut vm.host_mut::<Board>().unwrap().snapshot;
+    s.button_board(Some([13, 12]));
+    s.valid |= 64;
+    s.onboard.edge(1, true, 2100);
+    sleep(&mut vm);
+    let s = &mut vm.host_mut::<Board>().unwrap().snapshot;
+    s.onboard.edge(1, false, 4100);
+    finish(&mut vm);
+}
+
+#[test]
+fn onboard_open_held_does_not_invent_long_or_click_and_defaults_stay_low_active() {
+    let mut board = Board::default();
+    board.snapshot.onboard.ready = 1;
+    board.snapshot.onboard.pressed[0] = 1;
+    let mut vm = vm(
+        board,
+        r#"
+        local b=require('button');local d=require('delay')
+        local ai=assert(b.new(7));assert(b.get_key_level(ai)==0)
+        b.on(ai,'long_press_start',function() error('invented initial long') end)
+        b.on(ai,'single_click',function() error('invented initial click') end)
+        d.delay_ms(3000);b.dispatch()
+        d.delay_ms(1000);b.dispatch();assert(b.get_key_level(ai)==1)
+        assert(b.close(ai));assert(b.new(11)==nil)
+    "#,
+    );
+    sleep(&mut vm);
+    sleep(&mut vm);
+    vm.host_mut::<Board>()
+        .unwrap()
+        .snapshot
+        .onboard
+        .edge(0, false, 4100);
+    finish(&mut vm);
+}

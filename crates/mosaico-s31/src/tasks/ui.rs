@@ -74,7 +74,7 @@ use mosaico_s31::ui::splash::SplashControl;
 use mosaico_s31::ui::{theme, AppMsg, MosaicoApp, Screen, SHOW_SPLASH};
 
 use super::{
-    apps, haptic,
+    apps, buttons, haptic,
     input::{INPUT, INPUT_CAPACITY},
     lights, lua,
     plane::{self, Frame, PlaneJob, PlaneUi},
@@ -409,6 +409,15 @@ pub async fn ui_task(mut plane: PlaneUi) {
             app.go(Page::Launcher);
             ui.mark_dirty();
         }
+        // Terminal shutdown is the sole page-rule override: stop any Lua app,
+        // show Sleep on Home, and ignore queued navigation until power is cut.
+        if buttons::shutdown_requested() {
+            if app.page() != Page::Home {
+                app.go(Page::Home);
+                ui.mark_dirty();
+            }
+            runtime.begin_shutdown();
+        }
         if app.page() != last_page {
             info!("hub: {:?} -> {:?}", last_page, app.page());
             gestures.reset_pass();
@@ -467,12 +476,16 @@ pub async fn ui_task(mut plane: PlaneUi) {
         lights::show(runtime.expression());
 
         // ---- render into a free slot, then hand the frame to the plane ----
+        let rendered_before_tick = control.rendered_frames();
         if let Err(error) = ui.tick(elapsed_ms) {
             warn!("ui_task: Ui::tick rejected: {error}");
         }
         if app.page() == Page::Home {
             if let Some(canvas) = control.take_frame() {
                 plane.submit(PlaneJob {
+                    shutdown_sleep: buttons::shutdown_requested()
+                        && !control.entrance_active()
+                        && control.rendered_frames() > rendered_before_tick,
                     canvas: Frame::Pool(canvas),
                     size: plane_size,
                     at: None,
@@ -499,6 +512,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
                 }
                 if let Some((screen, damage)) = port.take_frame() {
                     plane.submit(PlaneJob {
+                        shutdown_sleep: false,
                         canvas: Frame::Screen(screen),
                         size: (WIDTH as u16, HEIGHT as u16),
                         at: Some((0, 0)),
@@ -516,6 +530,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
             if let Some((screen, damage)) = port.take_frame() {
                 plane.submit(PlaneJob {
+                    shutdown_sleep: false,
                     canvas: Frame::Screen(screen),
                     size: (WIDTH as u16, HEIGHT as u16),
                     at: Some((0, 0)),
@@ -584,6 +599,7 @@ fn step_slide(slide: Slide, port: &mut DisplayPort, plane: &mut PlaneUi, now_ms:
             }
             if let Some((new, old)) = port.take_slide() {
                 plane.submit(PlaneJob {
+                    shutdown_sleep: false,
                     canvas: Frame::Slide {
                         new,
                         old,
@@ -602,6 +618,7 @@ fn step_slide(slide: Slide, port: &mut DisplayPort, plane: &mut PlaneUi, now_ms:
         Slide::Finishing => match port.take_full_frame() {
             Some((screen, damage)) => {
                 plane.submit(PlaneJob {
+                    shutdown_sleep: false,
                     canvas: Frame::Screen(screen),
                     size: (WIDTH as u16, HEIGHT as u16),
                     at: Some((0, 0)),

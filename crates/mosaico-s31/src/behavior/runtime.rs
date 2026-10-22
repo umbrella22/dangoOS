@@ -58,6 +58,7 @@ pub struct Runtime {
     merged: Expression,
     /// Whether the last pointer sample was a press (to find press edges).
     pointer_down: bool,
+    shutdown: bool,
 }
 
 impl Runtime {
@@ -73,6 +74,7 @@ impl Runtime {
             pending_len: 0,
             merged: Expression::Idle,
             pointer_down: false,
+            shutdown: false,
         };
         runtime.publish();
         runtime
@@ -106,8 +108,20 @@ impl Runtime {
         self.control.visual()
     }
 
+    /// Terminal power-off presentation overrides every reaction and suppresses
+    /// haptics. Hardware power is cut only after the plane acknowledges Sleep.
+    pub fn begin_shutdown(&mut self) {
+        self.shutdown = true;
+        self.pending_len = 0;
+        self.pending_haptics = [None; 2];
+        self.publish();
+    }
+
     /// Apply one sensor event.
     pub fn on_sensor(&mut self, event: SensorEvent) {
+        if self.shutdown {
+            return;
+        }
         let at = event.at_ms;
         self.affect.on_event(event);
         self.refresh_affect(at);
@@ -120,6 +134,9 @@ impl Runtime {
     /// caller uses that to avoid tagging a latency sample for a touch that
     /// deliberately produced no visible response.
     pub fn on_pointer(&mut self, sample: PointerSample) -> bool {
+        if self.shutdown {
+            return false;
+        }
         let at = sample.at_ms;
         let press = sample.pressed && !self.pointer_down;
         self.pointer_down = sample.pressed;
@@ -162,6 +179,10 @@ impl Runtime {
     /// personality reaction is more immediate than an affect reaction, so it
     /// wins when both fire together.
     pub fn tick(&mut self, now_ms: u64) -> Option<HapticPattern> {
+        if self.shutdown {
+            self.publish();
+            return None;
+        }
         let mut persona = self.personality.tick(now_ms);
         if let Some(pattern) = persona.haptic.take() {
             self.push_haptic(pattern);
@@ -190,7 +211,11 @@ impl Runtime {
     /// dirty the canvas on every iteration and burn the whole raster budget on
     /// sub-pixel changes nobody can see.
     fn publish(&mut self) {
-        let merged = merge_expression(self.persona.expression, self.affect_expression);
+        let merged = if self.shutdown {
+            Expression::Sleep
+        } else {
+            merge_expression(self.persona.expression, self.affect_expression)
+        };
         self.merged = merged;
         self.control.set_expression(merged);
 
@@ -204,7 +229,11 @@ impl Runtime {
             pet: quantize(self.persona.pet, 0.0625),
             lean_x: quantize(self.persona.lean_x, 1.0),
         };
-        self.control.set_visual(visual);
+        self.control.set_visual(if self.shutdown {
+            FoxVisual::default()
+        } else {
+            visual
+        });
     }
 
     fn push_haptic(&mut self, pattern: HapticPattern) {
@@ -283,6 +312,31 @@ mod tests {
             y: SCREEN_CENTER_Y,
             pressed: false,
         });
+    }
+
+    #[test]
+    fn shutdown_overrides_reactions_and_is_terminal_without_haptics() {
+        let control = FoxControl::new(Expression::Idle);
+        let mut runtime = Runtime::new(0, Rc::clone(&control));
+        runtime.on_sensor(SensorEvent {
+            at_ms: 100,
+            source: EventSource::ButtonPower,
+            kind: EventKind::ButtonShort,
+        });
+        runtime.begin_shutdown();
+        assert_eq!(runtime.expression(), Expression::Sleep);
+        runtime.on_sensor(SensorEvent {
+            at_ms: 200,
+            source: EventSource::System,
+            kind: EventKind::Activity(Expression::Error),
+        });
+        tap(&mut runtime, 300);
+        runtime.on_interaction(500);
+        assert_eq!(runtime.tick(10_000), None);
+        assert_eq!(control.expression(), Expression::Sleep);
+        assert_eq!(control.visual(), FoxVisual::default());
+        runtime.begin_shutdown();
+        assert_eq!(runtime.tick(20_000), None);
     }
 
     #[test]
