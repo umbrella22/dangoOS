@@ -9,10 +9,31 @@
 pub mod countdown;
 pub mod gesture;
 pub mod snapshot;
+pub mod transition;
 
 use countdown::Countdown;
 use gesture::SystemGesture;
 use snapshot::SystemSnapshot;
+
+/// Whether a sensor event still reaches the fox while an app is open.
+///
+/// Off Home the fox is paused: the apps own the lights and the motor, and a
+/// knock or a key press must not make her react behind the user's back. Only
+/// events that change lasting state go through, so she is not out of date
+/// when Home comes back: the battery, modules coming and going, voice
+/// activity and the releases that end a held key or magnet contact.
+pub fn reaches_fox_off_home(kind: &crate::behavior::affect::EventKind) -> bool {
+    use crate::behavior::affect::EventKind;
+    matches!(
+        kind,
+        EventKind::BatteryLevel(_)
+            | EventKind::ModuleInserted(_)
+            | EventKind::ModuleRemoved(_)
+            | EventKind::Activity(_)
+            | EventKind::KeyUp
+            | EventKind::MagneticRelease
+    )
+}
 
 /// The native apps, in launcher order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +173,33 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn off_home_only_lasting_state_reaches_the_fox() {
+        use crate::behavior::affect::{EventKind, ModuleKind};
+        for kind in [
+            EventKind::TouchPoke,
+            EventKind::TouchPet,
+            EventKind::KeyDown,
+            EventKind::LightLevel(80),
+            EventKind::Presence(true),
+            EventKind::MagneticContact,
+            EventKind::Accel {
+                ax_mg: 0,
+                ay_mg: 0,
+                az_mg: 2_500,
+            },
+        ] {
+            assert!(!reaches_fox_off_home(&kind), "{kind:?}");
+        }
+        for kind in [
+            EventKind::BatteryLevel(10),
+            EventKind::ModuleRemoved(ModuleKind::Interaction),
+            EventKind::KeyUp,
+        ] {
+            assert!(reaches_fox_off_home(&kind), "{kind:?}");
+        }
+    }
 
     #[test]
     fn up_toggles_home_and_launcher_and_leaves_apps() {

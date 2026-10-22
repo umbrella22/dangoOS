@@ -26,7 +26,7 @@ use esp_hal::{
 };
 use log::{info, warn};
 use mosaico_s31::{
-    behavior::mood_light::{Frame, MoodLight, Rgb, Side, LED_COUNT},
+    behavior::mood_light::{preview_frame, Frame, MoodLight, Rgb, Side, LED_COUNT},
     Expression,
 };
 
@@ -52,6 +52,35 @@ static ATTACHED: AtomicBool = AtomicBool::new(false);
 static ENABLED: AtomicBool = AtomicBool::new(true);
 /// Key presses: low byte counts left presses, next byte right presses.
 static SPARKS: AtomicU32 = AtomicU32::new(0);
+/// Who drives the strip, see [`Owner`].
+static OWNER: AtomicU8 = AtomicU8::new(Owner::Fox as u8);
+/// Bumped to restart the Settings preview wipe.
+static PREVIEW_RUNS: AtomicU32 = AtomicU32::new(0);
+
+/// Who drives the strip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Owner {
+    /// The fox's mood light (Home).
+    Fox = 0,
+    /// The Settings preview: a wipe into steady warm white.
+    Preview = 1,
+    /// Dark (other apps).
+    Dark = 2,
+}
+
+/// Hand the strip to `owner`. Entering the preview restarts its wipe.
+pub fn set_owner(owner: Owner) {
+    let old = OWNER.swap(owner as u8, Ordering::Relaxed);
+    if owner == Owner::Preview && old != owner as u8 {
+        replay_preview();
+    }
+}
+
+/// Restart the Settings preview wipe (the lights were just switched on).
+pub fn replay_preview() {
+    PREVIEW_RUNS.fetch_add(1, Ordering::Relaxed);
+}
 
 /// The expression on screen. Called by the UI task each loop.
 pub fn show(expression: Expression) {
@@ -109,6 +138,8 @@ pub async fn lights_task(mut channel: LightChannel) {
     let mut seen_sparks = SPARKS.load(Ordering::Relaxed);
     let mut was_attached = false;
     let mut errors = 0u32;
+    let mut seen_previews = PREVIEW_RUNS.load(Ordering::Relaxed);
+    let mut preview_since = 0u64;
 
     loop {
         Timer::after(Duration::from_millis(FRAME_MS)).await;
@@ -129,7 +160,18 @@ pub async fn lights_task(mut channel: LightChannel) {
         }
         seen_sparks = sparks;
 
-        let mut frame = light.frame(now);
+        let previews = PREVIEW_RUNS.load(Ordering::Relaxed);
+        if previews != seen_previews {
+            seen_previews = previews;
+            preview_since = now;
+        }
+        // The fox's light keeps running underneath so it resumes smoothly.
+        let fox = light.frame(now);
+        let mut frame = match OWNER.load(Ordering::Relaxed) {
+            0 => fox,
+            1 => preview_frame(now.saturating_sub(preview_since)),
+            _ => [Rgb::OFF; LED_COUNT],
+        };
         if !ENABLED.load(Ordering::Relaxed) {
             frame.iter_mut().for_each(|led| *led = Default::default());
         }

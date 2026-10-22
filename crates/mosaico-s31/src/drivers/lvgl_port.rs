@@ -13,6 +13,12 @@
 //!   UI task does not run `lv_timer_handler`, so LVGL never writes pixels the
 //!   panel DMA is still reading.
 //!
+//! Page slides (`hub::transition`) use a second PSRAM frame, the snapshot:
+//! [`DisplayPort::snapshot`] copies the old page into it, the new page is
+//! rendered into the shadow with [`DisplayPort::render_now`], and the plane
+//! uploads bands of both through [`DisplayPort::take_slide`]. The snapshot
+//! has its own busy flag; it is only rewritten while no lease of it exists.
+//!
 //! Touch reaches LVGL through a pointer input device whose read callback
 //! reports the latest sample set by [`set_pointer`]. A press shorter than
 //! LVGL's 33 ms read period is latched so taps are never lost.
@@ -34,6 +40,10 @@ const DRAW_ROWS: usize = 24;
 static SHADOW: AtomicPtr<u16> = AtomicPtr::new(core::ptr::null_mut());
 /// True while a [`ScreenLease`] exists.
 static BUSY: AtomicBool = AtomicBool::new(false);
+/// The page snapshot used by slides; set once by `DisplayPort::new`.
+static SNAPSHOT: AtomicPtr<u16> = AtomicPtr::new(core::ptr::null_mut());
+/// Set while a [`SnapshotLease`] exists.
+static SNAPSHOT_BUSY: AtomicBool = AtomicBool::new(false);
 /// Panel area flushed since the last [`DisplayPort::take_frame`].
 static DAMAGE: Mutex<Cell<Option<DirtyRect>>> = Mutex::new(Cell::new(None));
 
@@ -75,6 +85,35 @@ impl Drop for ScreenLease {
     }
 }
 
+/// Read access to the page snapshot for one slide frame.
+pub struct SnapshotLease {
+    pixels: &'static [u16],
+}
+
+// SAFETY: the snapshot is written only by `DisplayPort::snapshot` on the UI
+// task, which refuses while a lease exists (`SNAPSHOT_BUSY`).
+unsafe impl Send for SnapshotLease {}
+
+impl SnapshotLease {
+    pub fn pixels(&self) -> &[u16] {
+        self.pixels
+    }
+}
+
+impl Drop for SnapshotLease {
+    fn drop(&mut self) {
+        SNAPSHOT_BUSY.store(false, Ordering::Release);
+    }
+}
+
+/// The full panel rectangle.
+const FULL: DirtyRect = DirtyRect {
+    x0: 0,
+    y0: 0,
+    x1: WIDTH as u16 - 1,
+    y1: HEIGHT as u16 - 1,
+};
+
 /// The firmware's sole LVGL display, owned by the UI task.
 pub struct DisplayPort {
     display: NonNull<sys::lv_display_t>,
@@ -82,6 +121,7 @@ pub struct DisplayPort {
     // C retains only these allocations' addresses, not Rust references.
     _draw: PixelMemory,
     _shadow: PixelMemory,
+    _snapshot: PixelMemory,
 }
 
 impl DisplayPort {
@@ -99,6 +139,8 @@ impl DisplayPort {
         let draw = PixelMemory::new(stride * DRAW_ROWS, false);
         let shadow = PixelMemory::new(WIDTH * HEIGHT * 2, true);
         SHADOW.store(shadow.as_ptr().cast(), Ordering::Release);
+        let snapshot = PixelMemory::new(WIDTH * HEIGHT * 2, true);
+        SNAPSHOT.store(snapshot.as_ptr().cast(), Ordering::Release);
 
         let display = NonNull::new(unsafe { sys::lv_display_create(WIDTH as i32, HEIGHT as i32) })
             .expect("LVGL display allocation failed");
@@ -127,6 +169,7 @@ impl DisplayPort {
             indev,
             _draw: draw,
             _shadow: shadow,
+            _snapshot: snapshot,
         }
     }
 
@@ -155,6 +198,69 @@ impl DisplayPort {
         Some((ScreenLease { pixels }, damage))
     }
 
+    /// Copy the page on screen into the snapshot. Refuses (returns `false`)
+    /// while the plane still reads either frame.
+    pub fn snapshot(&mut self) -> bool {
+        if self.is_busy() || SNAPSHOT_BUSY.load(Ordering::Acquire) {
+            return false;
+        }
+        let shadow = SHADOW.load(Ordering::Acquire);
+        let snapshot = SNAPSHOT.load(Ordering::Acquire);
+        // SAFETY: both are live `WIDTH * HEIGHT` allocations owned by `self`;
+        // neither is read by the plane (no lease) or written by LVGL (this
+        // task) right now.
+        unsafe { core::ptr::copy_nonoverlapping(shadow, snapshot, WIDTH * HEIGHT) };
+        true
+    }
+
+    /// Render everything invalidated into the shadow right away, instead of
+    /// waiting for LVGL's refresh timer. Must not be called while busy.
+    pub fn render_now(&mut self) {
+        debug_assert!(!self.is_busy());
+        unsafe { sys::lv_refr_now(self.display.as_ptr()) };
+    }
+
+    /// Lease the shadow (the new page) and the snapshot (the old page) for
+    /// one slide frame. The shadow's damage is kept for after the slide.
+    pub fn take_slide(&mut self) -> Option<(ScreenLease, SnapshotLease)> {
+        if self.is_busy() || SNAPSHOT_BUSY.load(Ordering::Acquire) {
+            return None;
+        }
+        BUSY.store(true, Ordering::Release);
+        SNAPSHOT_BUSY.store(true, Ordering::Release);
+        // SAFETY: as in `take_frame`; the snapshot is not rewritten while the
+        // lease exists.
+        let screen =
+            unsafe { core::slice::from_raw_parts(SHADOW.load(Ordering::Acquire), WIDTH * HEIGHT) };
+        let old = unsafe {
+            core::slice::from_raw_parts(SNAPSHOT.load(Ordering::Acquire), WIDTH * HEIGHT)
+        };
+        Some((
+            ScreenLease { pixels: screen },
+            SnapshotLease { pixels: old },
+        ))
+    }
+
+    /// Hand the whole shadow to the plane (the last frame of a slide).
+    pub fn take_full_frame(&mut self) -> Option<(ScreenLease, DirtyRect)> {
+        if self.is_busy() {
+            return None;
+        }
+        critical_section::with(|cs| DAMAGE.borrow(cs).set(None));
+        BUSY.store(true, Ordering::Release);
+        // SAFETY: as in `take_frame`.
+        let pixels =
+            unsafe { core::slice::from_raw_parts(SHADOW.load(Ordering::Acquire), WIDTH * HEIGHT) };
+        Some((ScreenLease { pixels }, FULL))
+    }
+
+    /// Forget a press LVGL has not seen yet (touches during a slide).
+    pub fn reset_pointer(&mut self) {
+        set_pointer(0, 0, false);
+        POINTER_LATCH.store(false, Ordering::Relaxed);
+        unsafe { sys::lv_indev_reset(self.indev.as_ptr(), core::ptr::null_mut()) };
+    }
+
     /// Drop any damage collected so far (the plane shows the fox instead).
     pub fn discard_damage(&mut self) {
         critical_section::with(|cs| DAMAGE.borrow(cs).set(None));
@@ -169,6 +275,7 @@ impl Drop for DisplayPort {
             sys::lv_display_delete(self.display.as_ptr());
         }
         SHADOW.store(core::ptr::null_mut(), Ordering::Release);
+        SNAPSHOT.store(core::ptr::null_mut(), Ordering::Release);
     }
 }
 

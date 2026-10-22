@@ -35,9 +35,17 @@
 //! same plane. Touch first goes through [`EdgeGestures`]: edge swipes switch
 //! pages, everything else goes to the fox on Home and to LVGL elsewhere.
 //!
-//! Off Home the runtime keeps running, so the mood lights still react to
-//! modules and sensors; haptics play only on Home, and only when enabled in
-//! Settings. A finished countdown buzzes and opens the timer page.
+//! Off Home the fox is paused: the runtime keeps its clocks, but only
+//! lasting state (battery, modules, releases) reaches it, haptics play only
+//! on Home, and the LEDs belong to the page ([`light_owner`]): Settings
+//! shows a preview so the light switch answers on the hardware, and
+//! switching haptics on buzzes once. A finished countdown buzzes and opens
+//! the timer page.
+//!
+//! Launcher <-> app switches slide ([`mosaico_s31::hub::transition`]): the
+//! old page is copied into the port's snapshot, the new page is rendered
+//! once, and for 280 ms the plane uploads bands of both. LVGL and touch are
+//! paused during the slide.
 
 use alloc::rc::Rc;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -51,7 +59,8 @@ use mosaico_s31::behavior::personality::PointerSample;
 use mosaico_s31::behavior::{Expression, Runtime};
 use mosaico_s31::fox::entrance;
 use mosaico_s31::hub::gesture::{EdgeGestures, Route};
-use mosaico_s31::hub::{AppId, Page};
+use mosaico_s31::hub::transition::{self, Direction};
+use mosaico_s31::hub::{reaches_fox_off_home, AppId, Page};
 use mosaico_s31::telemetry::{display as display_stats, latency};
 use mosaico_s31::ui::fox_widget::{self, FoxControl};
 use mosaico_s31::ui::splash::SplashControl;
@@ -87,6 +96,32 @@ const SENSOR_DRAIN_MAX: u32 = 24;
 
 /// Sensors page refresh period.
 const SENSORS_REFRESH_MS: u64 = 200;
+
+/// A page slide between the launcher and an app (`hub::transition`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Slide {
+    Idle,
+    /// Waiting for the plane to release the shadow so the old page can be
+    /// copied into the snapshot.
+    Pending(Direction),
+    /// Uploading slide frames.
+    Running {
+        direction: Direction,
+        start_ms: u64,
+    },
+    /// One last full upload of the new page.
+    Finishing,
+}
+
+/// Who drives the LEDs on a page: the fox on Home, the Settings preview in
+/// Settings (so the light switch shows on the hardware), dark elsewhere.
+fn light_owner(page: Page) -> lights::Owner {
+    match page {
+        Page::Home => lights::Owner::Fox,
+        Page::App(AppId::Settings) => lights::Owner::Preview,
+        _ => lights::Owner::Dark,
+    }
+}
 
 /// Number of one-second UI stats intervals processed since boot.
 pub static HEARTBEATS: AtomicU32 = AtomicU32::new(0);
@@ -153,6 +188,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
     let mut last_timer_second = u32::MAX;
     // The next fox frame must clear what the previous page left around it.
     let mut clear_on_fox = false;
+    let mut slide = Slide::Idle;
 
     loop {
         // Wall-clock animation step. The loop period is a floor, not a fixed
@@ -175,7 +211,11 @@ pub async fn ui_task(mut plane: PlaneUi) {
         while let Ok(event) = SENSOR_EVENTS.try_receive() {
             sensor_count = sensor_count.saturating_add(1);
             sensors_changed |= app.hub_mut().snapshot.observe(&event);
-            runtime.on_sensor(event);
+            // Off Home the fox is paused: the apps own the lights and the
+            // motor, and only lasting state (battery, modules) reaches her.
+            if app.page() == Page::Home || reaches_fox_off_home(&event.kind) {
+                runtime.on_sensor(event);
+            }
             if sensor_count >= SENSOR_DRAIN_MAX {
                 break;
             }
@@ -215,6 +255,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
                         pending_touch = Some(event.at_us);
                     }
                 }
+                // Touches during a slide are dropped; LVGL resumes clean.
+                Route::Pass if slide != Slide::Idle => press_state = event.pressed,
                 Route::Pass => {
                     if event.pressed && !press_state {
                         // Using an app keeps her awake, without a wake face.
@@ -286,6 +328,11 @@ pub async fn ui_task(mut plane: PlaneUi) {
             } else {
                 port.invalidate_all();
             }
+            slide = match transition::Direction::between(last_page, app.page()) {
+                Some(direction) => Slide::Pending(direction),
+                None => Slide::Idle,
+            };
+            lights::set_owner(light_owner(app.page()));
             last_timer_second = u32::MAX;
             last_page = app.page();
         }
@@ -296,6 +343,14 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
             if current.lights != settings.lights {
                 lights::set_enabled(current.lights);
+                if current.lights {
+                    // Switched on in Settings: replay the wipe on the strip.
+                    lights::replay_preview();
+                }
+            }
+            if current.haptics && !settings.haptics {
+                // Switched on: one buzz so the motor answers the switch.
+                haptic::play(HapticPattern::Satisfied);
             }
             settings = current;
         }
@@ -325,6 +380,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
                     touch_at_us: pending_touch.take(),
                 });
             }
+        } else if slide != Slide::Idle {
+            slide = step_slide(slide, &mut port, &mut plane, now_ms);
         } else if !port.is_busy() {
             ui.timer_handler();
             // Callbacks fired by the timer handler only queue messages.
@@ -373,5 +430,63 @@ pub async fn ui_task(mut plane: PlaneUi) {
         }
 
         Timer::after(UI_PERIOD).await;
+    }
+}
+
+/// Advance a page slide by one UI loop. LVGL is paused throughout: the new
+/// page is rendered once up front and stays in the shadow.
+fn step_slide(slide: Slide, port: &mut DisplayPort, plane: &mut PlaneUi, now_ms: u64) -> Slide {
+    match slide {
+        Slide::Idle => Slide::Idle,
+        Slide::Pending(direction) => {
+            if !port.snapshot() {
+                return slide;
+            }
+            port.render_now();
+            Slide::Running {
+                direction,
+                start_ms: now_ms,
+            }
+        }
+        Slide::Running {
+            direction,
+            start_ms,
+        } => {
+            let elapsed = now_ms.saturating_sub(start_ms);
+            if elapsed >= transition::SLIDE_MS {
+                return step_slide(Slide::Finishing, port, plane, now_ms);
+            }
+            if let Some((new, old)) = port.take_slide() {
+                plane.submit(PlaneJob {
+                    canvas: Frame::Slide {
+                        new,
+                        old,
+                        direction,
+                        offset: transition::offset(elapsed, WIDTH as u16),
+                    },
+                    size: (WIDTH as u16, HEIGHT as u16),
+                    at: Some((0, 0)),
+                    damage: None,
+                    clear_outside: false,
+                    touch_at_us: None,
+                });
+            }
+            slide
+        }
+        Slide::Finishing => match port.take_full_frame() {
+            Some((screen, damage)) => {
+                plane.submit(PlaneJob {
+                    canvas: Frame::Screen(screen),
+                    size: (WIDTH as u16, HEIGHT as u16),
+                    at: Some((0, 0)),
+                    damage: Some(damage),
+                    clear_outside: false,
+                    touch_at_us: None,
+                });
+                port.reset_pointer();
+                Slide::Idle
+            }
+            None => slide,
+        },
     }
 }

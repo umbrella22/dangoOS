@@ -51,7 +51,8 @@ use mosaico_s31::telemetry::latency;
 
 use crate::drivers::display::Display;
 use crate::drivers::geometry::{DirtyRect, HEIGHT, WIDTH};
-use crate::drivers::lvgl_port::ScreenLease;
+use crate::drivers::lvgl_port::{ScreenLease, SnapshotLease};
+use mosaico_s31::hub::transition::{self, Direction, Source};
 
 /// Vertical offset of the character canvas below the panel centre. The fox
 /// is bottom-anchored in its canvas with headroom for hops; 16 px down keeps
@@ -83,6 +84,15 @@ pub enum Frame {
     Pool(ReadLease),
     /// LVGL's full-screen shadow frame (hub pages).
     Screen(ScreenLease),
+    /// One frame of a page slide: bands of the new page (the shadow) and
+    /// the old one (the snapshot), see `hub::transition`. Always uploads the
+    /// whole panel; `damage` is ignored.
+    Slide {
+        new: ScreenLease,
+        old: SnapshotLease,
+        direction: Direction,
+        offset: u16,
+    },
 }
 
 impl Frame {
@@ -90,6 +100,7 @@ impl Frame {
         match self {
             Frame::Pool(lease) => lease.pixels(),
             Frame::Screen(lease) => lease.pixels(),
+            Frame::Slide { new, .. } => new.pixels(),
         }
     }
 }
@@ -278,8 +289,49 @@ async fn run_plane(
             }
         }
 
+        if let Frame::Slide {
+            new,
+            old,
+            direction,
+            offset,
+        } = &job.canvas
+        {
+            let (bands, count) = transition::bands(*direction, *offset, WIDTH as u16);
+            for band in bands.iter().take(count).flatten() {
+                let pixels = match band.source {
+                    Source::New => new.pixels(),
+                    Source::Old => old.pixels(),
+                };
+                let mut y = 0u16;
+                while completed && y < HEIGHT as u16 {
+                    let y2 = (y + CHUNK_ROWS - 1).min(HEIGHT as u16 - 1);
+                    let dst = DirtyRect {
+                        x0: band.dst_x,
+                        y0: y,
+                        x1: band.dst_x + band.width - 1,
+                        y1: y2,
+                    };
+                    let src = DirtyRect {
+                        x0: band.src_x,
+                        y0: y,
+                        x1: band.src_x + band.width - 1,
+                        y1: y2,
+                    };
+                    match panel.write_canvas_async(dst, src, job.size, pixels).await {
+                        Ok(()) => chunks += 1,
+                        Err(error) => {
+                            warn!("plane: slide {dst:?} failed: {error:?}");
+                            completed = false;
+                        }
+                    }
+                    y = y2 + 1;
+                }
+            }
+        }
+
         let mut y = area.y0;
-        while completed && y <= area.y1 {
+        let slide = matches!(job.canvas, Frame::Slide { .. });
+        while completed && !slide && y <= area.y1 {
             let y2 = (y + CHUNK_ROWS - 1).min(area.y1);
             let dst = DirtyRect {
                 x0: origin_x + area.x0,

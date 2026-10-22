@@ -18,6 +18,10 @@
 //! - A key press flashes the three LEDs on its side for [`SPARK_MS`].
 //!
 //! The LEDs are numbered 0..6 from the left key to the right key.
+//!
+//! In the Settings app the fox lets go of the strip and it shows
+//! [`preview_frame`] instead: a left-to-right wipe into a steady warm white,
+//! so switching the lights on is visible on the hardware.
 
 use super::Expression;
 use crate::fox::math::{sin, TAU};
@@ -37,6 +41,12 @@ pub const FADE_MS: u64 = 500;
 pub const CROSSFADE_MS: u64 = 180;
 /// Key press flash.
 pub const SPARK_MS: u64 = 260;
+/// Settings preview: each LED starts this long after its left neighbour...
+pub const PREVIEW_STEP_MS: u64 = 60;
+/// ...and fades in over this long.
+pub const PREVIEW_FADE_MS: u64 = 160;
+/// Settings preview colour, a warm white, at full scale.
+const PREVIEW_COLOR: Rgb = Rgb::new(255, 214, 160);
 /// Surprised opens with a white flash this long.
 const SURPRISE_FLASH_MS: u64 = 240;
 
@@ -369,9 +379,37 @@ fn wheel(hue: f32) -> Rgb {
     }
 }
 
+/// The Settings preview `elapsed_ms` after it started: a left-to-right wipe,
+/// then a steady warm white at [`MAX_LEVEL`].
+pub fn preview_frame(elapsed_ms: u64) -> Frame {
+    let full = PREVIEW_COLOR.scale(MAX_LEVEL as f32 / 255.0);
+    let mut frame = [Rgb::OFF; LED_COUNT];
+    for (i, led) in frame.iter_mut().enumerate() {
+        let start = i as u64 * PREVIEW_STEP_MS;
+        let t = elapsed_ms.saturating_sub(start) as f32 / PREVIEW_FADE_MS as f32;
+        if elapsed_ms > start {
+            *led = Rgb::mix(Rgb::OFF, full, t);
+        }
+    }
+    frame
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_settings_preview_wipes_in_left_to_right_then_holds() {
+        assert_eq!(preview_frame(0), [Rgb::OFF; LED_COUNT]);
+        let early = preview_frame(PREVIEW_STEP_MS * 2);
+        assert!(early[0].max_channel() > early[1].max_channel());
+        assert_eq!(early[3], Rgb::OFF);
+        let settled = PREVIEW_STEP_MS * LED_COUNT as u64 + PREVIEW_FADE_MS;
+        let steady = preview_frame(settled);
+        assert!(steady.iter().all(|led| *led == steady[0]));
+        assert_eq!(steady[0].max_channel(), MAX_LEVEL);
+        assert_eq!(preview_frame(settled + 60_000), steady);
+    }
 
     fn brightest(frame: &Frame) -> usize {
         (0..LED_COUNT)
