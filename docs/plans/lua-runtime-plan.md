@@ -107,13 +107,14 @@ Lua 用 `longjmp` 抛错。`longjmp` 越过 Rust 栈帧是未定义行为，所�
 
 ## 7. 标准库与模块对照
 
-开的标准库：`base`、`package`（只保留 `package.preload` 和应用目录搜索器）、`coroutine`、
-`debug`、`math`、`string`、`table`、`utf8`、`os`。`dofile`/`loadfile` 移除。
+开的标准库：`base`、`package`（只保留 `package.preload` 和 Lua 文件搜索器，C 模块搜索器去掉）、
+`coroutine`、`debug`、`math`、`string`、`table`、`utf8`、`os`、`io`（L2）。`dofile`/`loadfile`
+L2 起保留（只读文本块，`mode "t"`）。
 
 - `os`：官方 `loslib.c` 原样编译（`csrc/mosaico_loslib.c` 用宏把 `time`/`clock` 接到宿主时钟，
-  `remove`/`rename`/`system`/`tmpnam` 返回失败），`os.exit` 置 nil。
+  `system`/`tmpnam` 返回失败；L2 起 `remove`/`rename` 走文件系统），`os.exit` 置 nil。
 - `debug`：只留 `traceback`、`getinfo`，与官方 `cap_lua_restrict_debug` 相同。
-- `io`：不开（应用里 `io.open` ×6，L2 随 `storage` 补）。
+- `io`：L2 起开，官方 `liolib.c` 原样编译，经 newlib 系统调用落到 `mosaico-fs`（第 11 节）。
 - 全局 `args`：启动参数 JSON 经 `json.decode` 得到的表，没有参数时为空表。
 
 L1 的官方模块都是 vendored C 源码原样编译（来源见 `crates/mosaico-lua/vendor/NOTICE.md`），
@@ -130,7 +131,7 @@ ESP-IDF 头文件在 `csrc/esp_shim/` 里打桩，`csrc/mosaico_platform.c` 把 
 | `system` | `millis` 74、`date` 8、`time` 1 | L1 | `millis/uptime` 用开机时钟；没有 RTC/网络对时，`time/date` 从开机时刻按 1970-01-01 起算；`ip` 返回 nil；`heap.get_info` 读 esp-alloc 统计 |
 | `json` | `decode` 7、`encode` 6 | L1 | 官方 `lua_module_json.c` + cJSON 1.7.18 |
 | `arg_schema` | `int` 19、`bool` 6、`parse` 3 | L1 | 官方 `lua_module_system/arg_schema.lua`（Apache-2.0）原样放进 `package.preload` |
-| `storage` | `join_path` 22、`read_file` 13、`get_root_dir` 12、`exists` 12、`write_file` 6、`mkdir` 6 | L2 | 应用目录 + 每应用可写区，放在 flash 数据分区 |
+| `storage` | `join_path` 22、`read_file` 13、`get_root_dir` 12、`exists` 12、`write_file` 6、`mkdir` 6 | L2 | 官方 `lua_module_storage.c` 原样编译，`get_root_dir` 为 `/data` |
 | `imu` | `new` 5 | L2 | 读传感器任务已有的 BMI270 数据 |
 | `audio`、`lvgl` | 9 个应用 | 不做 | RFC 0006 已排除；这些应用在网格里显示为不可用 |
 
@@ -140,12 +141,12 @@ ESP-IDF 头文件在 `csrc/esp_shim/` 里打桩，`csrc/mosaico_platform.c` 把 
 | --- | --- | --- |
 | L0 | 主机测试 17 项（时间切片、print 格式、标准库、模块函数、参数错误、让出、中断、`pcall` 拦不住中断、不可让出循环被终止、内存上限）；真机开机自检打印 `hi from Lua 5.5`，记录耗时、切片数、最长切片、内存 | 主机通过；真机见第 9 节 |
 | L1 | 官方 `display_contract.lua` 在主机光栅器上通过；`snake`、`game_2048` 原样运行；运行时狐狸主页之外的 UI 不掉帧 | 主机通过（`mosaico-lua` 24 项：contract 全过 delta=0、像素、释放、delay、system/os/json/arg_schema、snake、2048 各自跑到结束）；真机通过，见第 10 节 |
-| L2 | `launcher.json` 解析，应用出现在网格；USB 串口推送 + 热重载 | 待做 |
+| L2 | `launcher.json` 解析，应用出现在网格；USB 串口推送 + 热重载；`io`/`storage` | 主机通过（`mosaico-fs` 10 项含官方镜像只读挂载；`mosaico-lua` 28 项含 io/storage、官方 Dino/Flappy Bird、推送示例；`mosaico-s31` 199 项含注册表、推送协议）；真机见第 11 节 |
 
 ### 启动器与 Lua 页面
 
-启动器网格每行 3 个，第一行 Settings / Sensors / Timer，第二行 Snake / 2048
-（`hub::AppId::Snake`/`Game2048`，脚本用 `include_str!` 编进固件，L2 改为从存储读取）。
+启动器网格每行 3 个，先是 Settings / Sensors / Timer，后面是注册表里的 Lua 应用
+（`hub::AppId::Lua(i)`，见第 11 节）。超过两行时网格可以上下滚动。
 
 1. 点开 Lua 应用 → 页面滑入（LVGL 先画“正在启动…”），同时 `lua::start` 启动脚本。
 2. 脚本 `display.open` 后 UI 不再跑 LVGL，改为拷贝脚本提交的帧；非系统手势的触摸送给
@@ -192,3 +193,78 @@ data +284 B，bss +472 B。
 - 退出后堆空闲回到进入前的水平（多次进出都是 15,578,4xx B），没有泄漏。
 - 第一次上机发现两处问题，已修：2048 从底部往上滑被当成回主页（底边手势区收窄，见第 8 节），
   以及非 24 px 的字发虚（内置字号全编进去，见第 7 节）。
+
+## 11. L2：文件系统、注册表、推送
+
+### 存储布局
+
+| 挂载点 | 位置 | 内容 |
+| --- | --- | --- |
+| `/system` | `system` 分区（0xD00000，LittleFS，750 × 4 KiB），只读 | 出厂镜像：`apps/`（官方应用）、`scripts/builtin/`（共享 Lua 库） |
+| `/data` | `main_app` 分区最后 2 MiB（0x7E0000..0x9E0000），可写，首次启动格式化 | `apps/`（推送的应用）、应用自己的数据 |
+
+- `crates/mosaico-fs`：littlefs 2.11.3（BSD-3）+ 挂载表 VFS + newlib 系统调用
+  （`_open_r`/`_read_r`/`_write_r`/`_lseek_r`/`_close_r`/`_fstat_r`/`_stat_r`/`_unlink_r`/
+  `_rename_r`/`mkdir`/`opendir` 等）。所有调用都在同一个执行器线程上同步完成，不需要锁等待。
+- newlib 的链接顺序由 `mosaico-fs/build.rs` 负责，保证我们的系统调用先于 newlib 自带桩。
+- 固件镜像不能超过 0x5D0000 B（0x7E0000 − 0x210000），`scripts/flash-app.sh` 写入前检查。
+
+### 注册表
+
+与官方 `app_registry` 规则一致：按 `/data/apps`、`/system/apps`、内置（Snake、2048）的顺序扫描，
+同 id 先到先得（推送的同名应用遮住出厂的）；`launcher.json` ≤ 4 KiB，`schema_version` 1，
+id 为 1–63 个 `[A-Za-z0-9_-]`，`entry` 为相对路径；最多 64 个应用。
+
+- 入口脚本里 `require` 的模块不在本固件里（`lvgl`、`audio`、`image`、`thread` 等）时，
+  格子变暗，点开显示“不支持：缺少 X”。可运行的排在前面，再按 `order`、标题。
+- 图标：`assets/icon.jpg` 用 TJpgDec 解码、最近邻缩到 96 px 以内，转 RGB565 缓存（最多 48 个）。
+- `package.path` 为 `<应用 scripts 目录>/?.lua;…/?/init.lua;/system/scripts/builtin/?.lua;…lib/?.lua`。
+
+### USB 推送协议
+
+日志口（CDC-ACM）同时收命令：以 `@mosaico ` 开头的行是命令，其余忽略；每条命令一行回复
+`@ok …` / `@err …`，和日志行混在一起，主机按前缀挑出来。
+
+```
+@mosaico hello                      -> @ok hello mosaico-push 1
+@mosaico begin <id>                 -> @ok begin <id>        （清空 /data/apps/.incoming）
+@mosaico file <rel> <size> <crc32>  -> @ok ready <rel>
+  <size> 字节原始数据                 -> @ok file <rel>        （CRC-32 为 zlib 的，十六进制）
+@mosaico commit <id> [run]          -> @ok commit <id>       （校验清单和入口，替换 /data/apps/<id>）
+@mosaico abort | stop | reload | ls | run <id> | rm <id> | status | reboot
+```
+
+- 文件路径只允许 `[A-Za-z0-9._-]` 组成、不以点开头的段，最多 6 层；单个文件 ≤ 1 MiB。
+- 主机等 `ready` 再发数据，出错时数据不会被当成命令；写 flash 时 USB 自动 NAK，即流控。
+- `commit` 之后 UI 任务重扫注册表：当前正在屏幕上的应用如果还在，就用新文件重启（热重载）；
+  已被删除或变得不能运行就停掉回启动器。`commit … run` 直接打开该应用。
+- 主机工具：`scripts/push-app.py push <目录> [--run] [--follow]`，以及 `run`/`stop`/`reload`/`status`/`reboot`/
+  `ls`/`rm`。示例应用 `examples/lua-apps/hello_push`（本地模块、`io` 计数、`storage`）。
+
+### 实测
+
+固件镜像 2,606,608 B（上限 6,094,848 B 的 43%）。真机启动日志：
+
+```
+fs: flash @0x2000: [e9, 03, 02, 4f, ...]          （S31 的二级引导在 0x2000，0 处全是 FF）
+fs: flash size: header 16384 KiB, partitions 16384 KiB, esp-storage 0 KiB
+fs: /system ro @0xd00000 3000 KiB                   738/750 块已用
+fs: /data rw @0x7e0000 2048 KiB (formatted)
+apps: 6 in 161 ms: dino flappybird game_2048 snake app_store* album_app*
+```
+
+- `push hello_push --run`：3 个文件 1,558 B，1.4 s；再推一次，屏幕上的应用用新文件重启（热重载），
+  `io` 计数器在 `/data` 里递增（第 5 次启动显示 `launch 5`）。`reboot` 之后 `ls` 仍有 hello_push。
+- `app_store`、`album_app` 需要 `lvgl` 等模块，格子变暗，符合预期。
+
+上机时踩到的两个坑，都已修：
+
+1. S31 的 ROM 链接脚本把 `jd_prepare`/`jd_decomp` 定义成 ROM 里的 TJpgDec（JDEC 结构不同）。
+   我们自带的 TJpgDec 被链接到 ROM 版本上，解第一个图标就 `Load address misaligned`，开机循环重启。
+   `mosaico-lua/build.rs` 把这两个函数改名为 `mosaico_jd_*`；其余 vendored C 符号已核对，没有别的冲突。
+2. esp-storage 在 S31 上按 RDID 推算的 flash 大小是 0，所有带越界检查的读都失败，分区表读不出来。
+   现在 `drivers/storage.rs` 经 `esp_storage::ll` 直接调用 ROM 读写擦（每次在临界区里），
+   flash 大小取 0x0 / 0x2000 处引导镜像头，取不到时用分区表末端向上取 2 的幂。
+
+开机崩溃会记进 RTC 快速内存（`crashlog.rs`），下次启动在 USB 连上后打印，
+并跳过上次崩溃时所在的阶段（挂载存储、扫描应用），避免卡死在重启循环里。

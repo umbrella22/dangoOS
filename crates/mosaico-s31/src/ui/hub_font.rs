@@ -269,6 +269,12 @@ static FILES: [&[u8]; 4] = [FILE_20, FILE_24, FILE_30, FILE_DIGITS_64];
 #[cfg(test)]
 static ALL: [&StaticFont; 4] = [&HUB_20, &HUB_24, &HUB_30, &HUB_DIGITS_64];
 
+/// Advance width of `ch` in `font`, px (`None` when the glyph is missing and
+/// LVGL falls back to Montserrat).
+pub fn advance(font: &'static StaticFont, ch: char) -> Option<u16> {
+    font.data().find(ch as u32).map(|g| g.adv)
+}
+
 /// Whether `font` has a glyph for `ch` (host checks and tests).
 pub fn has_glyph(font: &'static StaticFont, ch: char) -> bool {
     font.data().find(ch as u32).is_some()

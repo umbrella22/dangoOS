@@ -1,0 +1,587 @@
+//! The USB app push protocol, independent of the USB stack.
+//!
+//! The console port carries log lines out and this protocol in. Lines that
+//! do not start with `@mosaico ` are ignored, so typing into a terminal is
+//! harmless. Every command gets one reply line, `@ok ...` or `@err ...`.
+//!
+//! ```text
+//! @mosaico hello                       -> @ok hello mosaico-push 1
+//! @mosaico begin <id>                  -> @ok begin <id>
+//! @mosaico file <rel> <size> <crc32>   -> @ok ready <rel>
+//!   (after `ready`, exactly <size> raw bytes)  -> @ok file <rel>
+//! @mosaico commit <id> [run]           -> @ok commit <id>
+//! @mosaico abort                       -> @ok abort
+//! @mosaico run <id> | stop | reload    -> @ok ...
+//! @mosaico rm <id>                     -> @ok rm <id>
+//! @mosaico ls                          -> @ok ls <id> <id> ...
+//! @mosaico status                      -> @ok status <mount>:<free>/<blocks>x<size> ...
+//! @mosaico reboot                      -> @ok reboot (then a software reset)
+//! ```
+//!
+//! `begin` stages a fresh `/data/apps/.incoming/<id>`; `file` writes into it
+//! (the CRC-32 is the zlib one, in hex); `commit` checks the manifest, swaps
+//! the staged directory for `/data/apps/<id>` and asks for a rescan. Apps in
+//! `/system` cannot be changed, but a `/data` app with the same id shadows
+//! one, and `rm` brings it back.
+
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use mosaico_fs::{Errno, Kind, OpenFlags, Vfs};
+
+use super::registry::{self, id_is_valid, MANIFEST, MANIFEST_MAX_BYTES};
+
+pub const PREFIX: &str = "@mosaico ";
+pub const VERSION: u32 = 1;
+const DATA_APPS: &str = "/data/apps";
+const STAGING: &str = "/data/apps/.incoming";
+/// Longest command line; longer ones are discarded whole.
+const LINE_MAX: usize = 256;
+/// Largest single file.
+pub const FILE_MAX: u32 = 1024 * 1024;
+/// Deepest relative path, in components.
+const DEPTH_MAX: usize = 6;
+
+/// What the firmware should do after a command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Effect {
+    /// One reply line, without the line ending.
+    Reply(String),
+    /// Rescan the apps, then open `run` if given.
+    Reload {
+        run: Option<String>,
+    },
+    Run(String),
+    Stop,
+    /// Reset the chip once the reply is out.
+    Reboot,
+}
+
+struct Upload {
+    fd: i32,
+    rel: String,
+    path: String,
+    left: u32,
+    crc: u32,
+    want: u32,
+    failed: Option<Errno>,
+}
+
+/// One connection's protocol state.
+#[derive(Default)]
+pub struct Session {
+    line: Vec<u8>,
+    overflow: bool,
+    staging: Option<String>,
+    upload: Option<Upload>,
+}
+
+impl Session {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feed bytes from the host; effects come out in order.
+    pub fn feed(&mut self, vfs: &mut Vfs, mut data: &[u8], out: &mut dyn FnMut(Effect)) {
+        while !data.is_empty() {
+            if self.upload.is_some() {
+                data = self.feed_upload(vfs, data, out);
+                continue;
+            }
+            match data.iter().position(|&b| b == b'\n') {
+                Some(n) => {
+                    self.push_line(&data[..n]);
+                    data = &data[n + 1..];
+                    let line = core::mem::take(&mut self.line);
+                    let overflow = core::mem::replace(&mut self.overflow, false);
+                    if overflow {
+                        out(Effect::Reply("@err line too long".into()));
+                    } else if let Ok(text) = core::str::from_utf8(&line) {
+                        let text = text.trim_end_matches('\r');
+                        if let Some(cmd) = text.strip_prefix(PREFIX) {
+                            self.command(vfs, cmd.trim(), out);
+                            if self.upload.as_ref().is_some_and(|u| u.left == 0) {
+                                // An empty file: no payload follows.
+                                self.feed_upload(vfs, &[], out);
+                            }
+                        }
+                    }
+                }
+                None => {
+                    self.push_line(data);
+                    data = &[];
+                }
+            }
+        }
+    }
+
+    /// The host went away: drop a half-written file and the staging area.
+    pub fn reset(&mut self, vfs: &mut Vfs) {
+        if let Some(up) = self.upload.take() {
+            let _ = vfs.close(up.fd);
+        }
+        if self.staging.take().is_some() {
+            let _ = vfs.remove_tree(STAGING);
+        }
+        self.line.clear();
+        self.overflow = false;
+    }
+
+    fn push_line(&mut self, bytes: &[u8]) {
+        if self.line.len() + bytes.len() > LINE_MAX {
+            self.overflow = true;
+        } else if !self.overflow {
+            self.line.extend_from_slice(bytes);
+        }
+    }
+
+    fn feed_upload<'d>(
+        &mut self,
+        vfs: &mut Vfs,
+        data: &'d [u8],
+        out: &mut dyn FnMut(Effect),
+    ) -> &'d [u8] {
+        let up = self.upload.as_mut().expect("upload");
+        let n = (up.left as usize).min(data.len());
+        let (chunk, rest) = data.split_at(n);
+        if up.failed.is_none() && n > 0 {
+            if let Err(e) =
+                vfs.write(up.fd, chunk)
+                    .and_then(|w| if w == n { Ok(()) } else { Err(Errno::NOSPC) })
+            {
+                up.failed = Some(e);
+            }
+        }
+        up.crc = crc32_update(up.crc, chunk);
+        up.left -= n as u32;
+        if up.left == 0 {
+            let up = self.upload.take().expect("upload");
+            let closed = vfs.close(up.fd);
+            let crc = !up.crc;
+            let reply = match (up.failed, closed) {
+                (Some(e), _) | (None, Err(e)) => format!("@err file {}: {e}", up.rel),
+                _ if crc != up.want => {
+                    format!("@err file {}: crc {crc:08x} != {:08x}", up.rel, up.want)
+                }
+                _ => format!("@ok file {}", up.rel),
+            };
+            if reply.starts_with("@err") {
+                let _ = vfs.unlink(&up.path);
+            }
+            out(Effect::Reply(reply));
+        }
+        rest
+    }
+
+    fn command(&mut self, vfs: &mut Vfs, cmd: &str, out: &mut dyn FnMut(Effect)) {
+        let mut words = cmd.split_ascii_whitespace();
+        let verb = words.next().unwrap_or("");
+        let args: Vec<&str> = words.collect();
+        let result = match (verb, args.as_slice()) {
+            ("hello", []) => Ok(format!("hello mosaico-push {VERSION}")),
+            ("begin", [id]) => self.begin(vfs, id),
+            ("file", [rel, size, crc]) => match self.file(vfs, rel, size, crc) {
+                // The host sends the payload only after this; the final
+                // reply follows it (see `feed_upload`).
+                Ok(()) => Ok(format!("ready {rel}")),
+                Err(text) => Err(text),
+            },
+            ("commit", [id]) => self.commit(vfs, id, false, out),
+            ("commit", [id, "run"]) => self.commit(vfs, id, true, out),
+            ("abort", []) => {
+                if self.staging.take().is_some() {
+                    let _ = vfs.remove_tree(STAGING);
+                }
+                Ok("abort".into())
+            }
+            ("run", [id]) if id_is_valid(id) => {
+                out(Effect::Run(id.to_string()));
+                Ok(format!("run {id}"))
+            }
+            ("stop", []) => {
+                out(Effect::Stop);
+                Ok("stop".into())
+            }
+            ("reload", []) => {
+                out(Effect::Reload { run: None });
+                Ok("reload".into())
+            }
+            ("rm", [id]) if id_is_valid(id) => {
+                match vfs.remove_tree(&format!("{DATA_APPS}/{id}")) {
+                    Ok(()) => {
+                        out(Effect::Reload { run: None });
+                        Ok(format!("rm {id}"))
+                    }
+                    Err(e) => Err(format!("rm {id}: {e}")),
+                }
+            }
+            ("ls", []) => list(vfs),
+            ("status", []) => Ok(status(vfs)),
+            ("reboot", []) => {
+                out(Effect::Reboot);
+                Ok("reboot".into())
+            }
+            _ => Err(format!("bad command: {cmd}")),
+        };
+        out(Effect::Reply(match result {
+            Ok(text) => format!("@ok {text}"),
+            Err(text) => format!("@err {text}"),
+        }));
+    }
+
+    fn begin(&mut self, vfs: &mut Vfs, id: &str) -> Result<String, String> {
+        if !id_is_valid(id) {
+            return Err(format!("bad id {id}"));
+        }
+        let dir = format!("{STAGING}/{id}");
+        match vfs.remove_tree(STAGING) {
+            Ok(()) | Err(Errno::NOENT) => {}
+            Err(e) => return Err(format!("clear staging: {e}")),
+        }
+        vfs.create_dir_all(&dir)
+            .map_err(|e| format!("{dir}: {e}"))?;
+        self.staging = Some(id.to_string());
+        Ok(format!("begin {id}"))
+    }
+
+    fn file(&mut self, vfs: &mut Vfs, rel: &str, size: &str, crc: &str) -> Result<(), String> {
+        let id = self.staging.as_deref().ok_or("file before begin")?;
+        let size: u32 = size.parse().map_err(|_| format!("bad size {size}"))?;
+        let want = u32::from_str_radix(crc, 16).map_err(|_| format!("bad crc {crc}"))?;
+        if !rel_is_safe(rel) {
+            return Err(format!("bad path {rel}"));
+        }
+        if size > FILE_MAX {
+            return Err(format!("{rel} is larger than {FILE_MAX} bytes"));
+        }
+        let path = format!("{STAGING}/{id}/{rel}");
+        if let Some((dir, _)) = path.rsplit_once('/') {
+            vfs.create_dir_all(dir).map_err(|e| format!("{dir}: {e}"))?;
+        }
+        let fd = vfs
+            .open(&path, OpenFlags::WRITE)
+            .map_err(|e| format!("{rel}: {e}"))?;
+        self.upload = Some(Upload {
+            fd,
+            rel: rel.to_string(),
+            path,
+            left: size,
+            crc: !0,
+            want,
+            failed: None,
+        });
+        Ok(())
+    }
+
+    fn commit(
+        &mut self,
+        vfs: &mut Vfs,
+        id: &str,
+        run: bool,
+        out: &mut dyn FnMut(Effect),
+    ) -> Result<String, String> {
+        if self.staging.as_deref() != Some(id) {
+            return Err(format!("commit {id}: not staged"));
+        }
+        let staged = format!("{STAGING}/{id}");
+        let text = registry::read_text(vfs, &format!("{staged}/{MANIFEST}"), MANIFEST_MAX_BYTES)?;
+        let m = registry::parse_manifest(&text, id)?;
+        match vfs.stat(&format!("{staged}/{}", m.entry)) {
+            Ok(meta) if meta.kind == Kind::File => {}
+            _ => return Err(format!("entry {} missing", m.entry)),
+        }
+        let target = format!("{DATA_APPS}/{id}");
+        match vfs.remove_tree(&target) {
+            Ok(()) | Err(Errno::NOENT) => {}
+            Err(e) => return Err(format!("{target}: {e}")),
+        }
+        vfs.rename(&staged, &target)
+            .map_err(|e| format!("rename: {e}"))?;
+        let _ = vfs.remove_tree(STAGING);
+        self.staging = None;
+        out(Effect::Reload {
+            run: run.then(|| id.to_string()),
+        });
+        Ok(format!("commit {id}"))
+    }
+}
+
+/// A file path inside an app: plain components of `[A-Za-z0-9._-]`, none
+/// starting with a dot.
+pub fn rel_is_safe(rel: &str) -> bool {
+    let parts: Vec<&str> = rel.split('/').collect();
+    registry::relative_path_is_valid(rel)
+        && parts.len() <= DEPTH_MAX
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && p.len() <= 48
+                && !p.starts_with('.')
+                && p.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+        })
+}
+
+fn status(vfs: &mut Vfs) -> String {
+    let names: Vec<String> = vfs.mount_names().map(String::from).collect();
+    let mut text = String::from("status");
+    if names.is_empty() {
+        text.push_str(" no-mounts");
+    }
+    for name in names {
+        match vfs.space(&format!("/{name}")) {
+            Ok(sp) => text.push_str(&format!(
+                " {name}:{}/{}x{}",
+                sp.free, sp.blocks, sp.block_size
+            )),
+            Err(e) => text.push_str(&format!(" {name}:{e}")),
+        }
+    }
+    text
+}
+
+fn list(vfs: &mut Vfs) -> Result<String, String> {
+    let mut ids: Vec<String> = match vfs.read_dir(DATA_APPS) {
+        Ok(entries) => entries
+            .into_iter()
+            .filter(|e| e.meta.kind == Kind::Dir && !e.name.starts_with('.'))
+            .map(|e| e.name)
+            .collect(),
+        Err(Errno::NOENT) => Vec::new(),
+        Err(e) => return Err(format!("ls: {e}")),
+    };
+    ids.sort();
+    let mut text = String::from("ls");
+    for id in ids {
+        text.push(' ');
+        text.push_str(&id);
+    }
+    Ok(text)
+}
+
+/// zlib CRC-32 without the final inversion; start from `!0`.
+fn crc32_update(mut crc: u32, data: &[u8]) -> u32 {
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+        }
+    }
+    crc
+}
+
+pub fn crc32(data: &[u8]) -> u32 {
+    !crc32_update(!0, data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hub::registry::{IconCache, Registry};
+    use mosaico_fs::{Fs, Geometry, RamDevice};
+
+    fn vfs() -> Vfs {
+        let mut v = Vfs::new();
+        for (name, blocks) in [("system", 32), ("data", 64)] {
+            let fs = Fs::mount_or_format(
+                Box::new(RamDevice::new(4096, blocks)),
+                Geometry::flash(blocks),
+            )
+            .unwrap()
+            .0;
+            v.mount(name, fs);
+        }
+        v
+    }
+
+    fn file_cmd(rel: &str, data: &[u8]) -> Vec<u8> {
+        let mut out =
+            format!("@mosaico file {rel} {} {:08x}\n", data.len(), crc32(data)).into_bytes();
+        out.extend_from_slice(data);
+        out
+    }
+
+    const MANIFEST_TEXT: &str =
+        r#"{"schema_version":1,"id":"hello","entry":"scripts/main.lua","display_name":"Hi"}"#;
+    const MAIN: &[u8] = b"local x = 1\nreturn x\n";
+
+    fn push_stream(run: bool) -> Vec<u8> {
+        let mut s = b"noise from a terminal\n@mosaico hello\r\n@mosaico begin hello\n".to_vec();
+        s.extend(file_cmd("launcher.json", MANIFEST_TEXT.as_bytes()));
+        s.extend(file_cmd("scripts/main.lua", MAIN));
+        s.extend(file_cmd("empty.txt", b""));
+        s.extend_from_slice(if run {
+            b"@mosaico commit hello run\n"
+        } else {
+            b"@mosaico commit hello\n"
+        });
+        s
+    }
+
+    fn run(v: &mut Vfs, sess: &mut Session, data: &[u8], chunk: usize) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        for c in data.chunks(chunk) {
+            sess.feed(v, c, &mut |e| effects.push(e));
+        }
+        effects
+    }
+
+    fn replies(effects: &[Effect]) -> Vec<String> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Reply(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn crc32_matches_zlib() {
+        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+        assert_eq!(crc32(b""), 0);
+    }
+
+    #[test]
+    fn push_commits_app_at_any_chunking() {
+        for chunk in [1, 7, 64, 512, 1 << 20] {
+            let mut v = vfs();
+            let mut sess = Session::new();
+            let effects = run(&mut v, &mut sess, &push_stream(true), chunk);
+            assert_eq!(
+                replies(&effects),
+                [
+                    "@ok hello mosaico-push 1",
+                    "@ok begin hello",
+                    "@ok ready launcher.json",
+                    "@ok file launcher.json",
+                    "@ok ready scripts/main.lua",
+                    "@ok file scripts/main.lua",
+                    "@ok ready empty.txt",
+                    "@ok file empty.txt",
+                    "@ok commit hello"
+                ],
+                "chunk {chunk}"
+            );
+            assert!(effects.contains(&Effect::Reload {
+                run: Some("hello".into())
+            }));
+            assert_eq!(
+                v.read_file("/data/apps/hello/scripts/main.lua").unwrap(),
+                MAIN
+            );
+            assert_eq!(v.read_file("/data/apps/hello/empty.txt").unwrap(), b"");
+            assert!(v.stat(STAGING).is_err(), "staging is cleaned up");
+            let reg = Registry::scan(&mut v, &mut IconCache::new(), &mut |_| {});
+            let i = reg.find("hello").expect("listed");
+            assert!(reg.apps[i].runnable());
+            assert_eq!(reg.apps[i].title, "Hi");
+        }
+    }
+
+    #[test]
+    fn commit_replaces_old_files_and_rm_removes() {
+        let mut v = vfs();
+        v.create_dir_all("/data/apps/hello/old").unwrap();
+        v.write_file("/data/apps/hello/old/stale.lua", b"x")
+            .unwrap();
+        let mut sess = Session::new();
+        run(&mut v, &mut sess, &push_stream(false), 512);
+        assert!(v.stat("/data/apps/hello/old/stale.lua").is_err());
+        let e = run(
+            &mut v,
+            &mut sess,
+            b"@mosaico ls\n@mosaico rm hello\n@mosaico ls\n@mosaico rm hello\n",
+            512,
+        );
+        let r = replies(&e);
+        assert_eq!(r[0], "@ok ls hello");
+        assert_eq!(r[1], "@ok rm hello");
+        assert_eq!(r[2], "@ok ls");
+        assert!(r[3].starts_with("@err rm hello"));
+        assert!(e.contains(&Effect::Reload { run: None }));
+    }
+
+    #[test]
+    fn bad_crc_and_paths_are_rejected() {
+        let mut v = vfs();
+        let mut sess = Session::new();
+        let mut s = b"@mosaico file a.lua 1 0\n@mosaico begin hello\n".to_vec();
+        s.extend_from_slice(
+            format!("@mosaico file scripts/main.lua {} 12345678\n", MAIN.len()).as_bytes(),
+        );
+        s.extend_from_slice(MAIN);
+        for bad in [
+            "../x", ".hidden", "/abs", "a//b", "a/../b", "sp ace", "a\\b",
+        ] {
+            s.extend_from_slice(format!("@mosaico file {bad} 0 0\n").as_bytes());
+        }
+        s.extend_from_slice(format!("@mosaico file big.bin {} 0\n", FILE_MAX + 1).as_bytes());
+        s.extend_from_slice(b"@mosaico commit other\n@mosaico commit hello\n@mosaico frobnicate\n");
+        let r = replies(&run(&mut v, &mut sess, &s, 5));
+        assert!(r[0].starts_with("@err file before begin"), "{r:?}");
+        assert_eq!(r[1], "@ok begin hello");
+        assert_eq!(r[2], "@ok ready scripts/main.lua");
+        let r = &r[1..];
+        assert!(r[2].contains("crc"), "{r:?}");
+        assert!(v
+            .stat("/data/apps/.incoming/hello/scripts/main.lua")
+            .is_err());
+        // "sp ace" splits into four words and is a bad command.
+        assert!(r[3..10].iter().all(|t| t.starts_with("@err")), "{r:?}");
+        assert!(r[10].contains("larger"), "{r:?}");
+        assert!(r[11].contains("not staged"));
+        assert!(r[12].contains("launcher.json"), "no manifest: {r:?}");
+        assert!(r[13].starts_with("@err bad command"));
+        assert_eq!(r.len(), 14);
+        assert!(v.stat("/data/apps/hello").is_err());
+    }
+
+    #[test]
+    fn long_lines_reset_and_controls() {
+        let mut v = vfs();
+        let mut sess = Session::new();
+        let mut s = vec![b'a'; 1000];
+        s.extend_from_slice(
+            b"\n@mosaico run snake\n@mosaico stop\n@mosaico reload\n@mosaico begin x\n",
+        );
+        let e = run(&mut v, &mut sess, &s, 100);
+        let r = replies(&e);
+        assert_eq!(
+            r,
+            [
+                "@err line too long",
+                "@ok run snake",
+                "@ok stop",
+                "@ok reload",
+                "@ok begin x"
+            ]
+        );
+        assert!(e.contains(&Effect::Run("snake".into())) && e.contains(&Effect::Stop));
+        assert!(v.stat("/data/apps/.incoming/x").is_ok());
+        // A half-sent file, then the host disconnects.
+        run(&mut v, &mut sess, b"@mosaico file a.lua 10 0\nabc", 100);
+        sess.reset(&mut v);
+        assert!(v.stat(STAGING).is_err());
+        let r = replies(&run(&mut v, &mut sess, b"@mosaico hello\n", 100));
+        assert_eq!(r, ["@ok hello mosaico-push 1"]);
+    }
+
+    #[test]
+    fn status_and_reboot() {
+        let mut v = vfs();
+        let mut sess = Session::new();
+        let e = run(&mut v, &mut sess, b"@mosaico status\n@mosaico reboot\n", 64);
+        let r = replies(&e);
+        assert!(
+            r[0].starts_with("@ok status ") && r[0].contains(" data:62/64x4096"),
+            "{r:?}"
+        );
+        assert!(r[0].contains(" system:"), "{r:?}");
+        assert_eq!(r[1], "@ok reboot");
+        assert!(e.contains(&Effect::Reboot));
+        let mut empty = Vfs::new();
+        let r = replies(&run(&mut empty, &mut sess, b"@mosaico status\n", 64));
+        assert_eq!(r, ["@ok status no-mounts"]);
+    }
+}

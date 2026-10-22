@@ -30,7 +30,8 @@ use mosaico_lua::{
     caps, esp_err, Blit, DisplayInfo, HeapInfo, Host, Limits, RawAllocator, Request, Step,
     TouchPoint, Vm,
 };
-use mosaico_s31::hub::LuaApp;
+use mosaico_s31::hub::registry::SHARED_LUA_DIRS;
+use mosaico_s31::hub::{LuaApp, LuaSource};
 
 use crate::drivers::geometry::{HEIGHT, WIDTH};
 
@@ -151,18 +152,18 @@ fn release_frame() {
 // ---- host ------------------------------------------------------------------
 
 struct DeviceHost {
-    app: LuaApp,
+    id: String,
     screen: bool,
     blits: Vec<LuaBlit>,
 }
 
 impl Host for DeviceHost {
     fn print(&mut self, line: &[u8]) {
-        info!("lua[{}]> {}", self.app.id(), String::from_utf8_lossy(line));
+        info!("lua[{}]> {}", self.id, String::from_utf8_lossy(line));
     }
 
     fn log(&mut self, line: &[u8]) {
-        warn!("lua[{}]: {}", self.app.id(), String::from_utf8_lossy(line));
+        warn!("lua[{}]: {}", self.id, String::from_utf8_lossy(line));
     }
 
     fn display_open(&mut self) -> Result<DisplayInfo, i32> {
@@ -265,28 +266,32 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
     let free_before = esp_alloc::HEAP.free();
     let seed = Instant::now().as_ticks() as u32;
     let host = DeviceHost {
-        app,
+        id: app.id.clone(),
         screen: false,
         blits: Vec::new(),
     };
     let mut vm = match Vm::new(Box::new(host), LIMITS, &PSRAM, seed) {
         Ok(vm) => vm,
         Err(e) => {
-            warn!("lua[{}]: state creation failed: {e}", app.id());
+            warn!("lua[{}]: state creation failed: {e}", app.id);
             STATE.store(2, Ordering::Release);
             return None;
         }
     };
-    if let Err(e) = vm.set_args_json(app.args_json()) {
-        warn!("lua[{}]: args: {e}", app.id());
+    if let Err(e) = vm.set_args_json(&app.args_json) {
+        warn!("lua[{}]: args: {e}", app.id);
     }
-    if let Err(e) = vm.load(app.chunk_name(), app.source().as_bytes()) {
-        warn!("lua[{}]: {e}", app.id());
+    let loaded = match &app.source {
+        LuaSource::Builtin { chunk, source } => vm.load(chunk, source.as_bytes()),
+        LuaSource::File(path) => vm.load_file(path, &SHARED_LUA_DIRS),
+    };
+    if let Err(e) = loaded {
+        warn!("lua[{}]: {e}", app.id);
         drop(vm);
         STATE.store(2, Ordering::Release);
         return None;
     }
-    info!("lua[{}]: started", app.id());
+    info!("lua[{}]: started", app.id);
 
     let started = Instant::now();
     let mut slices = 0u32;
@@ -342,10 +347,10 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
     let elapsed = started.elapsed().as_millis();
     let peak = vm.memory_peak();
     match &outcome {
-        Step::Done => info!("lua[{}]: finished", app.id()),
-        Step::Interrupted => info!("lua[{}]: stopped", app.id()),
-        Step::Error(e) => warn!("lua[{}]: {e}", app.id()),
-        other => warn!("lua[{}]: ended with {other:?}", app.id()),
+        Step::Done => info!("lua[{}]: finished", app.id),
+        Step::Interrupted => info!("lua[{}]: stopped", app.id),
+        Step::Error(e) => warn!("lua[{}]: {e}", app.id),
+        other => warn!("lua[{}]: ended with {other:?}", app.id),
     }
     release_frame();
     drop(vm);
@@ -353,7 +358,7 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
     info!(
         "lua[{}]: {elapsed} ms, {frames} frames, {slices} slices (longest {longest_us} us), \
          peak {peak} B, heap free {free_before} -> {} B",
-        app.id(),
+        app.id,
         esp_alloc::HEAP.free()
     );
     // Ended by itself: the UI leaves the page. Stopped: the UI already left.

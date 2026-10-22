@@ -13,6 +13,7 @@
 //! - [`memory`]: PSRAM-backed pixel buffers.
 //! - [`lvgl_port`]: the headless LVGL display LVGL needs to create objects.
 //! - [`libc`]: malloc and syscall stubs for newlib (used by the Lua core).
+//! - [`storage`]: the `/system` and `/data` LittleFS mounts.
 
 pub mod battery;
 pub mod display;
@@ -22,6 +23,7 @@ pub mod libc;
 pub mod lvgl_port;
 pub mod memory;
 pub mod shared_i2c;
+pub mod storage;
 pub mod subboard;
 pub mod touch;
 pub mod touch_sens;

@@ -10,6 +10,7 @@ links = "mosaico_lua"
 build = "build.rs"
 
 [dependencies]
+mosaico-fs = { path = "../mosaico-fs" }
 
 [build-dependencies]
 cc = "1"

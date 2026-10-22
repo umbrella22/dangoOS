@@ -13,16 +13,18 @@
 
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use lvgl_ui::{
-    symbol, Align, Color, FlexAlign, Font, GridTrack, Key, Node, Part, Size, State, Style,
-    TextAlign,
+    symbol, Align, Color, FlexAlign, Font, GridTrack, ImageSource, Key, Node, Part, Size, State,
+    Style, TextAlign,
 };
 
 use super::hub_font::{HUB_20, HUB_24, HUB_30, HUB_DIGITS_64};
 use super::AppMsg;
 use crate::behavior::affect::ModuleKind;
 use crate::hub::countdown::{format_mm_ss, Phase, PRESETS_MIN};
+use crate::hub::registry::{AppEntry, Registry};
 use crate::hub::snapshot::{MagnetState, SlotState, SystemSnapshot};
 use crate::hub::{AppId, Hub, Settings};
 
@@ -161,7 +163,7 @@ struct Tile {
     color: Color,
 }
 
-const TILES: [Tile; 5] = [
+const NATIVE_TILES: [Tile; 3] = [
     Tile {
         app: AppId::Settings,
         icon: symbol::SETTINGS,
@@ -177,65 +179,156 @@ const TILES: [Tile; 5] = [
         icon: symbol::BELL,
         color: ACCENT,
     },
-    Tile {
-        app: AppId::Snake,
-        icon: symbol::LOOP,
-        color: Color::rgb(0x2E, 0x9E, 0x5B),
-    },
-    Tile {
-        app: AppId::Game2048,
-        icon: symbol::SHUFFLE,
-        color: Color::rgb(0xC8, 0x8A, 0x2E),
-    },
 ];
 
 /// Launcher tiles per row.
 const TILES_PER_ROW: usize = 3;
+/// Rows that fit without scrolling.
+const FIXED_ROWS: usize = 2;
+/// Height of the scrolling grid when there are more rows.
+const GRID_H: i16 = 330;
 
-/// The app grid: rows of three tiles.
-pub fn launcher() -> Node<AppMsg> {
-    let tile = |tile: &Tile| {
-        Node::column()
-            .key(Key::Named(tile.app.key()))
-            .scrollable(false)
-            .clickable(true)
-            .on_click(AppMsg::Open(tile.app))
-            .style(
-                Style::neutral()
-                    .width(Size::Px(120))
-                    .height(Size::Content)
-                    .gap(8)
-                    .flex_align(FlexAlign::Start, FlexAlign::Center),
-            )
-            .child(
-                Node::obj()
-                    .key(Key::Named("icon"))
-                    .scrollable(false)
-                    // Plain objects are clickable by default; the tap must
-                    // land on the tile, which owns the click handler.
-                    .clickable(false)
-                    .style(
-                        Style::neutral()
-                            .bg(tile.color)
-                            .radius(28)
-                            .width(Size::Px(96))
-                            .height(Size::Px(96)),
-                    )
-                    .child(
-                        text(tile.icon, font_icon(), TEXT)
-                            .key(Key::Named("glyph"))
-                            .style(Style::default().align(Align::Center)),
-                    ),
-            )
-            .child(text(tile.app.title(), font_24(), TEXT).key(Key::Named("name")))
+/// Reconciler key of a Lua app's tile or page: a hash of its id, so a
+/// rescan that moves the app keeps its widgets.
+pub fn lua_key(id: &str) -> Key {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for b in id.bytes() {
+        h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+    }
+    Key::Id(h)
+}
+
+/// What a tile shows.
+enum TileFace<'a> {
+    Symbol(&'static str, Color),
+    Icon(&'a crate::hub::registry::Icon),
+    /// A Lua app without an icon: the first letter of its name.
+    Letter(String, Color),
+}
+
+fn tile(key: Key, app: AppId, face: TileFace, name: &str, dim: bool) -> Node<AppMsg> {
+    let square = Node::obj()
+        .key(Key::Named("icon"))
+        .scrollable(false)
+        // Plain objects are clickable by default; the tap must land on the
+        // tile, which owns the click handler.
+        .clickable(false);
+    let (bg, child) = match face {
+        TileFace::Symbol(glyph, color) => (color, text(glyph, font_icon(), TEXT)),
+        TileFace::Letter(letter, color) => (color, text(letter, font_30(), TEXT)),
+        TileFace::Icon(icon) => (
+            BG,
+            Node::image(ImageSource::Rgb565 {
+                width: icon.width,
+                height: icon.height,
+                data: icon.rgb565,
+            })
+            .clickable(false),
+        ),
     };
-    const ROW_KEYS: [&str; 2] = ["row-0", "row-1"];
-    let rows = TILES
-        .chunks(TILES_PER_ROW)
-        .zip(ROW_KEYS)
-        .map(|(chunk, key)| {
+    let square = square
+        .style(
+            Style::neutral()
+                .bg(bg)
+                .radius(28)
+                .width(Size::Px(96))
+                .height(Size::Px(96))
+                .opacity(if dim { 110 } else { 255 }),
+        )
+        .child(
+            child
+                .key(Key::Named("glyph"))
+                .style(Style::default().align(Align::Center)),
+        );
+    Node::column()
+        .key(key)
+        .scrollable(false)
+        .clickable(true)
+        .on_click(AppMsg::Open(app))
+        .style(
+            Style::neutral()
+                .width(Size::Px(120))
+                .height(Size::Content)
+                .gap(8)
+                .flex_align(FlexAlign::Start, FlexAlign::Center),
+        )
+        .child(square)
+        .child(
+            text(fit_name(name), font_24(), if dim { WEAK } else { TEXT }).key(Key::Named("name")),
+        )
+}
+
+/// `name` shortened with "…" to fit under a 120 px tile at 24 px.
+fn fit_name(name: &str) -> String {
+    const MAX: u32 = 120;
+    let w = |c: char| super::hub_font::advance(&HUB_24, c).unwrap_or(24) as u32;
+    if name.chars().map(w).sum::<u32>() <= MAX {
+        return name.into();
+    }
+    let mut out = String::new();
+    let mut used = w('…');
+    for c in name.chars() {
+        if used + w(c) > MAX {
+            break;
+        }
+        used += w(c);
+        out.push(c);
+    }
+    out.push('…');
+    out
+}
+
+/// Tile colours for Lua apps without an icon.
+const LETTER_COLORS: [Color; 4] = [
+    Color::rgb(0x2E, 0x9E, 0x5B),
+    Color::rgb(0xC8, 0x8A, 0x2E),
+    Color::rgb(0x8A, 0x4F, 0xD8),
+    Color::rgb(0x2E, 0x8E, 0xA8),
+];
+
+/// The app grid: the native apps, then the registry's Lua apps, three per
+/// row. Beyond two rows the grid scrolls.
+pub fn launcher(registry: &Registry) -> Node<AppMsg> {
+    let mut tiles: Vec<Node<AppMsg>> = NATIVE_TILES
+        .iter()
+        .map(|t| {
+            tile(
+                Key::Named(t.app.key()),
+                t.app,
+                TileFace::Symbol(t.icon, t.color),
+                t.app.title(),
+                false,
+            )
+        })
+        .collect();
+    for (i, entry) in registry.apps.iter().enumerate().take(u8::MAX as usize) {
+        let face = match &entry.icon {
+            Some(icon) => TileFace::Icon(icon),
+            None => TileFace::Letter(
+                entry
+                    .title
+                    .chars()
+                    .next()
+                    .map(String::from)
+                    .unwrap_or_default(),
+                LETTER_COLORS[i % LETTER_COLORS.len()],
+            ),
+        };
+        tiles.push(tile(
+            lua_key(&entry.app.id),
+            AppId::Lua(i as u8),
+            face,
+            &entry.title,
+            !entry.runnable(),
+        ));
+    }
+    let row_count = tiles.len().div_ceil(TILES_PER_ROW);
+    let mut rows = Vec::with_capacity(row_count);
+    let mut tiles = tiles.into_iter();
+    for r in 0..row_count {
+        rows.push(
             Node::row()
-                .key(Key::Named(key))
+                .key(Key::Id(r as u64))
                 .scrollable(false)
                 .style(
                     Style::neutral()
@@ -243,8 +336,31 @@ pub fn launcher() -> Node<AppMsg> {
                         .height(Size::Content)
                         .gap(16),
                 )
-                .children(chunk.iter().map(tile))
-        });
+                .children(tiles.by_ref().take(TILES_PER_ROW)),
+        );
+    }
+    let grid = Node::column().key(Key::Named("tiles"));
+    let grid = if row_count <= FIXED_ROWS {
+        grid.scrollable(false).style(
+            Style::neutral()
+                .width(Size::Content)
+                .height(Size::Content)
+                .gap(20)
+                .flex_align(FlexAlign::Start, FlexAlign::Center)
+                .align(Align::Center)
+                .offset(0, 0),
+        )
+    } else {
+        grid.scrollable(true).style(
+            Style::neutral()
+                .width(Size::Percent(100))
+                .height(Size::Px(GRID_H))
+                .gap(20)
+                .flex_align(FlexAlign::Start, FlexAlign::Center)
+                .align(Align::TopMid)
+                .offset(0, 84),
+        )
+    };
 
     Node::obj()
         .key(Key::Named("launcher"))
@@ -260,21 +376,7 @@ pub fn launcher() -> Node<AppMsg> {
                 .key(Key::Named("title"))
                 .style(Style::default().align(Align::TopMid).offset(0, 30)),
         )
-        .child(
-            Node::column()
-                .key(Key::Named("tiles"))
-                .scrollable(false)
-                .style(
-                    Style::neutral()
-                        .width(Size::Content)
-                        .height(Size::Content)
-                        .gap(20)
-                        .flex_align(FlexAlign::Start, FlexAlign::Center)
-                        .align(Align::Center)
-                        .offset(0, 0),
-                )
-                .children(rows),
-        )
+        .child(grid.children(rows))
         .child(
             text("上滑回到狐狸 · 左缘右滑返回", font_20(), WEAK)
                 .key(Key::Named("hint"))
@@ -285,10 +387,27 @@ pub fn launcher() -> Node<AppMsg> {
 
 /// A Lua app's page. The script draws the whole screen once it opens the
 /// display (the UI task then stops rendering LVGL here); until then this
-/// shows the name and a hint.
-pub fn lua_app(app: AppId) -> Node<AppMsg> {
+/// shows the name and a hint, or why the app cannot run.
+pub fn lua_app(entry: Option<&AppEntry>) -> Node<AppMsg> {
+    let (key, title, status) = match entry {
+        Some(e) if e.runnable() => (
+            lua_key(&e.app.id),
+            e.title.clone(),
+            String::from("正在启动…"),
+        ),
+        Some(e) => (
+            lua_key(&e.app.id),
+            e.title.clone(),
+            alloc::format!("不支持：缺少 {}", e.missing.join(", ")),
+        ),
+        None => (
+            Key::Named("app-lua"),
+            String::from("Lua"),
+            String::from("应用已移除"),
+        ),
+    };
     Node::obj()
-        .key(Key::Named(app.key()))
+        .key(key)
         .scrollable(false)
         .style(
             Style::neutral()
@@ -297,15 +416,16 @@ pub fn lua_app(app: AppId) -> Node<AppMsg> {
                 .height(Size::Percent(100)),
         )
         .child(
-            text(app.title(), font_30(), TITLE)
+            text(title, font_30(), TITLE)
                 .key(Key::Named("title"))
                 .style(Style::default().align(Align::Center).offset(0, -20)),
         )
         .child(
-            text("正在启动…", font_20(), WEAK)
+            text(status, font_20(), WEAK)
                 .key(Key::Named("status"))
                 .style(Style::default().align(Align::Center).offset(0, 24)),
         )
+        .child(home_indicator())
 }
 
 // ---------------------------------------------------------------- settings
@@ -688,11 +808,11 @@ pub fn timer(hub: &Hub) -> Node<AppMsg> {
 }
 
 /// The view for one app.
-pub fn app(hub: &Hub, app: AppId) -> Node<AppMsg> {
+pub fn app(hub: &Hub, registry: &Registry, app: AppId) -> Node<AppMsg> {
     match app {
         AppId::Settings => settings(&hub.settings, hub.about.uptime_s, hub.about.free_kib),
         AppId::Sensors => sensors(&hub.snapshot),
         AppId::Timer => timer(hub),
-        AppId::Snake | AppId::Game2048 => lua_app(app),
+        AppId::Lua(i) => lua_app(registry.apps.get(i as usize)),
     }
 }

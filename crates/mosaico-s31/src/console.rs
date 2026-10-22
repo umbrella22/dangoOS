@@ -5,27 +5,37 @@
 //! full, so logging never blocks a task. [`pump`] waits for the host to open
 //! the port, replays a status line, then forwards records; a status line every
 //! [`CONSOLE_STATUS_PERIOD`] makes a dropped connection visible.
+//!
+//! The other direction carries the app push protocol
+//! (`mosaico_s31::hub::push`): [`receive`] feeds host bytes to it and queues
+//! its `@ok`/`@err` replies with the log lines.
 
 use core::{
     fmt::Write as _,
     sync::atomic::{AtomicU32, Ordering},
 };
 
+use alloc::vec::Vec;
 use embassy_futures::select::{select, Either};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_time::{Duration, Timer};
-use embassy_usb::{class::cdc_acm::CdcAcmClass, driver::EndpointError};
+use embassy_usb::{
+    class::cdc_acm::{Receiver, Sender},
+    driver::EndpointError,
+};
 use esp_hal::usb::otg::embassy_usb_device::Driver;
+use log::{info, warn};
+use mosaico_s31::hub::push::{Effect, Session};
 use mosaico_s31::telemetry::{display as display_stats, latency};
 
-use crate::tasks::{input, ui};
+use crate::tasks::{apps, input, ui};
 
 /// Fixed capacity of one console line, including the trailing CRLF.
 const LOG_LINE_BYTES: usize = 160;
 /// Text capacity leaves room for the two-byte CRLF terminator.
 const LOG_TEXT_BYTES: usize = LOG_LINE_BYTES - 2;
 /// Bounded log queue. New records are dropped when the CDC pump is behind.
-const LOG_CHANNEL_DEPTH: usize = 32;
+const LOG_CHANNEL_DEPTH: usize = 96;
 /// How often the console pump reports connection state and drop counters.
 const CONSOLE_STATUS_PERIOD: Duration = Duration::from_secs(5);
 
@@ -73,6 +83,13 @@ impl core::fmt::Write for LogLine {
 
 /// The bounded queue between `log` producers (all tasks) and the USB pump.
 static LOG_CHANNEL: Channel<CriticalSectionRawMutex, LogRecord, LOG_CHANNEL_DEPTH> = Channel::new();
+/// The host has the port open.
+static CONNECTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+pub fn connected() -> bool {
+    CONNECTED.load(Ordering::Relaxed)
+}
+
 /// Records dropped because the bounded queue was full. Never reset.
 static LOG_DROPS: AtomicU32 = AtomicU32::new(0);
 
@@ -139,9 +156,15 @@ fn status_record(connected: bool) -> LogRecord {
 /// Waits for the host to open the port, drains the bounded channel, and sends a
 /// status line every `CONSOLE_STATUS_PERIOD` so a disconnect is detected even
 /// when no logs are produced.
-pub async fn pump<'a>(class: &mut CdcAcmClass<'a, Driver<'a>>) {
+pub async fn pump<'a>(class: &mut Sender<'a, Driver<'a>>) {
     loop {
         class.wait_connection().await;
+        // Hold the queue until a host opens the port (DTR), so boot lines
+        // are not sent into a port nobody reads.
+        while !class.dtr() {
+            Timer::after_millis(20).await;
+        }
+        CONNECTED.store(true, Ordering::Relaxed);
         let mut next_status = embassy_time::Instant::now() + CONSOLE_STATUS_PERIOD;
         let status = status_record(true);
         let _ = class
@@ -168,6 +191,7 @@ pub async fn pump<'a>(class: &mut CdcAcmClass<'a, Driver<'a>>) {
                 Err(EndpointError::Disabled) => {
                     // Cable removed or bus reset. Wait for the next connection;
                     // queued records stay bounded while disconnected.
+                    CONNECTED.store(false, Ordering::Relaxed);
                     break;
                 }
                 Err(EndpointError::BufferOverflow) => {
@@ -177,5 +201,70 @@ pub async fn pump<'a>(class: &mut CdcAcmClass<'a, Driver<'a>>) {
                 }
             }
         }
+    }
+}
+
+/// Queue one protocol reply. Unlike log records it waits for room: the host
+/// blocks on every reply.
+async fn reply(text: &str) {
+    let mut line = LogLine::new();
+    let _ = line.write_str(text);
+    LOG_CHANNEL.send(line.finish()).await;
+}
+
+/// Feed host bytes to the app push protocol and carry out its effects.
+///
+/// File writes happen inside `feed`, synchronously; meanwhile the USB core
+/// NAKs further OUT packets, which is the flow control.
+pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
+    let mut buf = [0u8; 512];
+    let mut session = Session::new();
+    let mut no_mounts = mosaico_fs::Vfs::new();
+    loop {
+        class.wait_connection().await;
+        loop {
+            let n = match class.read_packet(&mut buf).await {
+                Ok(n) => n,
+                Err(EndpointError::Disabled) => break,
+                Err(EndpointError::BufferOverflow) => continue,
+            };
+            let mut effects = Vec::new();
+            let fed = mosaico_fs::global::with(|vfs| {
+                session.feed(vfs, &buf[..n], &mut |e| effects.push(e));
+                Ok(())
+            });
+            if fed.is_err() {
+                // No VFS installed: `status` reports that, `reboot` still
+                // works, everything else fails on the missing mounts.
+                session.feed(&mut no_mounts, &buf[..n], &mut |e| effects.push(e));
+            }
+            for effect in effects {
+                match effect {
+                    Effect::Reply(text) => reply(&text).await,
+                    Effect::Reload { run } => {
+                        info!(
+                            "push: reload{}",
+                            run.as_deref()
+                                .map(|id| alloc::format!(", run {id}"))
+                                .unwrap_or_default()
+                        );
+                        apps::request(true, run.map(apps::Action::Run));
+                    }
+                    Effect::Run(id) => apps::request(false, Some(apps::Action::Run(id))),
+                    Effect::Stop => apps::request(false, Some(apps::Action::Stop)),
+                    Effect::Reboot => {
+                        warn!("push: reboot requested");
+                        // Let the reply and the log line go out first.
+                        Timer::after_millis(300).await;
+                        esp_hal::system::software_reset();
+                    }
+                }
+            }
+        }
+        // The host went away mid-push: drop the staged files.
+        let _ = mosaico_fs::global::with(|vfs| {
+            session.reset(vfs);
+            Ok(())
+        });
     }
 }

@@ -350,6 +350,44 @@ impl Vm {
         Ok(())
     }
 
+    /// Compiles the script at `path` (text only), as esp-claw's cap_lua does
+    /// for an app entry: `require` searches the script's directory first,
+    /// then `shared_dirs`, then the default `package.path`.
+    pub fn load_file(&mut self, path: &str, shared_dirs: &[&str]) -> Result<(), String> {
+        if self.state != State::Fresh {
+            return Err("a script is already loaded".into());
+        }
+        let mut prefix = String::new();
+        let dirs = path
+            .rfind('/')
+            .map(|i| &path[..i])
+            .into_iter()
+            .chain(shared_dirs.iter().copied());
+        for dir in dirs {
+            if !prefix.is_empty() {
+                prefix.push(';');
+            }
+            prefix.push_str(&alloc::format!("{dir}/?.lua;{dir}/?/init.lua"));
+        }
+        let prefix = c_string(&prefix)?;
+        let cpath = c_string(path)?;
+        let _enter = Enter::new(self.ctx);
+        if prefix.len() > 1
+            && unsafe { mosaico_lua_prepend_path(self.main, prefix.as_ptr().cast()) } != LUA_OK
+        {
+            self.state = State::Finished;
+            return Err(unsafe { self.pop_message(self.main) });
+        }
+        let status =
+            unsafe { luaL_loadfilex(self.thread, cpath.as_ptr().cast(), b"t\0".as_ptr().cast()) };
+        if status != LUA_OK {
+            self.state = State::Finished;
+            return Err(unsafe { self.pop_message(self.thread) });
+        }
+        self.state = State::Loaded;
+        Ok(())
+    }
+
     /// Runs the script until its slice ends, it waits, finishes or fails.
     pub fn resume(&mut self) -> Step {
         if self.state != State::Loaded {
@@ -590,6 +628,25 @@ unsafe extern "C" fn mosaico_lua_error_text(
 static LOG_SINK: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
 
 /// Where Lua's own warnings and panic messages go (the firmware log).
+/// `storage.get_root_dir()` (default `/data`). Host tests point it at a
+/// temporary directory.
+pub fn set_data_root(path: &str) {
+    if let Ok(c) = c_string(path) {
+        unsafe { mosaico_set_data_root(c.as_ptr().cast()) };
+    }
+}
+
+/// A NUL-terminated copy of `s` (which must not contain NUL).
+fn c_string(s: &str) -> Result<Vec<u8>, String> {
+    if s.as_bytes().contains(&0) {
+        return Err("path contains a NUL byte".into());
+    }
+    let mut v = Vec::with_capacity(s.len() + 1);
+    v.extend_from_slice(s.as_bytes());
+    v.push(0);
+    Ok(v)
+}
+
 pub fn set_log_sink(sink: fn(&[u8])) {
     LOG_SINK.store(sink as *mut (), Ordering::Relaxed);
 }

@@ -6,9 +6,9 @@
 //!
 //! - newlib's `_malloc_r` family (used by newlib itself, e.g. `strtod` on
 //!   long numbers), forwarded to esp-alloc's C `malloc`.
-//! - The reentrant syscalls (`_write_r`, `_sbrk_r`, ...). There is no file
-//!   system and no stdio console: they fail with `ENOSYS` (or report a
-//!   non-tty), so `fopen` returns `NULL` and Lua reports an error.
+//! - The process syscalls (`_sbrk_r`, `_kill_r`, ...), which fail with
+//!   `ENOSYS`. File syscalls come from `mosaico-fs`; this module only adds
+//!   `mosaico_console_write` for stdout/stderr.
 //! - `abort` / `_exit`, which Lua only reaches on an internal panic.
 //!
 //! Lua's own heap does not come through here: it uses `lua_Alloc` on PSRAM
@@ -59,40 +59,50 @@ unsafe fn fail(r: *mut c_void, errno: c_int) -> c_int {
     -1
 }
 
+/// stdout/stderr from newlib (Lua's `print`, `io.write`), line-buffered into
+/// the log. File descriptors and the other file syscalls live in
+/// `mosaico-fs` (`mosaico_fs_posix.c`), which routes fds 1/2 here.
 #[no_mangle]
-pub unsafe extern "C" fn _open_r(r: *mut c_void, _p: *const c_char, _f: c_int, _m: c_int) -> c_int {
-    unsafe { fail(r, ENOSYS) }
+pub unsafe extern "C" fn mosaico_console_write(buf: *const c_char, n: usize) {
+    // SAFETY: the C side passes a valid buffer of n bytes.
+    let bytes = unsafe { core::slice::from_raw_parts(buf.cast::<u8>(), n) };
+    console_line::push(bytes);
 }
-#[no_mangle]
-pub unsafe extern "C" fn _close_r(r: *mut c_void, _fd: c_int) -> c_int {
-    unsafe { fail(r, ENOSYS) }
+
+mod console_line {
+    use core::cell::RefCell;
+    use critical_section::Mutex;
+
+    const CAP: usize = 160;
+    static LINE: Mutex<RefCell<([u8; CAP], usize)>> = Mutex::new(RefCell::new(([0; CAP], 0)));
+
+    fn flush(line: &[u8]) {
+        let text = core::str::from_utf8(line).unwrap_or("<non-utf8 output>");
+        log::info!("lua> {text}");
+    }
+
+    pub fn push(bytes: &[u8]) {
+        for &b in bytes {
+            let mut out = None;
+            critical_section::with(|cs| {
+                let mut l = LINE.borrow_ref_mut(cs);
+                let (buf, len) = &mut *l;
+                if b != b'\n' && b != b'\r' {
+                    buf[*len] = b;
+                    *len += 1;
+                }
+                if b == b'\n' || *len == CAP {
+                    out = Some((*buf, *len));
+                    *len = 0;
+                }
+            });
+            if let Some((buf, len)) = out {
+                flush(&buf[..len]);
+            }
+        }
+    }
 }
-#[no_mangle]
-pub unsafe extern "C" fn _read_r(r: *mut c_void, _fd: c_int, _b: *mut c_void, _n: usize) -> isize {
-    unsafe { fail(r, ENOSYS) as isize }
-}
-#[no_mangle]
-pub unsafe extern "C" fn _write_r(
-    r: *mut c_void,
-    _fd: c_int,
-    _b: *const c_void,
-    _n: usize,
-) -> isize {
-    unsafe { fail(r, ENOSYS) as isize }
-}
-#[no_mangle]
-pub unsafe extern "C" fn _lseek_r(r: *mut c_void, _fd: c_int, _o: isize, _w: c_int) -> isize {
-    unsafe { fail(r, ENOSYS) as isize }
-}
-#[no_mangle]
-pub unsafe extern "C" fn _fstat_r(r: *mut c_void, _fd: c_int, _st: *mut c_void) -> c_int {
-    unsafe { fail(r, ENOSYS) }
-}
-#[no_mangle]
-pub unsafe extern "C" fn _isatty_r(r: *mut c_void, _fd: c_int) -> c_int {
-    unsafe { fail(r, ENOSYS) };
-    0
-}
+
 #[no_mangle]
 pub unsafe extern "C" fn _sbrk_r(r: *mut c_void, _incr: isize) -> *mut c_void {
     unsafe { fail(r, ENOMEM) };

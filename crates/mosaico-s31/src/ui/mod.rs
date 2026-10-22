@@ -35,6 +35,7 @@ use lvgl_ui::{App, Color, Key, Node, Style, Theme};
 use crate::behavior::Expression;
 use crate::fox::entrance;
 use crate::hub::gesture::SystemGesture;
+use crate::hub::registry::{AppEntry, Registry};
 use crate::hub::{AppId, Hub, Page};
 use fox_widget::{FoxControl, FoxWidget};
 use splash::{SplashControl, SplashWidget};
@@ -108,6 +109,7 @@ pub struct MosaicoApp {
     splash: Rc<SplashControl>,
     screen: Cell<Screen>,
     hub: Hub,
+    registry: Registry,
 }
 
 impl MosaicoApp {
@@ -127,6 +129,7 @@ impl MosaicoApp {
                 Screen::Fox
             }),
             hub: Hub::new(),
+            registry: Registry::default(),
         }
     }
 
@@ -156,6 +159,30 @@ impl MosaicoApp {
     /// Mutable hub state, for the UI task (clock, sensors, about).
     pub fn hub_mut(&mut self) -> &mut Hub {
         &mut self.hub
+    }
+
+    /// The Lua apps the launcher lists.
+    pub fn registry(&self) -> &Registry {
+        &self.registry
+    }
+
+    /// The registry entry of the Lua app on `page`, if it is one.
+    pub fn lua_entry(&self, page: Page) -> Option<&AppEntry> {
+        match page {
+            Page::App(app) => app.lua_index().and_then(|i| self.registry.apps.get(i)),
+            _ => None,
+        }
+    }
+
+    /// Replace the registry (after a rescan). An open Lua app follows its id
+    /// to its new index; if it is gone, its page says so.
+    pub fn set_registry(&mut self, registry: Registry) {
+        if let Page::App(AppId::Lua(i)) = self.hub.page {
+            let id = self.registry.apps.get(i as usize).map(|e| e.app.id.clone());
+            let new = id.and_then(|id| registry.find(&id));
+            self.hub.page = Page::App(AppId::Lua(new.map_or(u8::MAX, |n| n as u8)));
+        }
+        self.registry = registry;
     }
 
     /// The page on screen.
@@ -231,8 +258,8 @@ impl App for MosaicoApp {
                 ),
             Screen::Fox => match self.hub.page {
                 Page::Home => self.fox_view(theme),
-                Page::Launcher => hub_view::launcher(),
-                Page::App(app) => hub_view::app(&self.hub, app),
+                Page::Launcher => hub_view::launcher(&self.registry),
+                Page::App(app) => hub_view::app(&self.hub, &self.registry, app),
             },
         }
     }
@@ -414,6 +441,9 @@ mod tests {
         let control = FoxControl::new(Expression::Idle);
         let splash = SplashControl::new();
         let mut app = MosaicoApp::new(Rc::clone(&control), Rc::clone(&splash));
+        let mut icons = crate::hub::registry::IconCache::new();
+        // Built-ins only: 2048 then Snake (same order, sorted by title).
+        app.set_registry(Registry::builtin_only(&mut icons));
         ui.mount(&app).expect("mount");
 
         // Tile centres: rows of three 120 px columns, 16 px apart, centred;
@@ -422,8 +452,8 @@ mod tests {
             (104, 140, AppId::Settings),
             (240, 140, AppId::Sensors),
             (376, 140, AppId::Timer),
-            (172, 298, AppId::Snake),
-            (308, 298, AppId::Game2048),
+            (172, 298, AppId::Lua(0)),
+            (308, 298, AppId::Lua(1)),
         ];
         for (x, icon_y, id) in tiles {
             for y in [icon_y, icon_y + 72] {
@@ -434,6 +464,22 @@ mod tests {
                 assert_eq!(app.page(), Page::App(id), "tap at ({x}, {y})");
             }
         }
+
+        // More than two rows: the grid scrolls from the top.
+        let mut many = Registry::builtin_only(&mut icons);
+        for n in 0..5 {
+            let mut e = many.apps[0].clone();
+            e.app.id = alloc::format!("extra{n}");
+            e.icon = None;
+            many.apps.push(e);
+        }
+        app.set_registry(many);
+        app.go(Page::Launcher);
+        ui.mark_dirty();
+        run(&mut ui, &mut app, 60);
+        tap(&mut ui, &mut app, 104, 132);
+        assert_eq!(app.page(), Page::App(AppId::Settings), "scrolling grid");
+        app.set_registry(Registry::builtin_only(&mut icons));
 
         // Settings: the slider, then both switches.
         app.go(Page::App(AppId::Settings));

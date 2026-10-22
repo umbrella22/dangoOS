@@ -107,7 +107,8 @@ static const luaL_Reg libs[] = {
     {LUA_COLIBNAME, luaopen_coroutine}, {LUA_DBLIBNAME, luaopen_debug},
     {LUA_MATHLIBNAME, luaopen_math},    {LUA_STRLIBNAME, luaopen_string},
     {LUA_TABLIBNAME, luaopen_table},    {LUA_UTF8LIBNAME, luaopen_utf8},
-    {LUA_OSLIBNAME, luaopen_os},        {NULL, NULL}};
+    {LUA_OSLIBNAME, luaopen_os},        {LUA_IOLIBNAME, luaopen_io},
+    {NULL, NULL}};
 
 /* Same as esp-claw cap_lua_restrict_debug: scripts get traceback and
    getinfo only (sethook etc. would break the scheduler). */
@@ -133,20 +134,15 @@ static int open_impl(lua_State *L) {
   }
   lua_pushcfunction(L, glue_print);
   lua_setglobal(L, "print");
-  /* No file system yet: drop the searchers that would reach fopen/dlopen,
-     keeping only package.preload. Apps get their own searcher in L2. */
+  /* Keep the preload and Lua-file searchers; drop the C-library ones
+     (there is no dlopen). Files come from the VFS (/system, /data). */
   lua_getglobal(L, LUA_LOADLIBNAME);
   lua_getfield(L, -1, "searchers");
-  for (lua_Integer i = (lua_Integer)luaL_len(L, -1); i > 1; i--) {
+  for (lua_Integer i = (lua_Integer)luaL_len(L, -1); i > 2; i--) {
     lua_pushnil(L);
     lua_rawseti(L, -2, i);
   }
   lua_pop(L, 2);
-  /* dofile/loadfile would read stdin or a file. */
-  lua_pushnil(L);
-  lua_setglobal(L, "dofile");
-  lua_pushnil(L);
-  lua_setglobal(L, "loadfile");
   /* os.exit would end the firmware. */
   lua_getglobal(L, LUA_OSLIBNAME);
   lua_pushnil(L);
@@ -158,6 +154,27 @@ static int open_impl(lua_State *L) {
   lua_newtable(L);
   lua_setglobal(L, "args");
   return 0;
+}
+
+/* package.path = prefix .. ";" .. package.path (esp-claw
+   cap_lua_add_script_dir_to_package_path). */
+static int prepend_path_impl(lua_State *L) {
+  const char *prefix = (const char *)lua_touserdata(L, 1);
+  lua_getglobal(L, LUA_LOADLIBNAME);
+  lua_getfield(L, -1, "path");
+  const char *cur = lua_tostring(L, -1);
+  if (cur && cur[0])
+    lua_pushfstring(L, "%s;%s", prefix, cur);
+  else
+    lua_pushstring(L, prefix);
+  lua_setfield(L, -3, "path");
+  return 0;
+}
+
+int mosaico_lua_prepend_path(lua_State *L, const char *prefix) {
+  lua_pushcfunction(L, prepend_path_impl);
+  lua_pushlightuserdata(L, (void *)prefix);
+  return lua_pcall(L, 1, 0, 0);
 }
 
 int mosaico_lua_open(lua_State *L) {

@@ -65,6 +65,7 @@ use mosaico_s31::behavior::personality::PointerSample;
 use mosaico_s31::behavior::{Expression, Runtime};
 use mosaico_s31::fox::entrance;
 use mosaico_s31::hub::gesture::{EdgeGestures, Route};
+use mosaico_s31::hub::registry::IconCache;
 use mosaico_s31::hub::transition::{self, Direction};
 use mosaico_s31::hub::{reaches_fox_off_home, AppId, Page};
 use mosaico_s31::telemetry::{display as display_stats, latency};
@@ -73,7 +74,7 @@ use mosaico_s31::ui::splash::SplashControl;
 use mosaico_s31::ui::{theme, AppMsg, MosaicoApp, Screen, SHOW_SPLASH};
 
 use super::{
-    haptic,
+    apps, haptic,
     input::{INPUT, INPUT_CAPACITY},
     lights, lua,
     plane::{self, Frame, PlaneJob, PlaneUi},
@@ -131,7 +132,63 @@ fn light_owner(page: Page) -> lights::Owner {
 
 /// Pages whose content a Lua script draws.
 fn is_lua_page(page: Page) -> bool {
-    matches!(page, Page::App(id) if id.lua().is_some())
+    matches!(page, Page::App(AppId::Lua(_)))
+}
+
+/// Start the Lua app on `page`, if it is one that can run.
+fn start_lua_page(app: &MosaicoApp, page: Page) {
+    match app.lua_entry(page) {
+        Some(entry) if entry.runnable() => lua::start(entry.app.clone()),
+        Some(entry) => warn!("apps: {} needs {:?}", entry.app.id, entry.missing),
+        None => {}
+    }
+}
+
+/// Apply a request from the USB push protocol (see `apps`).
+fn apply_apps_request(app: &mut MosaicoApp, icons: &mut IconCache, req: apps::Request) {
+    let page = app.page();
+    let open_id = app.lua_entry(page).map(|e| e.app.id.clone());
+    if req.reload {
+        app.set_registry(apps::scan(icons));
+        if is_lua_page(page) {
+            // The same page, possibly at a new index: restart it with its
+            // new files, or stop it if it is gone or cannot run any more.
+            let still = app
+                .lua_entry(app.page())
+                .filter(|e| e.runnable())
+                .map(|e| e.app.clone());
+            match (still, &req.action) {
+                (_, Some(apps::Action::Stop)) => {}
+                (Some(entry), _) if open_id.as_deref() == Some(entry.id.as_str()) => {
+                    info!("apps: restarting {}", entry.id);
+                    lua::start(entry);
+                }
+                _ => lua::stop(),
+            }
+        }
+    }
+    match req.action {
+        Some(apps::Action::Run(id)) => match app.registry().find(&id) {
+            Some(i) => {
+                let target = Page::App(AppId::Lua(i as u8));
+                if app.page() == target {
+                    if !req.reload {
+                        start_lua_page(app, target);
+                    }
+                } else {
+                    // The page change starts it (see the main loop).
+                    app.go(target);
+                }
+            }
+            None => warn!("apps: run {id}: no such app"),
+        },
+        Some(apps::Action::Stop) => {
+            if is_lua_page(app.page()) {
+                app.go(Page::Launcher);
+            }
+        }
+        None => {}
+    }
 }
 
 /// Number of one-second UI stats intervals processed since boot.
@@ -163,6 +220,13 @@ pub async fn ui_task(mut plane: PlaneUi) {
     control.set_plane_mode(true);
     let splash = SplashControl::new();
     let mut app = MosaicoApp::new(Rc::clone(&control), Rc::clone(&splash));
+    // Decoded launcher icons live as long as the firmware; rescans reuse them.
+    // Built-ins until the file systems are mounted (`main::mount_storage`).
+    let mut icons = IconCache::new();
+    let mut scanned = false;
+    app.set_registry(mosaico_s31::hub::registry::Registry::builtin_only(
+        &mut icons,
+    ));
     ui.mount(&app).expect("initial UI mount failed");
 
     // The runtime starts with the same clock as the input task: the personality
@@ -330,6 +394,15 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
             last_screen = app.screen();
         }
+        if !scanned && crate::drivers::storage::ready() {
+            scanned = true;
+            app.set_registry(apps::scan_at_boot(&mut icons));
+            ui.mark_dirty();
+        }
+        if let Some(req) = apps::take_request() {
+            apply_apps_request(&mut app, &mut icons, req);
+            ui.mark_dirty();
+        }
         // A Lua app that ended by itself (finished or failed) leaves its page.
         if lua::take_ended() && is_lua_page(app.page()) {
             app.go(Page::Launcher);
@@ -344,11 +417,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
                 lua::stop();
                 lua::set_pointer(0, 0, false);
             }
-            if let Page::App(id) = app.page() {
-                if let Some(script) = id.lua() {
-                    lua::start(script);
-                }
-            }
+            start_lua_page(&app, app.page());
             if app.page() == Page::Home {
                 // The entrance replays; a finger still on the glass from the
                 // swipe must not interrupt it.

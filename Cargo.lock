@@ -744,26 +744,11 @@ dependencies = [
  "allocator-api2",
  "document-features",
  "enumset",
- "esp-config 0.8.0 (git+https://github.com/esp-rs/esp-hal?rev=bb239a0f4adc45b2571586c3ea55f56ecc712e00)",
+ "esp-config",
  "esp-metadata-generated 0.5.1",
  "esp-sync 0.3.0 (git+https://github.com/esp-rs/esp-hal?rev=bb239a0f4adc45b2571586c3ea55f56ecc712e00)",
  "linked_list_allocator",
  "rlsf",
-]
-
-[[package]]
-name = "esp-backtrace"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fbfed00e884572d620a6958b13456fc2bb8ab75802b5adc8afc224f97cdebad"
-dependencies = [
- "document-features",
- "esp-config 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "esp-metadata-generated 0.5.3",
- "esp-println",
- "heapless 0.9.3",
- "riscv",
- "xtensa-lx 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -772,7 +757,7 @@ version = "0.6.0"
 source = "git+https://github.com/esp-rs/esp-hal?rev=bb239a0f4adc45b2571586c3ea55f56ecc712e00#bb239a0f4adc45b2571586c3ea55f56ecc712e00"
 dependencies = [
  "document-features",
- "esp-config 0.8.0 (git+https://github.com/esp-rs/esp-hal?rev=bb239a0f4adc45b2571586c3ea55f56ecc712e00)",
+ "esp-config",
  "esp-hal-procmacros",
  "esp-metadata-generated 0.5.1",
  "esp-rom-sys",
@@ -780,19 +765,6 @@ dependencies = [
  "jiff",
  "sha2",
  "strum",
-]
-
-[[package]]
-name = "esp-config"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcd577a122ec917691f6820a3df54388ecebc750f071b060f5e83707bc415512"
-dependencies = [
- "document-features",
- "esp-metadata-generated 0.5.3",
- "serde",
- "serde_yaml",
- "somni-expr",
 ]
 
 [[package]]
@@ -833,7 +805,7 @@ dependencies = [
  "embedded-io-async 0.6.1",
  "embedded-io-async 0.7.0",
  "enumset",
- "esp-config 0.8.0 (git+https://github.com/esp-rs/esp-hal?rev=bb239a0f4adc45b2571586c3ea55f56ecc712e00)",
+ "esp-config",
  "esp-hal-procmacros",
  "esp-metadata-generated 0.5.1",
  "esp-riscv-rt",
@@ -938,7 +910,7 @@ dependencies = [
  "embassy-time-driver",
  "embassy-time-queue-utils",
  "esp-alloc",
- "esp-config 0.8.0 (git+https://github.com/esp-rs/esp-hal?rev=bb239a0f4adc45b2571586c3ea55f56ecc712e00)",
+ "esp-config",
  "esp-hal",
  "esp-hal-procmacros",
  "esp-metadata-generated 0.5.1",
@@ -1435,10 +1407,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
+name = "mosaico-fs"
+version = "0.2.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "mosaico-lua"
 version = "0.2.0"
 dependencies = [
  "cc",
+ "mosaico-fs",
 ]
 
 [[package]]
@@ -1452,15 +1432,16 @@ dependencies = [
  "embassy-time",
  "embassy-usb",
  "esp-alloc",
- "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
  "esp-rtos",
+ "esp-storage",
  "esp32s31",
  "log",
  "lvgl",
  "lvgl-ui",
+ "mosaico-fs",
  "mosaico-lua",
 ]
 

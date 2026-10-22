@@ -6,7 +6,7 @@
 //! - [`board`]: the v1.2 pin map and board-revision check.
 //! - [`drivers`]: panel, touch, sensors, fuel gauge, expansion slots, LVGL port.
 //! - [`tasks`]: the Embassy tasks (see below).
-//! - [`console`]: the USB CDC-ACM log console.
+//! - [`console`]: the USB CDC-ACM log console and app push protocol.
 //! - The host-testable library (`mosaico_s31`): behaviour, fox, UI, telemetry.
 //!
 //! `esp-rtos` + Embassy, two executors:
@@ -46,16 +46,16 @@ esp_bootloader_esp_idf::esp_app_desc!();
 // documentation.
 mod board;
 mod console;
+mod crashlog;
 mod drivers;
 mod tasks;
 
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
+use embassy_futures::join::join4;
 use embassy_usb::{
     class::cdc_acm::{CdcAcmClass, State},
     Builder,
 };
-use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
     gpio::{Level, Output, OutputConfig},
@@ -75,15 +75,10 @@ use log::{info, warn};
 use crate::drivers::{display, shared_i2c, subboard, touch};
 use crate::tasks::{haptic, input, lights, lua, plane, sensors, ui};
 
-#[unsafe(no_mangle)]
-fn custom_halt() -> ! {
-    esp_hal::delay::Delay::new().delay_millis(500);
-    esp_hal::system::software_reset()
-}
-
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
     console::install_logger();
+    crashlog::report_last_boot();
 
     info!("==============================================");
     info!("Mosaico S31 R1 platform runtime");
@@ -99,6 +94,10 @@ async fn main(spawner: Spawner) {
     esp_alloc::heap_allocator!(size: 256 * 1024);
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
+    // The flash file systems are mounted once USB is up (see the end), so a
+    // failure there shows up on the console.
+    let flash = peripherals.FLASH;
+
     match board::board_variant() {
         Ok((major, minor)) => info!("board v{major}.{minor} (ESP-Mosaico v1.2 pin map)"),
         Err(v) => panic!("unsupported board v{}.{}", v.major, v.minor),
@@ -112,6 +111,18 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
     info!("esp-rtos scheduler started (TIMG0 timer, FROM_CPU_INTR0)");
+
+    // The console comes up first so that later boot steps can be seen. After
+    // a panic, wait (bounded) for the host so the record is read before the
+    // same step can fail again.
+    spawner.spawn(usb_task(peripherals.USB_HS, flash).unwrap());
+    if crashlog::last_boot_panicked() {
+        let deadline = embassy_time::Instant::now() + embassy_time::Duration::from_secs(5);
+        while !console::connected() && embassy_time::Instant::now() < deadline {
+            embassy_time::Timer::after_millis(50).await;
+        }
+        embassy_time::Timer::after_millis(300).await;
+    }
 
     // CO5300 QSPI panel: SPI2 + AXI DMA, v1.2 pin map. The vendor init sequence
     // runs in blocking mode; the driver switches to `SpiDma<Async>` afterwards.
@@ -249,11 +260,49 @@ async fn main(spawner: Spawner) {
     spawner.spawn(lua::lua_task().unwrap());
     info!("lua task spawned ({})", mosaico_lua::LUA_RELEASE);
 
-    // USB-OTG HS CDC-ACM console on the USB-C port. The board does not expose
-    // USB-Serial-JTAG on that connector, so this is the only log path.
-    let usb = Usb::new_hs(peripherals.USB_HS);
-    let mut ep_out_buffer = [0u8; 1024];
-    let driver = Driver::new(usb, &mut ep_out_buffer, UsbDriverConfig::default());
+    // Everything else runs in the spawned tasks.
+    core::future::pending::<()>().await;
+}
+
+/// Mount `/system` and `/data` once the console is up (the UI task scans the
+/// apps when this is done).
+async fn mount_storage(flash: esp_hal::peripherals::FLASH<'static>) {
+    embassy_time::Timer::after_millis(1500).await;
+    if crashlog::skip(crashlog::Stage::Storage) {
+        warn!("fs: not mounted this boot (the last one panicked there); built-in apps only");
+    } else {
+        crashlog::enter(crashlog::Stage::Storage);
+        drivers::storage::init(flash).await;
+        crashlog::enter(crashlog::Stage::Running);
+    }
+    drivers::storage::mark_ready();
+}
+
+/// Leak `val` into a `'static` slot (one call site, called once).
+macro_rules! make_static {
+    ($t:ty, $val:expr) => {{
+        static mut CELL: core::mem::MaybeUninit<$t> = core::mem::MaybeUninit::uninit();
+        // SAFETY: the enclosing function runs once (it is a spawned task
+        // with a pool size of one), so this is the only reference.
+        #[allow(static_mut_refs)]
+        unsafe {
+            CELL.write($val)
+        }
+    }};
+}
+
+/// USB-OTG HS CDC-ACM console on the USB-C port (logs out, app push in), and
+/// the flash file systems once the console is up.
+#[embassy_executor::task]
+async fn usb_task(
+    usb_hs: esp_hal::peripherals::USB_HS<'static>,
+    flash: esp_hal::peripherals::FLASH<'static>,
+) {
+    // The board does not expose USB-Serial-JTAG on that connector, so this
+    // is the only log path.
+    let usb = Usb::new_hs(usb_hs);
+    let ep_out_buffer = make_static!([u8; 1024], [0u8; 1024]);
+    let driver = Driver::new(usb, ep_out_buffer, UsbDriverConfig::default());
 
     let mut usb_config = embassy_usb::Config::new(0x303A, 0x4001);
     usb_config.max_packet_size_0 = 64;
@@ -261,23 +310,30 @@ async fn main(spawner: Spawner) {
     usb_config.product = Some("Mosaico S31 R1 console");
     usb_config.serial_number = Some("mosaico-s31-r1");
 
-    let mut config_descriptor = [0u8; 256];
-    let mut bos_descriptor = [0u8; 256];
-    let mut control_buf = [0u8; 64];
-    let mut cdc_state = State::new();
+    let config_descriptor = make_static!([u8; 256], [0u8; 256]);
+    let bos_descriptor = make_static!([u8; 256], [0u8; 256]);
+    let control_buf = make_static!([u8; 64], [0u8; 64]);
+    let cdc_state = make_static!(State<'static>, State::new());
 
     let mut builder = Builder::new(
         driver,
         usb_config,
-        &mut config_descriptor,
-        &mut bos_descriptor,
+        config_descriptor,
+        bos_descriptor,
         &mut [],
-        &mut control_buf,
+        control_buf,
     );
     // High-speed CDC requires a 512-byte packet size.
-    let mut class = CdcAcmClass::new(&mut builder, &mut cdc_state, 512);
+    let class = CdcAcmClass::new(&mut builder, cdc_state, 512);
+    let (mut tx, mut rx) = class.split();
     let mut usb_device = builder.build();
 
-    info!("USB-OTG HS CDC console starting (512-byte packets)");
-    join(usb_device.run(), console::pump(&mut class)).await;
+    info!("USB-OTG HS CDC console starting (512-byte packets, app push)");
+    join4(
+        usb_device.run(),
+        console::pump(&mut tx),
+        console::receive(&mut rx),
+        mount_storage(flash),
+    )
+    .await;
 }

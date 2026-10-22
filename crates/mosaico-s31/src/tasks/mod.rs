@@ -6,8 +6,10 @@
 //! - [`sensors`]: IMU, magnetometers, fuel gauge and the module slot.
 //! - [`haptic`]: motor patterns.
 //! - [`lights`]: Interaction board WS2812 mood light.
-//! - [`lua`]: the Lua 5.5 runtime (L0: boot self-test).
+//! - [`lua`]: the Lua 5.5 runtime that runs one app at a time.
+//! - [`apps`]: the app registry scan and requests from the USB push protocol.
 
+pub mod apps;
 pub mod haptic;
 pub mod input;
 pub mod lights;

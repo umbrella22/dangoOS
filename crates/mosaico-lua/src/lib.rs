@@ -12,17 +12,22 @@
 #![no_std]
 
 extern crate alloc;
+// Links newlib and the file syscalls (see mosaico-fs/build.rs).
+extern crate mosaico_fs;
 #[cfg(test)]
 extern crate std;
 
 mod call;
 mod ffi;
+pub mod jpeg;
 mod platform;
 mod vm;
 
 pub use call::{Call, Error, Function, Ret};
 pub use platform::{caps, esp_err, platform_bytes, Blit, DisplayInfo, HeapInfo, TouchPoint};
-pub use vm::{set_log_sink, Host, Limits, RawAllocator, Request, Step, Vm, GLOBAL_ALLOCATOR};
+pub use vm::{
+    set_data_root, set_log_sink, Host, Limits, RawAllocator, Request, Step, Vm, GLOBAL_ALLOCATOR,
+};
 
 /// `_VERSION` of the vendored interpreter plus its release number.
 pub const LUA_RELEASE: &str = "Lua 5.5.1";

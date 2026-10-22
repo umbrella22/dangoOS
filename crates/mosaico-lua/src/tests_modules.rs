@@ -422,3 +422,138 @@ fn game_2048_runs_and_takes_swipes() {
         s.lines
     );
 }
+
+/// A fresh directory under the system temp dir.
+fn temp_dir(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(alloc::format!("mosaico-lua-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn file_apps_require_io_and_storage() {
+    // The data root is global; tests that set it take the same lock.
+    let _g = DISPLAY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = temp_dir("files");
+    let app = root.join("apps/demo");
+    std::fs::create_dir_all(app.join("scripts/lib")).unwrap();
+    let shared = root.join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::write(
+        app.join("scripts/helper.lua"),
+        "return { twice = function(x) return 2 * x end }",
+    )
+    .unwrap();
+    std::fs::write(app.join("scripts/lib/init.lua"), "return 'lib-init'").unwrap();
+    std::fs::write(shared.join("common.lua"), "return 'shared'").unwrap();
+    let data = root.join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    set_data_root(data.to_str().unwrap());
+    std::fs::write(
+        app.join("scripts/main.lua"),
+        r#"
+        local h = require("helper")
+        assert(h.twice(21) == 42)
+        assert(require("lib") == "lib-init")
+        assert(require("common") == "shared")
+        local storage = require("storage")
+        local root = storage.get_root_dir()
+        local p = storage.join_path(root, "notes")
+        storage.mkdir(p)
+        storage.write_file(p .. "/a.txt", "hello")
+        assert(storage.read_file(p .. "/a.txt") == "hello")
+        assert(storage.exists(p .. "/a.txt"))
+        local f = assert(io.open(p .. "/b.txt", "w"))
+        f:write("line1\n", 2, "\n")
+        f:close()
+        local lines = {}
+        for l in io.lines(p .. "/b.txt") do lines[#lines + 1] = l end
+        assert(#lines == 2 and lines[2] == "2", table.concat(lines, ","))
+        assert(os.rename(p .. "/b.txt", p .. "/c.txt"))
+        assert(os.remove(p .. "/c.txt"))
+        local names = {}
+        for _, e in ipairs(storage.listdir(p)) do names[#names + 1] = type(e) == "table" and e.name or e end
+        assert(#names == 1, #names)
+        assert(storage.remove_tree(p))
+        assert(not storage.exists(p))
+        assert(dofile ~= nil and loadfile ~= nil)
+        assert(not pcall(require, "no_such_module"))
+        print("ok")
+        "#,
+    )
+    .unwrap();
+    let mut vm = vm();
+    let entry = app.join("scripts/main.lua");
+    vm.load_file(entry.to_str().unwrap(), &[shared.to_str().unwrap()])
+        .unwrap();
+    let out = drive(&mut vm, u32::MAX);
+    let s = screen(&mut vm);
+    assert_eq!(out.step, Step::Done, "{:?} {:?}", s.lines, s.logs);
+    assert_eq!(s.lines, ["ok"]);
+    drop(vm);
+    let mut vm = vm_fresh();
+    let err = vm
+        .load_file(root.join("missing.lua").to_str().unwrap(), &[])
+        .unwrap_err();
+    assert!(err.contains("missing.lua"), "{err}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn vm_fresh() -> Vm {
+    vm()
+}
+
+/// The factory apps from the device's `/system` partition, when extracted
+/// to `MOSAICO_SYSFS` (they are not redistributed with this repository).
+#[test]
+fn example_push_app_runs() {
+    let _g = DISPLAY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let app =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/lua-apps/hello_push");
+    let data = temp_dir("hello_push");
+    set_data_root(data.to_str().unwrap());
+    for launch in 1..=2u32 {
+        let mut vm = vm();
+        vm.load_file(app.join("scripts/main.lua").to_str().unwrap(), &[])
+            .unwrap();
+        let out = drive(&mut vm, 10);
+        let s = screen(&mut vm);
+        assert_eq!(out.step, Step::Interrupted, "{:?} {:?}", s.lines, s.logs);
+        drop(vm);
+        let count = std::fs::read_to_string(data.join("hello_push.count")).unwrap();
+        assert_eq!(count.trim(), alloc::format!("{launch}"));
+    }
+}
+
+#[test]
+fn official_system_apps_run() {
+    let Some(sysfs) = std::env::var_os("MOSAICO_SYSFS") else {
+        return;
+    };
+    let _g = DISPLAY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let sysfs = std::path::PathBuf::from(sysfs);
+    for (id, entry) in [
+        ("dino", "scripts/dino.lua"),
+        ("flappybird", "scripts/flappybird.lua"),
+    ] {
+        let path = sysfs.join("apps").join(id).join(entry);
+        if !path.exists() {
+            continue;
+        }
+        let mut vm = vm();
+        let builtin = sysfs.join("scripts/builtin");
+        vm.load_file(path.to_str().unwrap(), &[builtin.to_str().unwrap()])
+            .unwrap();
+        let out = drive(&mut vm, 40);
+        let s = screen(&mut vm);
+        assert_eq!(
+            out.step,
+            Step::Interrupted,
+            "{id}: {:?} {:?}",
+            s.lines,
+            s.logs
+        );
+        drop(vm);
+    }
+}

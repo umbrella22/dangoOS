@@ -24,6 +24,7 @@
 #include "lua_image.h"
 #include "lua_module_display.h"
 #include "lua_module_json.h"
+#include "lua_module_storage.h"
 #include "mosaico_platform.h"
 
 /* ---- Rust side ------------------------------------------------------- */
@@ -515,6 +516,18 @@ static int luaopen_system(lua_State *L)
     return 1;
 }
 
+/* ---- storage root ------------------------------------------------------ */
+
+/* storage.get_root_dir(): the writable data root (claw_paths CLAW_PATH_DATA). */
+static char s_data_root[128] = "/data";
+
+const char *mosaico_data_root(void) { return s_data_root; }
+
+void mosaico_set_data_root(const char *path)
+{
+    snprintf(s_data_root, sizeof(s_data_root), "%s", path);
+}
+
 /* ---- preload ------------------------------------------------------------- */
 
 extern const char mosaico_arg_schema_lua[];
@@ -544,6 +557,7 @@ void mosaico_platform_preload(lua_State *L)
         cap_lua_register_module("delay", luaopen_delay);
         cap_lua_register_module("system", luaopen_system);
         cap_lua_register_module("arg_schema", luaopen_arg_schema);
+        lua_module_storage_register();
     }
     luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);
     for (size_t i = 0; i < s_module_count; ++i) preload(L, s_modules[i].name, s_modules[i].open);

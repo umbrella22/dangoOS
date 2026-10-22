@@ -43,6 +43,7 @@ const LUA_SOURCES: &[&str] = &[
     "ltablib.c",
     "lutf8lib.c",
     "loadlib.c",
+    "liolib.c",
 ];
 
 fn main() {
@@ -84,6 +85,7 @@ fn main() {
         .include(root.join("csrc/esp_shim"))
         .include(claw.join("lua_module_display"))
         .include(claw.join("lua_module_json"))
+        .include(claw.join("lua_module_storage"))
         .include(claw.join("esp_painter"))
         .include(root.join("vendor/cjson"))
         .flag(format!("-include{}", user_h.display()))
@@ -105,6 +107,7 @@ fn main() {
         "lua_module_display/display_text.c",
         "lua_module_display/lua_module_display.c",
         "lua_module_json/lua_module_json.c",
+        "lua_module_storage/lua_module_storage.c",
         "esp_painter/basic_font_12.c",
         "esp_painter/basic_font_16.c",
         "esp_painter/basic_font_20.c",
@@ -134,35 +137,20 @@ fn main() {
     let gen = out.join("mosaico_embedded.c");
     std::fs::write(&gen, c).unwrap();
     modules.file(gen);
+    // The ESP32-S31 ROM has its own TJpgDec, and the esp-hal ROM linker
+    // script defines `jd_prepare`/`jd_decomp` at its addresses. Its `JDEC`
+    // layout differs from ours, so rename our copy rather than call the ROM.
+    modules
+        .define("jd_prepare", "mosaico_jd_prepare")
+        .define("jd_decomp", "mosaico_jd_decomp")
+        .include(root.join("vendor/tjpgd-r0.03"))
+        .file(root.join("vendor/tjpgd-r0.03/tjpgd.c"))
+        .file(root.join("csrc/mosaico_jpeg.c"));
     modules.compile("mosaico_lua_modules");
 
-    if target_os == "none" {
-        // newlib from the riscv32-esp-elf toolchain, matching -march/-mabi.
-        let cc = build.get_compiler();
-        let mut args: Vec<String> = Vec::new();
-        for arg in cc.args() {
-            let a = arg.to_string_lossy();
-            if a.starts_with("-march") || a.starts_with("-mabi") {
-                args.push(a.into_owned());
-            }
-        }
-        for lib in ["libc.a", "libm.a", "libgcc.a"] {
-            let out = std::process::Command::new(cc.path())
-                .args(&args)
-                .arg(format!("-print-file-name={lib}"))
-                .output()
-                .expect("run the C compiler to locate newlib");
-            let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-            if let Some(dir) = path.parent().filter(|_| path.is_absolute()) {
-                println!("cargo:rustc-link-search=native={}", dir.display());
-            } else {
-                panic!("{lib} not found by {}", cc.path().display());
-            }
-        }
-        println!("cargo:rustc-link-lib=static:-bundle=m");
-        println!("cargo:rustc-link-lib=static:-bundle=c");
-        println!("cargo:rustc-link-lib=static:-bundle=gcc");
-    }
+    // newlib (libc/libm/libgcc) is linked by mosaico-fs, after its syscalls,
+    // so the linker resolves `_open_r` & co. there rather than to newlib's
+    // own stubs.
     println!("cargo:rerun-if-changed=csrc");
     println!("cargo:rerun-if-changed={LUA_DIR}");
 }

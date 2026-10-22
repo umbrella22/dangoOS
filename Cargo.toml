@@ -1,7 +1,7 @@
 [workspace]
 # One crate: the ESP32-S31 firmware (bin) plus its host-testable library.
 # The earlier vector "grok-ball" core is in git history (before the fox).
-members = ["crates/mosaico-s31", "crates/mosaico-lua"]
+members = ["crates/mosaico-s31", "crates/mosaico-lua", "crates/mosaico-fs"]
 resolver = "2"
 
 [workspace.package]
@@ -17,11 +17,11 @@ lvgl-ui = { git = "https://github.com/umbrella22/lvgl_binding_rust", rev = "cad0
 log = "0.4"
 critical-section = "1"
 esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31", "unstable"] }
+esp-storage = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31"] }
 esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31"] }
 # The PAC esp-hal itself uses, for blocks esp-hal does not drive yet (touch).
 esp32s31 = { version = "0.2", features = ["critical-section"], git = "https://github.com/esp-rs/esp-pacs", rev = "5cd68d2" }
 esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31"] }
-esp-backtrace = { version = "0.20", features = ["esp32s31", "panic-handler", "println", "custom-halt"] }
 esp-println = { version = "0.18", default-features = false, features = ["esp32s31", "log-04", "jtag-serial", "colors"] }
 # esp-rtos 0.4.0 from the pinned esp-hal revision. Taking it from the esp-hal
 # repository (rather than crates.io) keeps esp-hal and esp-rom-sys at the exact

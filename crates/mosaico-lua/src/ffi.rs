@@ -84,7 +84,10 @@ extern "C" {
         mode: *const c_char,
     ) -> c_int;
 
+    pub fn luaL_loadfilex(l: *mut lua_State, name: *const c_char, mode: *const c_char) -> c_int;
+
     // csrc/mosaico_lua_glue.c
+    pub fn mosaico_lua_prepend_path(l: *mut lua_State, prefix: *const c_char) -> c_int;
     pub fn mosaico_lua_set_ctx(l: *mut lua_State, ctx: *mut c_void);
     pub fn mosaico_lua_open(l: *mut lua_State) -> c_int;
     pub fn mosaico_lua_register(
@@ -98,4 +101,7 @@ extern "C" {
     pub fn mosaico_lua_traceback(l: *mut lua_State, thread: *mut lua_State) -> c_int;
     pub fn mosaico_lua_set_args(l: *mut lua_State, json: *const c_char, len: usize) -> c_int;
     pub fn mosaico_lua_exit(l: *mut lua_State);
+
+    // csrc/mosaico_platform.c
+    pub fn mosaico_set_data_root(path: *const c_char);
 }

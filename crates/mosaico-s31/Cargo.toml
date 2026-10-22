@@ -18,13 +18,14 @@ log.workspace = true
 lvgl.workspace = true
 lvgl-ui.workspace = true
 mosaico-lua = { path = "../mosaico-lua" }
+mosaico-fs = { path = "../mosaico-fs" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 esp-hal.workspace = true
 esp32s31.workspace = true
 esp-alloc.workspace = true
-esp-backtrace.workspace = true
 esp-bootloader-esp-idf.workspace = true
+esp-storage.workspace = true
 esp-println.workspace = true
 esp-rtos.workspace = true
 embassy-executor.workspace = true
