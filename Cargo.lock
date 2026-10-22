@@ -1435,6 +1435,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
+name = "mosaico-lua"
+version = "0.2.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "mosaico-s31"
 version = "0.2.0"
 dependencies = [
@@ -1454,6 +1461,7 @@ dependencies = [
  "log",
  "lvgl",
  "lvgl-ui",
+ "mosaico-lua",
 ]
 
 [[package]]

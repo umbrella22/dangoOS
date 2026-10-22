@@ -82,6 +82,8 @@ INPUT (触摸样本)
 
 ## 5. Lua 应用层（L 阶段）
 
+运行时设计、错误处理规则、调度与模块对照见 [lua-runtime-plan.md](lua-runtime-plan.md)。
+
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | L0 | Lua 5.5 C 源码随 `cc` 编进固件；C 库适配层（`setjmp`/`longjmp`、`snprintf`、`strtod`、数学函数）；`lua_Alloc` 接到 Rust PSRAM 堆并设上限 | 串口跑通 `print("hi")`；记录固件增量、内存占用 |

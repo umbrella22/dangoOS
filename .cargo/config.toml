@@ -10,6 +10,10 @@ rustflags = ["-C", "link-arg=-Tlinkall.x"]
 
 [env]
 ESP_LOG = "info"
+# esp-alloc: TLSF instead of the default linked-list first fit. First fit walks
+# the free list (in PSRAM) on every allocation; the Lua heap makes thousands of
+# small allocations, and TLSF keeps each one O(1).
+ESP_ALLOC_CONFIG_HEAP_ALGORITHM = "TLSF"
 # The paths below are the author's machine. Cargo does not override variables
 # that are already set, so other machines export their own (see README,
 # "Build environment").

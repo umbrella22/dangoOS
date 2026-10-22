@@ -6,10 +6,12 @@
 //! - [`sensors`]: IMU, magnetometers, fuel gauge and the module slot.
 //! - [`haptic`]: motor patterns.
 //! - [`lights`]: Interaction board WS2812 mood light.
+//! - [`lua`]: the Lua 5.5 runtime (L0: boot self-test).
 
 pub mod haptic;
 pub mod input;
 pub mod lights;
+pub mod lua;
 pub mod plane;
 pub mod sensors;
 pub mod ui;

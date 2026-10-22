@@ -32,7 +32,7 @@
 | 已完成 | 电容触摸键 | 真机确认：左右键点按都干净地按下/松开，左键 → Happy、右键 → Puzzled（连按 → Angry）。esp-hal 不支持 S31 touch，`drivers/touch_sens.rs` 按 IDF hw_ver3 流程写寄存器（通道 n = GPIO 6+n，右槽 KEY_L ch5 / KEY_R ch4）；充放电 200 次（500 次时手指会把 16 位计数顶到溢出），空闲约 14500/15000。手指会让读数上下大幅摆动，所以按偏离基线 ±10% 判按下、连续 4 个样本回到 5% 内才松开，基线软件自己跟踪（`subboard/touch_key.rs`）。读数不合理时回退 GPIO 按键 |
 | 搁置 | 红外发射 | 模块只有发射管（GPIO48/47，RMT NEC），没有接收头，学不了码；家里设备的码未知。重启条件：按品牌查到 NEC 码表，或用另一块带接收头的板子录码。用法设想：狐狸困了发“关灯”、生气时给电视发静音 |
 | P3 | 启动页 | `SHOW_SPLASH=false`；官方点阵字体见 `docs/ASSET_REQUESTS.md` |
-| P1 | Hub 外壳与 Lua（[RFC 0006](hub-shell-plan.md)） | 狐狸主页 + 应用网格 + 边缘手势；设置 / 传感器 / 计时器走 LVGL 渲染进 PSRAM 影子帧再经 plane 送屏；之后做兼容官方的 Lua 5.5 应用层 |
+| P1 | Hub 外壳与 Lua（[RFC 0006](hub-shell-plan.md)） | 狐狸主页 + 应用网格 + 边缘手势；设置 / 传感器 / 计时器走 LVGL 渲染进 PSRAM 影子帧再经 plane 送屏；之后做兼容官方的 Lua 5.5 应用层。H0/H1 已完成；Lua 设计见 [lua-runtime-plan.md](lua-runtime-plan.md)，L0（解释器进固件）完成 |
 | 另立项 | C3 / 语音 | Listening/Thinking/Speaking 姿势已就绪，但还没有语音来源驱动；需新 RFC |
 | 延后 | RFC 0001 组件库 | 不在产品关键路径上 |
 

@@ -12,11 +12,13 @@
 //! - [`geometry`]: panel size and the inclusive window type.
 //! - [`memory`]: PSRAM-backed pixel buffers.
 //! - [`lvgl_port`]: the headless LVGL display LVGL needs to create objects.
+//! - [`libc`]: malloc and syscall stubs for newlib (used by the Lua core).
 
 pub mod battery;
 pub mod display;
 pub mod geometry;
 pub mod imu;
+pub mod libc;
 pub mod lvgl_port;
 pub mod memory;
 pub mod shared_i2c;

@@ -6,6 +6,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # Library: behaviour, fox renderer, UI tree, telemetry.
 cargo test -p mosaico-s31 --offline
 
+# Lua runtime: vendored Lua 5.5.1 + glue, built with the host C compiler.
+cargo test -p mosaico-lua --offline
+
 # Pure driver modules (the bin itself has no host tests).
 ./scripts/test-drivers.sh
 

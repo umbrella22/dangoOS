@@ -1,7 +1,7 @@
 [workspace]
 # One crate: the ESP32-S31 firmware (bin) plus its host-testable library.
 # The earlier vector "grok-ball" core is in git history (before the fox).
-members = ["crates/mosaico-s31"]
+members = ["crates/mosaico-s31", "crates/mosaico-lua"]
 resolver = "2"
 
 [workspace.package]

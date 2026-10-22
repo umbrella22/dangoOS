@@ -73,7 +73,7 @@ use esp_rtos::embassy::InterruptExecutor;
 use log::{info, warn};
 
 use crate::drivers::{display, shared_i2c, subboard, touch};
-use crate::tasks::{haptic, input, lights, plane, sensors, ui};
+use crate::tasks::{haptic, input, lights, lua, plane, sensors, ui};
 
 #[unsafe(no_mangle)]
 fn custom_halt() -> ! {
@@ -245,6 +245,9 @@ async fn main(spawner: Spawner) {
             let _motor_off = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
         }
     }
+
+    spawner.spawn(lua::lua_task().unwrap());
+    info!("lua task spawned ({})", mosaico_lua::LUA_RELEASE);
 
     // USB-OTG HS CDC-ACM console on the USB-C port. The board does not expose
     // USB-Serial-JTAG on that connector, so this is the only log path.

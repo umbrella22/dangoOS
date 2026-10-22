@@ -17,6 +17,7 @@ log.workspace = true
 # gated.
 lvgl.workspace = true
 lvgl-ui.workspace = true
+mosaico-lua = { path = "../mosaico-lua" }
 
 [target.'cfg(target_os = "none")'.dependencies]
 esp-hal.workspace = true

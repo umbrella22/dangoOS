@@ -1,0 +1,15 @@
+[package]
+name = "mosaico-lua"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Lua 5.5 runtime for ESP-Mosaico: vendored PUC-Rio Lua, cooperative scheduling, Rust host functions"
+publish = false
+license = "MIT"
+links = "mosaico_lua"
+build = "build.rs"
+
+[dependencies]
+
+[build-dependencies]
+cc = "1"
