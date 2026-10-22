@@ -38,6 +38,7 @@ cargo fw --offline                                           # 固件 release �
 - 不碰硬件的逻辑放库里（`behavior/`、`fox/`、`hub/`、`ui/`、`telemetry/`），并补 host 测试。
 - 新的 Lua 模块：C 侧放 `mosaico-lua/csrc` 或 `vendor/esp-claw`（改动记进 `vendor/NOTICE.md`），
   设备能力经 `platform.rs` 的 host 钩子注入；vendor 新的 C 库后跑 `scripts/check-rom-symbols.sh`。
+  现有硬件模块使用只读快照与受限输出请求，官方接口及板级差异见 [LUA_HARDWARE.md](LUA_HARDWARE.md)。
 - 外设驱动放 `drivers/`；能写成纯函数的部分（报告解码、打包、几何、槽位描述符、去抖）单独成文件，
   加进 `scripts/test-drivers.sh`。
 - 编译期嵌入的二进制资源放 `src/assets/`，并在其 README 登记来源。
@@ -97,3 +98,27 @@ $P scripts/push-app.py run hello_push  # 也有 stop / reload / rm <id> / reboot
 应用目录里要有 `launcher.json`（官方格式）和 `scripts/main.lua`。文件先写进
 `/data/apps/.incoming/<id>`，全部 CRC 校验通过后才替换正式目录；正在运行的同名应用会自动重启。
 协议细节见 [plans/lua-runtime-plan.md](plans/lua-runtime-plan.md) 第 11 节。
+
+`hardware_probe` 是 N1 硬件接口的板级验收应用：
+
+```bash
+python3 scripts/push-app.py push examples/lua-apps/hardware_probe --run --follow
+```
+
+默认读取 IMU、磁力计、电池和按键快照，并在屏幕与串口显示结果；无设备或无有效样本时
+显示对应错误。`launcher.json` 的 `args.pin` 默认为右槽按键 11，左槽用 13 或 12。
+`args.outputs` 设为 `true` 后启用右槽六像素灯带，并在单击交互板按键时请求 `happy` 马达预设。
+原版官方示例与该板级应用的验收范围见 [LUA_HARDWARE.md](LUA_HARDWARE.md)。
+
+N1 固定接口、生命周期、预期异常、马达和限速探针位于 `examples/lua-apps/n1_*_probe/`。
+`scripts/n1-device-session.py` 在既有推送协议上增加限时采集、UTC 标记和独占日志创建：
+
+```bash
+$P scripts/n1-device-session.py --log target/n1-contract-new.log \
+  --wait 60 --seconds 90 --command status --push examples/lua-apps/n1_contract_probe
+python3 -B scripts/tests/test_n1_device_session.py  # 离线传输模拟，无设备操作
+```
+
+退出 0 只说明传输完成；Lua 汇总、预期异常和实物效果需分别验收。
+探针行为见 [N1_PROBES.md](../examples/lua-apps/N1_PROBES.md)，诊断镜像的明确烧录方式、
+恢复默认固件及逐项通过条件见 [N1_TEST_CHECKLIST.md](N1_TEST_CHECKLIST.md)。

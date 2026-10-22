@@ -126,6 +126,7 @@ fn light_owner(page: Page) -> lights::Owner {
     match page {
         Page::Home => lights::Owner::Fox,
         Page::App(AppId::Settings) => lights::Owner::Preview,
+        Page::App(AppId::Lua(_)) => lights::Owner::Lua,
         _ => lights::Owner::Dark,
     }
 }
@@ -451,6 +452,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
                 // Switched on: one buzz so the motor answers the switch.
                 haptic::play(HapticPattern::Satisfied);
             }
+            haptic::set_enabled(current.haptics);
             settings = current;
         }
 

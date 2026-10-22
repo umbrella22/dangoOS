@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "n1_error_probe",
+  "entry": "scripts/main.lua",
+  "display_name": "N1 Error Probe",
+  "args": {
+    "mode": "error"
+  },
+  "order": 100,
+  "visible": true
+}

@@ -557,3 +557,23 @@ fn official_system_apps_run() {
         drop(vm);
     }
 }
+
+#[test]
+fn hardware_probe_draws_unavailable_hardware_without_output_side_effects() {
+    let _g = DISPLAY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut vm = vm();
+    vm.set_args_json(r#"{"outputs":false,"duration_ms":100}"#)
+        .unwrap();
+    let source = include_str!("../../../examples/lua-apps/hardware_probe/scripts/main.lua");
+    let out = run_src(&mut vm, source);
+    assert_eq!(out.step, Step::Done);
+    assert_eq!(out.presents, 2);
+    let s = screen(&mut vm);
+    assert!(s
+        .lines
+        .iter()
+        .any(|line| line.contains("hardware unavailable")));
+    assert!(s.frame.contains(&0x07e0), "opaque green text was drawn");
+    assert!(s.frame.contains(&0xffff), "opaque white title was drawn");
+    assert!(!s.open, "example closes display");
+}

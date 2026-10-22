@@ -1,0 +1,261 @@
+# N1 集中真机验收清单
+
+状态日期：2026-10-23（北京时间）。范围为六个 Lua 硬件模块、资源释放、马达诊断和
+共享传感器采样的性能影响。主机检查已通过；**马达实物仍无震动，N1 尚未整体验收通过**。
+
+设备当前运行首次验收的 N1 固件。带 `haptic-diagnostics` 的诊断镜像已构建、校验，
+尚未烧录。详细历史证据见 [LUA_HARDWARE.md](LUA_HARDWARE.md#2026-10-23-真机验收记录)。
+
+## 待测项目与顺序
+
+优先完成 1–4，再在默认固件上完成 5。常规观察约 10–15 分钟；波形测量另计。
+勾选表示取得对应证据，不能仅凭串口请求成功勾选实物项目。
+
+| 完成 | 顺序 / 项目 | 操作与通过条件 | 当前缺口 |
+| --- | --- | --- | --- |
+| [ ] | 1. 诊断启动与马达 | 仅刷诊断 main_app；手持设备运行四次 `angry`。记录每次是否有两段震动，并取得对应 `hd start/prestop/stop` 日志 | 此前五次 `error` 请求均被接受，但手持完全无震动；四次 `angry` 的触感尚无反馈 |
+| [ ] | 2. 异常退出退灯 | 运行 `n1_error_probe`：两端红/绿约 3 秒，出现 `N1_EXPECTED_FAILURE` 后回应用列表，两灯熄灭 | 已确认主动报错和返回 Launcher，未确认实物熄灭 |
+| [ ] | 3. 异常后重开、双键、正常退灯 | 紧接着运行 `n1_contract_probe`；红/绿重新点亮，左右分别单击、快速双击、长按约 2 秒并松手；结束后灯熄灭 | 左键 GPIO11 双击缺失；异常后重开和正常退出实物熄灭尚缺证据 |
+| [ ] | 4. 外部停止释放 | 再运行有灯的探针，执行 `stop`；返回列表，灯熄灭；再次运行时可以重新打开 LED / 两键 | 需独立验证从外部停止 VM 的清理路径 |
+| [ ] | 5. 默认固件稳定性与屏幕触摸 | 恢复默认固件后，在狐狸主页采样至少 3 分钟，做至少 20 次独立屏幕点按；记录帧率、丢帧、触摸统计、IMU / BMM 错误计数增量和 USB 状态 | 先前屏幕触摸 `n=0`；有 CST9220 Header 警告、IMU 累计 2 次读错误；首次启动断连原因未定 |
+| [ ] | 6. 马达电气时序 | 测 GPIO8 PWM 与预设包络；测持续请求时相邻 pattern 启动间隔不小于 150 ms | 未测物理波形；请求日志与 `hd` 快照均不能替代仪器读数 |
+| [ ] | 7. 左槽按键与能力边界 | 交互板移至左槽，接口探针应使用 GPIO13 / GPIO12；两键手势可用，LED 明确返回不可用 | 此前真机只测右槽；左槽按键行为仅有主机覆盖 |
+
+已确认的结果包括传感器读数、14 项接口探针、两键单击/长按、右键双击、初始红绿灯、
+右槽拔插后旧句柄失效及新句柄恢复为双绿。若后续修复改变相关路径，应重跑对应项目；
+本轮不要求仅为补左键双击而重复所有拔插操作。
+
+## 准备与证据目录
+
+在仓库根目录执行以下命令。交互板插右槽，USB 保持连接，设置中开启震动。
+停止其他串口监视器；每次仅允许一个进程占用运行口。
+
+```sh
+cd /Volumes/project_home/github/esp-32
+N1_PY=/opt/homebrew/Cellar/esptool/5.6.0/libexec/bin/python
+N1_RUNTIME=/dev/cu.usbmodemmosaico_s31_r11
+N1_DOWNLOAD=/dev/cu.usbmodem113401
+N1_LOG_DIR=$(mktemp -d "$PWD/target/n1-retest-XXXXXX")
+echo "$N1_LOG_DIR"
+"$N1_PY" scripts/n1-device-session.py --help
+```
+
+端口名以当次枚举为准，可用 `ls /dev/cu.usbmodem*` 核对。本机普通 `python3` 尚未安装
+pyserial；上面的 esptool Python 已具备该依赖。工具拒绝覆盖已有日志，重复某一步时使用
+新的日志名。`--seconds` 是命令 / 上传完成后的采集窗口；`--wait` 仅限制等待端口的时间，
+单次写入限 20 秒，协议回复限 20 / 30 秒。结束采集不会停止板上的 Lua 应用。
+
+四个历史探针已保存到 `examples/lua-apps/n1_*_probe/`，与先前实际运行版本逐字节一致；
+另有新准备的 `n1_haptic_rate_probe`，供后续物理限速测量。
+详见 [N1_PROBES.md](../examples/lua-apps/N1_PROBES.md)。运行工具退出 0 仅表示传输完成，
+仍需检查 Lua 汇总、预期退出方式和实物观察。
+
+## 1. 诊断固件、启动与马达
+
+先校验两份已准备的镜像。任一文件不匹配时停止使用该文件，重新构建并记录新指纹。
+
+```sh
+python3 - <<'PY'
+from pathlib import Path
+import hashlib
+root = Path('target/n1-acceptance-20261023')
+images = {
+    'haptic-diagnostics.bin': (2628944, 'a2e1962c142fcd80418bbb4a88e3dca295822b915992b3ffb89be7936a6ebb9d'),
+    'haptic-default.bin': (2627792, '29fbfd4a3ffcc599bd1fe6b91f0d6c7b454937fb9bfc34797277f8b05f6e6d30'),
+}
+for name, (size, expected) in images.items():
+    data = (root / name).read_bytes()
+    actual = hashlib.sha256(data).hexdigest()
+    if len(data) != size or actual != expected or not 0 < len(data) <= 0x7E0000 - 0x210000:
+        raise SystemExit('IMAGE MISMATCH: ' + name)
+    print(name, len(data), actual, 'OK')
+PY
+```
+
+按住 BOOT 点 RESET，进入下载模式。只写 `0x210000`，镜像必须止于 `/data` 起点
+`0x7E0000` 之前。不使用 `flash-app.sh` 烧诊断版，因为该脚本会重新构建默认固件。
+以下刷机命令完成后保留下载状态，便于先启动日志采集再手动复位。
+
+```sh
+esptool --chip esp32s31 --port "$N1_DOWNLOAD" --baud 115200 \
+  --before no-reset --after no-reset \
+  write-flash 0x210000 target/n1-acceptance-20261023/haptic-diagnostics.bin \
+  > "$N1_LOG_DIR/flash-diagnostics.log" 2>&1
+cat "$N1_LOG_DIR/flash-diagnostics.log"
+```
+
+确认 esptool 成功且包含 `Hash of data verified`，再运行下列采集命令；等待端口时松开
+BOOT、点 RESET。保留启动日志，核对传感器与文件系统初始化、无 panic / 意外复位。
+原生 USB 枚举前的日志仍可能丢失，日志起点过晚不能证明此前无错误。
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/boot-diagnostics.log" --wait 60 --seconds 40
+
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/haptic.log" --wait 0 --seconds 30 \
+  --command status --push examples/lua-apps/n1_haptic_probe
+```
+
+第二条命令开始后手持设备。脚本先等 5 秒，再发四次 `angry`，每次请求间隔 3 秒，
+每个预设有两段 160 ms、90% 占空比的脉冲。分别记录「无 / 微弱 / 清晰」和能否分辨两段。
+不要靠放在桌上是否有声音判断。
+
+诊断最多记录启动后前 10 个 pattern，每个只记录首段 burst，启动插板反馈也占用额度。
+若没有 `hd` 行，先核对烧录指纹及额度；需要重新复位后尽早运行探针，再保存新日志。
+
+寄存器解释供分析日志使用：
+
+| 字段 | 解码与用途 |
+| --- | --- |
+| `p`、阶段、`t` | pattern 序号、`start/prestop/stop`、单调毫秒；用来配对首段脉冲的三次观测 |
+| `c` | RMT ch0 CONF0：bit3 连续发送、bit4 wrap、bit5 空闲电平、bit6 空闲输出使能、bit7 stop、bits8–15 分频、bits16–19 内存块数、bit21 carrier |
+| `s` | TX_STATUS：bits0–9 读指针、bits11–20 APB 写指针、bits22–24 FSM 原始值、bit25 mem_empty、bit26 APB 写错误 |
+| `i` | INT_RAW：bit0 ch0 TX end、bit4 ch0 TX error；保留其他位，不能把别的通道中断算到马达 |
+| `oe8`、`m`、`o` | GPIO8 输出使能、IO_MUX、输出 matrix 原始值；比较三阶段及插板前后是否改变 |
+| `tp` | 触摸 scan / output 掩码；右槽 KEY_L / KEY_R 对应 ch5 / ch4，不应占用 GPIO8 对应的 ch2 |
+
+这些都是顺序只读快照。中断位可能保留旧状态，FSM 值也不能凭名称猜测；结合启动日志、
+调用阶段与所锁定 HAL / PAC 解码。即使寄存器看似正常，仍需 GPIO8 电气波形定位马达、
+驱动电路或输出时序；当前没有已证实的故障根因。
+
+## 2–3. 异常退灯、重开与双键
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/error-cleanup.log" --wait 0 --seconds 15 \
+  --push examples/lua-apps/n1_error_probe
+```
+
+预期两端红绿灯亮约 3 秒，随后出现 `N1_EXPECTED_FAILURE` 并返回应用列表。
+这次报错是测试设计，脚本刻意不主动 clear / close；观察返回列表后两灯是否熄灭，
+其余灯是否仍灭。若有残灯，记录持续时间和颜色。
+
+然后立即运行接口探针，验证异常后资源可以重开：
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/contract-after-error.log" --wait 0 --seconds 90 \
+  --push examples/lua-apps/n1_contract_probe
+```
+
+红/绿应再次亮起。右槽左键是 GPIO11，右键是 GPIO10；依次对两键做单击、快速双击、
+长按约 2 秒后松手。默认双击间隔窗口 180 ms、长按门槛 1500 ms；日志分别应有
+`single_click`、`double_click`、`long_press_start` / `long_press_up`。重点补齐 GPIO11
+的 `double_click`。不要只以总回调数判断手势齐全。
+
+脚本标称窗口 60 秒，既有实测约 73 秒完成，因此采集留出 90 秒。预期接口汇总 0 FAIL，
+两键均有真实回调、正常结束后两灯熄灭。若窗口内没收到目标手势，记录未覆盖，不能记 PASS。
+
+## 4. 外部 stop 释放与按需拔插回归
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/stop-before.log" --wait 0 --seconds 5 \
+  --command 'run n1_contract_probe'
+
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/stop-after.log" --wait 0 --seconds 10 --command stop
+
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/reopen-after-stop.log" --wait 0 --seconds 90 \
+  --command 'run n1_contract_probe'
+```
+
+观察 stop 后灯灭、再运行后灯亮且两键可用。若需要针对修复重新验收拔插，用下面的
+生命周期探针：拔下右槽交互板，保持 USB，至少 3 秒后插回，看到两端绿灯后分别单击两键。
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/lifecycle.log" --wait 0 --seconds 140 \
+  --push examples/lua-apps/n1_lifecycle_probe
+```
+
+需要同时取得旧句柄拒绝、新句柄打开、恢复双绿、两键恢复、最终熄灭五类证据。
+其标称 90 秒窗口既有实测约 111 秒，日志中的 SKIP 必须逐项说明。单击会请求 `error`
+马达预设（最多 10 次），因此也应记录实际触感，但不能用请求计数代替触感。
+
+## 5. 恢复默认固件与稳定性
+
+诊断结束后使用已校验的默认镜像恢复。再次进入下载模式，仅写 `0x210000`：
+
+```sh
+esptool --chip esp32s31 --port "$N1_DOWNLOAD" --baud 115200 \
+  --before no-reset --after no-reset \
+  write-flash 0x210000 target/n1-acceptance-20261023/haptic-default.bin \
+  > "$N1_LOG_DIR/flash-default.log" 2>&1
+cat "$N1_LOG_DIR/flash-default.log"
+
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/boot-default.log" --wait 60 --seconds 40
+```
+
+同样在确认烧录成功、开始等运行口后，松开 BOOT 点 RESET。之后回狐狸主页并开始采集：
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/default-stability-touch.log" --wait 0 --seconds 180 \
+  --command status --command ls
+```
+
+- 前两分钟静置，后一分钟对屏幕做至少 20 次独立点按，按下 / 松开清楚分离。交互板电容键
+  不会增加屏幕触摸统计。记录期间画面响应和 USB 是否断开。
+- 触摸 `n` 必须实际增长；既有门槛为固件侧 P95 ≤ 50 ms。该统计是触摸报告读完到首个
+  QSPI 字节，排除了触摸控制器扫描 / IRQ 等待与面板出光时间，不能称为端到端触摸延迟。
+- 保存稳定段 fps、`drop` 及错误计数起止值。此前主页 18–19 fps、全屏 Lua 文本 11–13 fps
+  属于不同场景；新增采样是否造成回归需要相同固件配置、页面、操作和采样时长的旧版 A/B。
+- `ierr` / `berr` 是累计值，比较本窗口增量；记录每条 CST9220 Header 警告。若再次增长或
+  断连，保留前后完整日志继续定位，不能把“恢复了”当作稳定性通过。
+- 核对 `/system`、`/data` 挂载与原有应用。最终待验收镜像以本次默认 bin 指纹为准，
+  后续若修复马达，应对修复后的新镜像重做马达和受影响路径的验证。
+
+## 6. 电气测量
+
+由具备接线条件的人员测 GPIO8：预期 PWM 约 5 kHz；`angry` 为两段约 160 ms、间隔约
+100 ms、占空比约 90%。`error` 使用接近全高的 PWM，其非零低电平是 RMT 编码约束。
+用短预设连续请求测 pattern 启动限速，必须区分同一 pattern 内的多个 burst：**150 ms
+限制的是相邻 pattern 的开始时间，不是每段 burst 的间隔**。目前四次 angry 探针的请求
+间隔为 3 秒，不能单凭它验证 150 ms 下限。默认固件上配合逻辑分析仪运行已准备的有限
+密集请求探针：
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/haptic-rate.log" --wait 0 --seconds 20 \
+  --push examples/lua-apps/n1_haptic_rate_probe
+```
+
+它等待 5 秒，发 20 次 `thinking` 请求、每次间隔标称 40 ms，最后等 1 秒。该预设为
+单段 30 ms、35% duty；pending 请求可以合并，因此无需也不应期待 20 个物理 pattern。
+要求仪器取得至少 3 个实际启动沿，并逐项检查间隔 ≥ 150 ms；未测到足够输出时保留
+未通过 / 未覆盖，脚本的 `[N1HR] END` 只说明请求阶段结束。此新探针尚未在设备上运行。
+
+## 7. 左槽按键与能力边界
+
+停止当前应用后，把交互板移至左槽，等待日志确认识别和触摸键校准完成，再运行接口探针：
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/left-slot-contract.log" --wait 0 --seconds 90 \
+  --push examples/lua-apps/n1_contract_probe
+```
+
+应打开 GPIO13 / GPIO12，拒绝非活动的 GPIO11 / GPIO10；分别做单击、双击和 2 秒长按。
+左槽灯带当前不受支持，LED 应走 `hardware unavailable` 分支，其物理灯带项为预期 SKIP。
+核对其余接口无 FAIL，并记录实际手势；结束后可把交互板恢复右槽。该项在此前真机记录中
+未运行，不能由右槽通过推导为左槽通过。
+
+## 结项记录
+
+每次会话在新证据目录保存一份观察表，记录固件 / 探针指纹、时间及以下结果：
+
+| 项目 | 记录 |
+| --- | --- |
+| 马达 4 次 angry | 每次触感；是否能分辨两段；对应 `hd p=` |
+| 异常 / 正常 / stop 后灯 | 各自是否熄灭，残灯颜色和持续时间；重新运行是否成功 |
+| 双键手势 | GPIO11 / GPIO10 的单击、双击、长按开始 / 松开日志 |
+| 默认固件稳定段 | 起止 fps / drop / ierr / berr / drops / edrops；触摸 n / p50 / p95 / max |
+| 启动 / USB | 烧录校验、挂载、应用保留、断连 / panic / 复位情况 |
+| 物理波形与 A/B | 仪器文件 / 同场景对照日志，或明确 `not-run` 及缺失条件 |
+
+只有相应日志、手工观察和必要仪器证据齐备，才把对应项更新为通过。马达问题目前是明确
+的验收失败，其根因和修复仍需诊断运行证据；其余未完成项目继续保留为待测。

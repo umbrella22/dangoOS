@@ -48,7 +48,22 @@
 //! arrives. Pattern starts are rate-limited to one per [`RATE_LIMIT_MS`]
 //! (150 ms); a request that arrives inside the window waits for it.
 
+#[cfg(feature = "haptic-diagnostics")]
+mod diagnostics;
+
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicBool, Ordering};
+static ENABLED: AtomicBool = AtomicBool::new(true);
+pub fn set_enabled(enabled: bool) {
+    ENABLED.store(enabled, Ordering::Release);
+}
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Acquire)
+}
+static READY: AtomicBool = AtomicBool::new(false);
+pub fn available() -> bool {
+    READY.load(Ordering::Acquire)
+}
 
 use critical_section::Mutex as CsMutex;
 use embassy_futures::select::{select, Either};
@@ -199,6 +214,7 @@ const fn spec(pattern: HapticPattern) -> PatternSpec {
 /// touches the RMT peripheral.
 #[embassy_executor::task]
 pub async fn haptic_task(channel: HapticChannel) {
+    READY.store(true, Ordering::Release);
     info!("haptic_task: GPIO8 5 kHz RMT PWM, rate limit {RATE_LIMIT_MS} ms");
     let mut channel = Some(channel);
     let mut last_start_ms: Option<u64> = None;
@@ -285,6 +301,8 @@ async fn run_pattern(
     channel: &mut Option<HapticChannel>,
     pattern: HapticPattern,
 ) -> Option<HapticPattern> {
+    #[cfg(feature = "haptic-diagnostics")]
+    let diagnostic_pattern = diagnostics::next_pattern();
     let spec = spec(pattern);
     let pattern_priority = pattern.priority();
     info!(
@@ -311,13 +329,25 @@ async fn run_pattern(
             }
         };
 
+        #[cfg(feature = "haptic-diagnostics")]
+        if burst == 0 {
+            diagnostics::record(diagnostic_pattern, "start");
+        }
         let preempting = wait_or_preempt(spec.on_ms, pattern_priority).await;
+        #[cfg(feature = "haptic-diagnostics")]
+        if burst == 0 {
+            diagnostics::record(diagnostic_pattern, "prestop");
+        }
         match transaction.stop() {
             Ok(channel_handle) => *channel = Some(channel_handle),
             Err((error, channel_handle)) => {
                 warn!("haptic: PWM stop failed: {error:?}");
                 *channel = Some(channel_handle);
             }
+        }
+        #[cfg(feature = "haptic-diagnostics")]
+        if burst == 0 {
+            diagnostics::record(diagnostic_pattern, "stop");
         }
         if let Some(next) = preempting {
             return Some(next);

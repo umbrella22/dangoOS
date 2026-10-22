@@ -10,6 +10,11 @@ publish = false
 name = "mosaico_s31"
 path = "src/lib.rs"
 
+[features]
+default = []
+# Read-only motor/RMT receipts for manual hardware diagnosis; no waveform changes.
+haptic-diagnostics = []
+
 [dependencies]
 log.workspace = true
 # Host-buildable UI dependencies: the library and the host previews build

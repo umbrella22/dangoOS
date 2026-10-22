@@ -448,6 +448,8 @@ pub async fn scan_buses() {
 /// data-ready bit was set in the burst.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ImuSample {
+    pub accel_raw: Option<[i16; 3]>,
+    pub gyro_raw: Option<[i16; 3]>,
     pub accel_mg: Option<[i16; 3]>,
     pub gyro_dps: Option<[i16; 3]>,
 }
@@ -456,6 +458,8 @@ pub struct ImuSample {
 fn parse_fifo_frame(frame: &[u8]) -> ImuSample {
     let word = |index: usize| i16::from_le_bytes([frame[index], frame[index + 1]]);
     ImuSample {
+        accel_raw: Some([word(6), word(8), word(10)]),
+        gyro_raw: Some([word(0), word(2), word(4)]),
         gyro_dps: Some([
             scale_i16(word(0), 2000, 32768),
             scale_i16(word(2), 2000, 32768),
@@ -603,6 +607,22 @@ impl Bmi270 {
         Ok(frames)
     }
 
+    /// Auxiliary measurements for the Lua snapshot. No status register is
+    /// read from Lua; this runs solely in the owning sensor task.
+    pub async fn read_aux(&mut self) -> Result<(i16, u32, u8), &'static str> {
+        let mut temperature = [0; 2];
+        let mut time = [0; 3];
+        let mut status = [0; 1];
+        self.read_regs(0x22, &mut temperature).await?;
+        self.read_regs(0x18, &mut time).await?;
+        self.read_regs(REG_STATUS, &mut status).await?;
+        Ok((
+            i16::from_le_bytes(temperature),
+            u32::from_le_bytes([time[0], time[1], time[2], 0]),
+            status[0],
+        ))
+    }
+
     /// Read status + accel + gyro in one burst.
     ///
     /// `Ok(None)` means the bus transaction succeeded but no data-ready bit was
@@ -619,6 +639,7 @@ impl Bmi270 {
             let y = i16::from_le_bytes([burst[11], burst[12]]);
             let z = i16::from_le_bytes([burst[13], burst[14]]);
             // ±2 g full scale: raw * 1000 mg / 16384.
+            sample.accel_raw = Some([x, y, z]);
             sample.accel_mg = Some([
                 scale_i16(x, 1000, 16384),
                 scale_i16(y, 1000, 16384),
@@ -631,6 +652,7 @@ impl Bmi270 {
             let y = i16::from_le_bytes([burst[17], burst[18]]);
             let z = i16::from_le_bytes([burst[19], burst[20]]);
             // ±2000 dps full scale: raw * 2000 dps / 32768.
+            sample.gyro_raw = Some([x, y, z]);
             sample.gyro_dps = Some([
                 scale_i16(x, 2000, 32768),
                 scale_i16(y, 2000, 32768),
@@ -711,6 +733,7 @@ struct BmmTrim {
 /// One compensated magnetometer sample (microtesla).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MagSample {
+    pub status: u8,
     pub x_ut: f32,
     pub y_ut: f32,
     pub z_ut: f32,
@@ -1202,7 +1225,10 @@ impl Bmm150 {
         let z_ut = self.compensate_z(raw_z, rhall);
         let magnitude_ut = sqrt_f32(x_ut * x_ut + y_ut * y_ut + z_ut * z_ut);
 
+        let mut status = [0; 1];
+        self.read_regs(0x4a, &mut status).await?;
         Ok(Some(MagSample {
+            status: status[0],
             x_ut,
             y_ut,
             z_ut,

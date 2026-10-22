@@ -42,17 +42,21 @@ USB CDC ── console：日志泵 + hub::push 推送协议 → /data/apps → t
 ├── assets/
 │   ├── fox-dango/               角色素材与 Python 管线（生成 src/fox/data.rs、src/assets/fox.bin）
 │   └── fonts/                   Hub 中文点阵字体生成脚本
-├── examples/lua-apps/hello_push 推送示例应用（弹球 + io 计数器）
+├── examples/lua-apps/          hello_push、hardware_probe、n1_*_probe（固定真机验收探针）
 ├── scripts/
 │   ├── check.sh                 不需要板子的全部检查
 │   ├── test-drivers.sh          纯驱动模块的 rustc --test
 │   ├── check-rom-symbols.sh     vendored C 与 S31 ROM 符号冲突检查
 │   ├── flash-app.sh             构建并只写 main_app（0x210000）
-│   └── push-app.py              USB 推送 Lua 应用、热重载、远程重启
+│   ├── push-app.py              USB 推送 Lua 应用、热重载、远程重启
+│   ├── n1-device-session.py     有限时串口采集与既有推送包装，保留独立日志
+│   └── tests/                  串口包装器的离线传输模拟
 ├── docs/
 │   ├── HANDOFF.md               交接文档：现状、下一步、后续拓展（从这里开始）
 │   ├── PROJECT_STRUCTURE.md     本文
 │   ├── DEVELOPMENT.md           开发、检查、烧录、串口、推送
+│   ├── LUA_HARDWARE.md          N1 接口、适配边界、验证证据与镜像指纹
+│   ├── N1_TEST_CHECKLIST.md     集中真机验收与诊断 / 默认镜像切换
 │   ├── MOSAICO_V12_HARDWARE.md  引脚、电源、扩展槽
 │   ├── FOX_RENDER_PIPELINE.md   渲染管线学习笔记
 │   ├── FOX_DRAWING_GUIDE.md     角色美术怎么画、怎么画新角色
@@ -65,8 +69,8 @@ USB CDC ── console：日志泵 + hub::push 推送协议 → /data/apps → t
     │   ├── csrc/                littlefs 胶水与 POSIX 系统调用
     │   └── vendor/littlefs-2.11.3
     ├── mosaico-lua/
-    │   ├── src/                 vm.rs（一个脚本一个 VM，协作式让出）、call.rs、platform.rs、jpeg.rs、ffi.rs
-    │   ├── csrc/                平台层、loslib、TJpgDec 胶水、esp_shim（ESP-IDF 头文件替身）
+    │   ├── src/                 vm.rs（一个脚本一个 VM，协作式让出）、call.rs、platform.rs、hardware.rs（快照 / 输出请求）、jpeg.rs、ffi.rs
+    │   ├── csrc/                平台层、mosaico_hardware.c + hardware/*.lua（硬件接口桥接）、loslib、TJpgDec 胶水、esp_shim（ESP-IDF 头文件替身）
     │   ├── vendor/              lua-5.5.1、esp-claw 模块、cjson、tjpgd、skills-lab 应用（来源见 NOTICE.md）
     │   └── testdata/
     └── mosaico-s31/
@@ -101,7 +105,7 @@ USB CDC ── console：日志泵 + hub::push 推送协议 → /data/apps → t
             │   ├── gesture.rs   边缘手势
             │   ├── transition.rs  页面滑动
             │   ├── countdown.rs 计时器（后台继续走）
-            │   ├── snapshot.rs  传感器最新值
+            │   ├── snapshot.rs  页面读数、Lua 原始硬件快照和磁力状态映射
             │   ├── json.rs      launcher.json 读取
             │   ├── registry.rs  Lua 应用注册表（/data/apps、/system/apps、内置）
             │   └── push.rs      USB 推送协议状态机
@@ -148,7 +152,8 @@ USB CDC ── console：日志泵 + hub::push 推送协议 → /data/apps → t
 - `fox` 只依赖 `behavior::Expression`。
 - `hub` 依赖 `behavior`（事件、手势采样）和 `mosaico-fs`（注册表、推送写文件），不依赖 `ui`。
 - `ui` 依赖 `behavior`、`fox` 和 `hub`。
-- `mosaico-lua`、`mosaico-fs` 不依赖 `mosaico-s31`；固件通过 host 钩子（显示、时间、触摸）注入设备能力。
+- `mosaico-lua`、`mosaico-fs` 不依赖 `mosaico-s31`；固件通过 host 钩子（显示、时间、触摸、硬件快照与输出请求）注入设备能力。
+  Lua 硬件模块的接口与资源释放规则见 [LUA_HARDWARE.md](LUA_HARDWARE.md)。
 - `tasks` 依赖库里的一切，加上 `drivers`。
 - 库永远不依赖固件（`tasks`、`drivers`、`board`、`console`）。需要设备时钟之类的东西时，
   由固件注入（例如 `fox_widget::install_mono_us`）。

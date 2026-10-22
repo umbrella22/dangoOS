@@ -23,6 +23,14 @@ here were made.
   - `esp_painter/esp_painter_font.h`, `esp_painter/basic_font_{12..48}.c`
     (ten sizes; the font data is CC0, as stated in the upstream files)
   - `lua_module_json/`
+  - `hardware-contracts/{imu,magnetometer,fuel_gauge,led_strip,button}/`:
+    unmodified upstream READMEs, test scripts, and `lib_fuel_gauge.lua` from
+    the same revision. These are API evidence and compatibility fixtures;
+    the upstream GPIO/I2C drivers are not built. `csrc/mosaico_hardware.*`
+    are project-owned snapshot adapters, not modified upstream sources.
+    `fuel_gauge` also provides the upstream `lib_fuel_gauge` require name;
+    external buses are deliberately unsupported. There is no haptic module
+    in that upstream revision; our `haptic` is a board preset extension.
   - `lua_module_system/arg_schema.lua`
   - `lua_module_storage/` (`lua_module_storage.c/.h`, `README.md`), unmodified;
     `claw_paths_get` comes from the stub `csrc/esp_shim/claw_paths.h` and

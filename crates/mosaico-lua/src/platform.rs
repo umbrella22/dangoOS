@@ -388,3 +388,35 @@ unsafe extern "C" fn mosaico_host_heap_info(caps: u32, out: *mut HeapInfo) {
         .unwrap_or_default();
     out.write(info);
 }
+
+// ---- snapshot hardware -----------------------------------------------------
+#[no_mangle]
+unsafe extern "C" fn mosaico_host_hardware_snapshot(out: *mut crate::HardwareSnapshot) {
+    let snapshot = current()
+        .map(|c| c.host.hardware_snapshot())
+        .unwrap_or_default();
+    out.write(snapshot);
+}
+
+#[no_mangle]
+unsafe extern "C" fn mosaico_host_hardware_request(kind: u32, data: *const u8) -> c_int {
+    use crate::{HapticPreset, HardwareRequest};
+    let Some(ctx) = current() else {
+        return esp_err::INVALID_STATE;
+    };
+    let request = match kind {
+        0 if !data.is_null() => {
+            let Some(preset) = HapticPreset::ALL.get(*data as usize) else {
+                return esp_err::INVALID_ARG;
+            };
+            HardwareRequest::Haptic(*preset)
+        }
+        1 if !data.is_null() => HardwareRequest::LedFrame(data.cast::<[[u8; 3]; 6]>().read()),
+        2 => HardwareRequest::LedRelease,
+        _ => return esp_err::INVALID_ARG,
+    };
+    match ctx.host.hardware_request(request) {
+        Ok(()) => 0,
+        Err(e) => e,
+    }
+}

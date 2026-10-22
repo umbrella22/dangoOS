@@ -1,6 +1,6 @@
 # 交接文档：现状、下一步与后续拓展
 
-> 2026-10-22。接手时先读本文，再按「文档地图」去看细节。
+> 2026-10-23。接手时先读本文，再按「文档地图」去看细节。
 > 仓库：`/Volumes/project_home/github/esp-32`，分支只在本地提交，**不推送**。
 
 ## 1. 一句话现状
@@ -16,7 +16,7 @@ ESP-Mosaico v1.2（ESP32-S31）上的 Rust 固件。主页是会对触摸、晃�
 | 狐狸 | 20 个姿势 + 部件动画，352×336 画布，18–20 fps，`drop=0` |
 | 情绪引擎 | 摇晃 / 狂甩 / 抚摸 / 点按阶梯、光线遮挡与强光、PIR 来访、磁铁、模块插拔、电量、睡眠与唤醒（规则见 `behavior/affect.rs` 顶部的表） |
 | 传感器 | BMI270（FIFO 50 Hz）、双 BMM150、BQ27220、CST9220 触摸、交互板 LDR / PIR / 电容键 |
-| 反馈 | 马达（RMT 生成 PWM）、交互板 WS2812 心情灯（仅右槽） |
+| 反馈 | 交互板 WS2812 心情灯（仅右槽）；马达已有 RMT PWM 驱动，但 2026-10-23 手持测试无震动，正在排查，不能沿用历史通过结论 |
 | 扩展槽 | EEPROM 描述符识别、左右自适应交互板；相机只识别（左槽） |
 | Hub | 狐狸主页、应用网格、边缘手势、页面滑动；设置（亮度、灯光、震动）、传感器、计时器 |
 | Lua L0–L2 | Lua 5.5.1、时间片调度、4 MiB / 应用内存上限；模块 `display` `delay` `system` `json` `arg_schema` `os` `io` `storage` |
@@ -79,23 +79,42 @@ USB CDC ── console：日志输出 + 推送协议（hub::push）→ /data/app
 
 ## 5. 下一步（按顺序）
 
-### N1. 把已有驱动接成 Lua 模块（最便宜）
+### N1. 把已有驱动接成 Lua 模块（主机通过；真机马达未通过）
 
-已有原生驱动、只差 Lua 接口的硬件：
+2026-10-22 已实现六个硬件模块及 `hardware_probe` 板级示例。`./scripts/check.sh`
+通过：mosaico-s31 201、mosaico-lua 45、文件系统 10、纯驱动 42，共 298 项测试；
+主机预览、固件 release 构建、627 个 C 符号的 ROM 冲突检查通过。接口、兼容差异、
+源码与 ELF 指纹见 [LUA_HARDWARE.md](LUA_HARDWARE.md)。2026-10-23 已仅烧录
+`main_app 0x210000`，写入校验通过；快照读数、两枚交互板键、灯带、拔插与旧句柄
+失效已有真机证据。马达请求虽进入任务，手持设备仍无震动，N1 尚未整体验收通过。
 
 | Lua 模块 | 来源 | 说明 |
 | --- | --- | --- |
-| `imu` | `drivers/imu.rs` | 官方接口：加速度、角速度；L2 原计划的一项，尚未做 |
-| `magnetometer` | 同上（BMM150） | 读数 + 磁铁接近 / 接触状态 |
-| `fuel_gauge` | `drivers/battery.rs` | 电量百分比、电压、充电状态 |
-| `haptic` | `tasks/haptic.rs` | 只暴露预设图案，速率限制沿用 150 ms |
-| `led_strip` | `tasks/lights.rs` | 只在右槽交互板存在时可用 |
-| `button` | 交互板电容键 | 先做交互板两个键；AI / BOOT 见 N2 |
+| `imu` | `drivers/imu.rs` | BMI270 原始加速度、角速度、温度及辅助寄存器快照 |
+| `magnetometer` | 同上（BMM150） | 补偿磁场、真实状态字节 + 最近报告的磁铁接近 / 接触状态 |
+| `fuel_gauge` / `lib_fuel_gauge` | `drivers/battery.rs` | 电量百分比、电压、平均电流、充电状态 |
+| `haptic` | `tasks/haptic.rs` | 13 种已有预设，沿用 150 ms 限速与震动设置 |
+| `led_strip` | `tasks/lights.rs` | 活动交互板在右槽时可用，GPIO38、最多 6 颗 |
+| `button` | 交互板电容键 | 两个活动键；带时间戳的边沿环与换板失效；AI / BOOT 见 N2 |
 
-- 做法：Rust 侧在 `tasks::lua` 里提供只读快照（来自 `hub::snapshot`）和受限的输出请求，
-  C 侧按官方 `lua_module_*` 的函数名注册，参数用 `arg_schema` 校验。
-- 原则：Lua 读传感器只读快照，不直接碰总线；写硬件只发请求，由拥有硬件的任务执行。
-- 验收：官方对应模块的示例脚本原样运行；主机测试覆盖参数错误与边界。
+- Rust 侧提供只读快照与受限输出请求，C 桥接层注册模块，Lua 方法按模块放在
+  `mosaico-lua/csrc/hardware/`。Lua 不碰总线；马达和灯带由原有任务执行。
+- 硬件参数严格校验。上游 `arg_schema` 会取整与截断，只用于脚本参数归一化，
+  不用于静默修正 GPIO、LED 下标或颜色值。
+- 官方固定版本的 IMU、磁力计示例原样通过主机测试；button 原文通过 `args.pin=11`
+  运行。LED 示例固定 16 颗，需适配为 6；fuel-gauge 原例依赖任意 I2C，需改成板载
+  快照构造器。该上游版本没有 haptic，本模块是本项目扩展。
+- `hardware_probe` 已运行 600 帧并正常结束；接口探针 14 PASS / 0 FAIL，记录到 39 个
+  真实按键回调。右槽拔插后旧 LED / 按键句柄被拒绝，新句柄恢复，操作者确认红绿灯
+  和恢复后的两端绿灯正常。详见 [真机记录](LUA_HARDWARE.md#2026-10-23-真机验收记录)。
+- 优先排查马达实际无震动：不能把 `haptic: Error` 日志当成 PWM 波形或触感通过。
+  另需完成触摸延迟采样、马达 150 ms 间隔的物理测量；当前没有旧固件的同场景 A/B。
+  `hardware_probe` 默认 `outputs=false`；设置为 `true` 后启用灯带并在单击时请求马达。
+- 默认关闭的 `haptic-diagnostics` 已构建并保存诊断 / 默认镜像，尚未烧录诊断版。
+  最终默认源码再次通过 298 项主机测试、release 与 ROM 检查。固定真机探针、限时串口
+  采集工具及恢复默认固件的命令已备齐；按 [N1 集中验收清单](N1_TEST_CHECKLIST.md)
+  完成马达、异常 / 外部停止退灯、缺失手势和稳定性验收。诊断日志只提供运行证据，
+  目前没有已证实的马达故障根因或修复。
 
 ### N2. AI / BOOT 按键与关机
 
@@ -365,6 +384,8 @@ git ls-tree -r --name-only 4f601de docs/legacy                   # 旧文档列�
 | --- | --- |
 | [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) | 源码目录、数据流、依赖方向、测试在哪 |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 依赖、命令、改代码放哪、烧录、串口、推送 |
+| [LUA_HARDWARE.md](LUA_HARDWARE.md) | N1 硬件接口、兼容边界、主机 / 真机证据与镜像指纹 |
+| [N1_TEST_CHECKLIST.md](N1_TEST_CHECKLIST.md) | 集中真机待测顺序、诊断烧录 / 恢复命令、通过条件与记录表 |
 | [MOSAICO_V12_HARDWARE.md](MOSAICO_V12_HARDWARE.md) | 引脚、电源、扩展槽 |
 | [FOX_RENDER_PIPELINE.md](FOX_RENDER_PIPELINE.md) | 狐狸从 PNG 原稿到屏幕 |
 | [FOX_DRAWING_GUIDE.md](FOX_DRAWING_GUIDE.md) | 角色美术怎么画 |

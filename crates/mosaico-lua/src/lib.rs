@@ -19,6 +19,8 @@ extern crate std;
 
 mod call;
 mod ffi;
+mod hardware;
+pub use hardware::{ButtonEdge, HapticPreset, HardwareRequest, HardwareSnapshot};
 pub mod jpeg;
 mod platform;
 mod vm;
@@ -36,3 +38,6 @@ pub const LUA_RELEASE: &str = "Lua 5.5.1";
 mod tests;
 #[cfg(test)]
 mod tests_modules;
+
+#[cfg(test)]
+mod tests_hardware;

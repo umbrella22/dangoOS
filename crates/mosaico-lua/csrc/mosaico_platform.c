@@ -26,6 +26,7 @@
 #include "lua_module_json.h"
 #include "lua_module_storage.h"
 #include "mosaico_platform.h"
+#include "mosaico_hardware.h"
 
 /* ---- Rust side ------------------------------------------------------- */
 
@@ -561,5 +562,6 @@ void mosaico_platform_preload(lua_State *L)
     }
     luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);
     for (size_t i = 0; i < s_module_count; ++i) preload(L, s_modules[i].name, s_modules[i].open);
+    mosaico_hardware_preload(L);
     lua_pop(L, 1);
 }

@@ -78,6 +78,16 @@ pub static GLOBAL_ALLOCATOR: RawAllocator = RawAllocator {
 /// What the embedding provides to a script. Everything but `print` is
 /// optional; the defaults behave like a board without that hardware.
 pub trait Host: Any {
+    /// A coherent copy from the sensor task; this method must never read a bus.
+    fn hardware_snapshot(&mut self) -> crate::HardwareSnapshot {
+        crate::HardwareSnapshot::default()
+    }
+    /// Queue a bounded request; success means accepted, not physically completed.
+    fn hardware_request(&mut self, request: crate::HardwareRequest) -> Result<(), i32> {
+        let _ = request;
+        Err(esp_err::NOT_SUPPORTED)
+    }
+
     /// One line from Lua's `print` (no trailing newline).
     fn print(&mut self, line: &[u8]);
 

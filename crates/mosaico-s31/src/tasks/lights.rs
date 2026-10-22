@@ -45,6 +45,32 @@ const T0L: u16 = 8;
 const T1H: u16 = 8;
 const T1L: u16 = 4;
 
+static GENERATION: AtomicU32 = AtomicU32::new(0);
+pub fn generation() -> u32 {
+    GENERATION.load(Ordering::Acquire)
+}
+static READY: AtomicBool = AtomicBool::new(false);
+static LUA_FRAME: critical_section::Mutex<core::cell::RefCell<Option<Frame>>> =
+    critical_section::Mutex::new(core::cell::RefCell::new(None));
+
+pub fn available() -> bool {
+    READY.load(Ordering::Acquire) && ATTACHED.load(Ordering::Acquire)
+}
+pub fn lua_frame(pixels: [[u8; 3]; 6]) -> Result<(), i32> {
+    if !available() {
+        return Err(mosaico_lua::esp_err::NOT_SUPPORTED);
+    }
+    if OWNER.load(Ordering::Acquire) != Owner::Lua as u8 {
+        return Err(mosaico_lua::esp_err::INVALID_STATE);
+    }
+    let frame = pixels.map(|[r, g, b]| Rgb { r, g, b });
+    critical_section::with(|cs| *LUA_FRAME.borrow_ref_mut(cs) = Some(frame));
+    Ok(())
+}
+pub fn lua_release() {
+    critical_section::with(|cs| *LUA_FRAME.borrow_ref_mut(cs) = None);
+}
+
 static EXPRESSION: AtomicU8 = AtomicU8::new(0);
 static AMBIENT: AtomicU8 = AtomicU8::new(u8::MAX);
 static ATTACHED: AtomicBool = AtomicBool::new(false);
@@ -67,11 +93,16 @@ pub enum Owner {
     Preview = 1,
     /// Dark (other apps).
     Dark = 2,
+    /// A bounded six-pixel frame submitted by the foreground Lua app.
+    Lua = 3,
 }
 
 /// Hand the strip to `owner`. Entering the preview restarts its wipe.
 pub fn set_owner(owner: Owner) {
     let old = OWNER.swap(owner as u8, Ordering::Relaxed);
+    if old != owner as u8 {
+        lua_release();
+    }
     if owner == Owner::Preview && old != owner as u8 {
         replay_preview();
     }
@@ -113,7 +144,10 @@ pub fn set_enabled(enabled: bool) {
 
 /// Whether an Interaction board is the active one in the right slot.
 pub fn set_attached(attached: bool) {
-    ATTACHED.store(attached, Ordering::Relaxed);
+    if ATTACHED.swap(attached, Ordering::AcqRel) != attached {
+        GENERATION.fetch_add(1, Ordering::AcqRel);
+        lua_release();
+    }
 }
 
 /// Configure RMT channel 1 for WS2812. The caller attaches the data pin.
@@ -130,6 +164,7 @@ pub fn configure_channel(
 
 #[embassy_executor::task]
 pub async fn lights_task(mut channel: LightChannel) {
+    READY.store(true, Ordering::Release);
     info!("lights_task: WS2812 x{LED_COUNT} on GPIO38 (right slot), RMT ch1 10 MHz");
     let mut light = MoodLight::new();
     let mut codes = [PulseCode::end_marker(); LED_COUNT * 24 + 1];
@@ -170,6 +205,9 @@ pub async fn lights_task(mut channel: LightChannel) {
         let mut frame = match OWNER.load(Ordering::Relaxed) {
             0 => fox,
             1 => preview_frame(now.saturating_sub(preview_since)),
+            3 => critical_section::with(|cs| {
+                (*LUA_FRAME.borrow_ref(cs)).unwrap_or([Rgb::OFF; LED_COUNT])
+            }),
             _ => [Rgb::OFF; LED_COUNT],
         };
         if !ENABLED.load(Ordering::Relaxed) {

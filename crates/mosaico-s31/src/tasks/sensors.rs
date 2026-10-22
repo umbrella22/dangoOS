@@ -55,6 +55,17 @@ use crate::drivers::subboard::{self, Slot, Subboard};
 use crate::tasks::lights;
 
 /// `SensorEvent` queue depth (RFC 0005 section 3.5).
+/// Coherent hardware snapshot, copied by the Lua task. Never exposes a bus.
+static LUA_HARDWARE: critical_section::Mutex<
+    core::cell::RefCell<Option<mosaico_s31::hub::snapshot::HardwareSnapshot>>,
+> = critical_section::Mutex::new(core::cell::RefCell::new(None));
+pub fn lua_snapshot() -> mosaico_s31::hub::snapshot::HardwareSnapshot {
+    critical_section::with(|cs| (*LUA_HARDWARE.borrow_ref(cs)).unwrap_or_default())
+}
+fn store_lua_snapshot(snapshot: mosaico_s31::hub::snapshot::HardwareSnapshot) {
+    critical_section::with(|cs| *LUA_HARDWARE.borrow_ref_mut(cs) = Some(snapshot));
+}
+
 pub const SENSOR_QUEUE_CAPACITY: usize = 64;
 
 /// `sensor_task` -> UI/affect consumer.
@@ -142,6 +153,10 @@ pub async fn sensor_task(mut subboard: Subboard) {
     // not answer) simply keeps the normal resting face.
     let mut battery = Bq27220::probe().await;
 
+    let mut hardware = mosaico_s31::hub::snapshot::HardwareSnapshot::default();
+    hardware.available = u32::from(imu.is_some())
+        | (u32::from(mags.iter().any(Option::is_some)) << 1)
+        | (u32::from(battery.is_some()) << 2);
     let mut classifiers = [MagneticClassifier::new(), MagneticClassifier::new()];
     let mut mag_calibrated = [false; 2];
     // A module carries its own magnets; re-learn the baseline once it sits.
@@ -207,6 +222,20 @@ pub async fn sensor_task(mut subboard: Subboard) {
         if let Some(device) = &mut imu {
             let read_started_us = now_us();
             let result = device.read_all(&mut imu_batch).await;
+            if result.is_err() {
+                hardware.valid &= !3;
+            }
+            if matches!(result, Ok(count) if count > 0) {
+                match device.read_aux().await {
+                    Ok((temperature, time, status)) => {
+                        hardware.temperature = temperature as i32;
+                        hardware.sensor_time = time;
+                        hardware.imu_status = status as u32;
+                        hardware.valid |= 12;
+                    }
+                    Err(_) => hardware.valid &= !12,
+                }
+            }
             imu_read_us = now_us().saturating_sub(read_started_us);
             if imu_read_us > imu_read_max_us {
                 imu_read_max_us = imu_read_us;
@@ -224,6 +253,14 @@ pub async fn sensor_task(mut subboard: Subboard) {
                         let age = (count - 1 - index) as u64 * IMU_SAMPLE_MS;
                         let at = now.saturating_sub(age).max(last_imu_at);
                         last_imu_at = at;
+                        if let Some(raw) = sample.accel_raw {
+                            hardware.accel = raw.map(i32::from);
+                            hardware.valid |= 1;
+                        }
+                        if let Some(raw) = sample.gyro_raw {
+                            hardware.gyro = raw.map(i32::from);
+                            hardware.valid |= 2;
+                        }
                         if let Some([ax_mg, ay_mg, az_mg]) = sample.accel_mg {
                             // A zero vector means the first conversion has not
                             // landed; it would look like a 1 g dynamic shock.
@@ -279,6 +316,14 @@ pub async fn sensor_task(mut subboard: Subboard) {
                             magnitude_ut: sample.magnitude_ut,
                         };
                         let event = classifiers[index].update(&reading, at);
+                        if index == 0 || last_mag[0].is_none() {
+                            mosaico_s31::hub::snapshot::record_magnetic(
+                                &mut hardware,
+                                [sample.x_ut, sample.y_ut, sample.z_ut],
+                                sample.status,
+                                event,
+                            );
+                        }
                         if classifiers[index].is_calibrated() && !mag_calibrated[index] {
                             info!(
                                 "sensor mag[{index}] baseline {:.1}uT (rejected windows: {})",
@@ -317,15 +362,31 @@ pub async fn sensor_task(mut subboard: Subboard) {
                         }
                     }
                     Ok(None) => bmm_empty = bmm_empty.saturating_add(1),
-                    Err(_) => bmm_errors = bmm_errors.saturating_add(1),
+                    Err(_) => {
+                        bmm_errors = bmm_errors.saturating_add(1);
+                        if index == 0 || last_mag[0].is_none() {
+                            mosaico_s31::hub::snapshot::invalidate_magnetic(&mut hardware);
+                        }
+                    }
                 }
             }
         }
 
+        hardware.button_board(subboard.active_slot().map(|slot| match slot {
+            Slot::Left => [13, 12],
+            Slot::Right => [11, 10],
+        }));
         // ---- Interaction board inputs: 25 Hz, offset from the BMM poll ----
         if tick % SLOW_DIVIDER == 0 {
             if let Some(inputs) = subboard.poll_inputs() {
                 let at = now_ms();
+                hardware.valid |= 64;
+                if let Some(pressed) = inputs.key_l_edge {
+                    hardware.button_edge(0, pressed, at as u32);
+                }
+                if let Some(pressed) = inputs.key_r_edge {
+                    hardware.button_edge(1, pressed, at as u32);
+                }
                 publish(SensorEvent {
                     at_ms: at,
                     source: EventSource::Light,
@@ -382,16 +443,23 @@ pub async fn sensor_task(mut subboard: Subboard) {
                             source: EventSource::Battery,
                             kind: EventKind::BatteryLevel(sample.percent),
                         });
+                        hardware.voltage_mv = sample.voltage_mv as u32;
+                        hardware.current_ma = sample.average_current_ma as i32;
+                        hardware.soc = sample.percent as u32;
+                        hardware.charging = u32::from(sample.average_current_ma > 0);
+                        hardware.valid |= 32;
                         last_battery = Some(sample);
                         battery_errors = 0;
                     }
                     Err(error) => {
+                        hardware.valid &= !32;
                         battery_errors = battery_errors.saturating_add(1);
                         // A gauge that fails a dozen consecutive reads is
                         // treated as absent rather than logging forever.
                         if battery_errors >= 12 {
                             warn!("BQ27220: disabling battery reporting after repeated errors ({error})");
                             battery = None;
+                            hardware.available &= !4;
                         } else if battery_errors.is_multiple_of(4) {
                             warn!("BQ27220 read failed ({error}), attempt {battery_errors}");
                         }
@@ -418,7 +486,17 @@ pub async fn sensor_task(mut subboard: Subboard) {
                     },
                 });
             }
-            lights::set_attached(subboard.active_slot() == Some(Slot::Right));
+            let right = subboard.active_slot() == Some(Slot::Right);
+            lights::set_attached(right);
+            if right {
+                hardware.available |= 16;
+            } else {
+                hardware.available &= !16;
+            }
+            hardware.button_board(subboard.active_slot().map(|slot| match slot {
+                Slot::Left => [13, 12],
+                Slot::Right => [11, 10],
+            }));
             next_scan_ms = now.saturating_add(subboard::SCAN_PERIOD_MS);
         }
 
@@ -427,7 +505,9 @@ pub async fn sensor_task(mut subboard: Subboard) {
             for classifier in &mut classifiers {
                 classifier.recalibrate();
             }
+            hardware.magnet_state = 0;
         }
+        store_lua_snapshot(hardware);
 
         // ---- Persistent [scan] summary every 10 s ----
         if now >= next_scan_summary_ms {

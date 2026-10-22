@@ -203,3 +203,71 @@ mod tests {
         assert_eq!(s.tilt_deg(), Some(45));
     }
 }
+
+/// Lua hardware snapshot is separate from UI display units: raw BMI270 counts,
+/// compensated BMM150 microteslas, and BQ27220 electrical measurements.
+/// Producers fill this in their own task; consumers only copy it.
+pub use mosaico_lua::{ButtonEdge, HardwareSnapshot};
+
+/// Record the chosen board magnetometer's compensated sample and classifier
+/// edge together. The status byte is BMM150 register 0x4A, not its DRDY bit.
+pub fn record_magnetic(
+    snapshot: &mut HardwareSnapshot,
+    magnetic: [f32; 3],
+    status: u8,
+    event: Option<crate::behavior::magnet::MagneticEvent>,
+) {
+    use crate::behavior::magnet::MagneticEvent;
+    snapshot.magnetic = magnetic;
+    snapshot.magnet_status = status as u32;
+    snapshot.valid |= 16;
+    match event {
+        Some(MagneticEvent::Approach { .. } | MagneticEvent::Orbit { .. }) => {
+            if snapshot.magnet_state == 0 {
+                snapshot.magnet_state = 1;
+            }
+        }
+        Some(MagneticEvent::Contact) => snapshot.magnet_state = 2,
+        Some(MagneticEvent::Release) => snapshot.magnet_state = 0,
+        _ => {}
+    }
+}
+
+/// A failed transaction invalidates the sample; it must not become a plausible
+/// zero field or an indefinitely readable stale measurement.
+pub fn invalidate_magnetic(snapshot: &mut HardwareSnapshot) {
+    snapshot.valid &= !16;
+}
+
+#[cfg(test)]
+mod hardware_tests {
+    use super::*;
+    use crate::behavior::magnet::MagneticEvent;
+    #[test]
+    fn magnetic_producer_retains_zero_and_real_status_then_invalidates_errors() {
+        let mut snapshot = HardwareSnapshot::default();
+        record_magnetic(
+            &mut snapshot,
+            [0.0, 0.0, 0.0],
+            0x42,
+            Some(MagneticEvent::Approach { confidence: 100 }),
+        );
+        assert_eq!(snapshot.valid & 16, 16);
+        assert_eq!(snapshot.magnetic, [0.0; 3]);
+        assert_eq!(snapshot.magnet_status, 0x42);
+        assert_eq!(snapshot.magnet_state, 1);
+        record_magnetic(&mut snapshot, [0.0; 3], 0, Some(MagneticEvent::Contact));
+        record_magnetic(
+            &mut snapshot,
+            [0.0; 3],
+            0,
+            Some(MagneticEvent::Orbit { confidence: 100 }),
+        );
+        assert_eq!(snapshot.magnet_state, 2);
+        invalidate_magnetic(&mut snapshot);
+        assert_eq!(snapshot.valid & 16, 0);
+        record_magnetic(&mut snapshot, [1.0; 3], 0, Some(MagneticEvent::Release));
+        assert_eq!(snapshot.magnet_state, 0);
+        assert_eq!(snapshot.valid & 16, 16);
+    }
+}

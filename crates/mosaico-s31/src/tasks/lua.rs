@@ -107,6 +107,7 @@ pub fn start(app: LuaApp) {
 
 /// Stop the running app (its page closed). The script cannot catch this.
 pub fn stop() {
+    super::lights::lua_release();
     STOP.store(true, Ordering::Release);
     START.reset();
     // A frame nobody will show must not keep the script waiting.
@@ -157,7 +158,68 @@ struct DeviceHost {
     blits: Vec<LuaBlit>,
 }
 
+impl Drop for DeviceHost {
+    fn drop(&mut self) {
+        super::lights::lua_release();
+    }
+}
+
 impl Host for DeviceHost {
+    fn hardware_snapshot(&mut self) -> mosaico_lua::HardwareSnapshot {
+        let mut snapshot = super::sensors::lua_snapshot();
+        snapshot.led_generation = super::lights::generation();
+        if super::haptic::available() {
+            snapshot.available |= 32;
+        } else {
+            snapshot.available &= !32;
+        }
+        if super::lights::available() {
+            snapshot.available |= 16;
+        } else {
+            snapshot.available &= !16;
+        }
+        snapshot
+    }
+    fn hardware_request(&mut self, request: mosaico_lua::HardwareRequest) -> Result<(), i32> {
+        use mosaico_lua::{HapticPreset, HardwareRequest};
+        use mosaico_s31::behavior::affect::HapticPattern;
+        match request {
+            HardwareRequest::Haptic(preset) => {
+                if !super::haptic::available() {
+                    return Err(esp_err::NOT_SUPPORTED);
+                }
+                if !super::haptic::enabled() {
+                    return Err(esp_err::INVALID_STATE);
+                }
+                let pattern = match preset {
+                    HapticPreset::Panic => HapticPattern::Panic,
+                    HapticPreset::Angry => HapticPattern::Angry,
+                    HapticPreset::Surprised => HapticPattern::Surprised,
+                    HapticPreset::Puzzled => HapticPattern::Puzzled,
+                    HapticPreset::Happy => HapticPattern::Happy,
+                    HapticPreset::Satisfied => HapticPattern::Satisfied,
+                    HapticPreset::Confused => HapticPattern::Confused,
+                    HapticPreset::Listening => HapticPattern::Listening,
+                    HapticPreset::Thinking => HapticPattern::Thinking,
+                    HapticPreset::Error => HapticPattern::Error,
+                    HapticPreset::ModuleInsert => HapticPattern::ModuleInsert,
+                    HapticPreset::ModuleRemove => HapticPattern::ModuleRemove,
+                    HapticPreset::MagneticContact => HapticPattern::MagneticContact,
+                };
+                if super::haptic::play(pattern) {
+                    Ok(())
+                } else {
+                    Err(esp_err::INVALID_STATE)
+                }
+            }
+            HardwareRequest::LedFrame(frame) => super::lights::lua_frame(frame),
+            HardwareRequest::LedRelease => {
+                super::lights::lua_release();
+                Ok(())
+            }
+        }
+    }
+
     fn print(&mut self, line: &[u8]) {
         info!("lua[{}]> {}", self.id, String::from_utf8_lossy(line));
     }

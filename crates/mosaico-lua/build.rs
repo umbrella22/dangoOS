@@ -123,6 +123,7 @@ fn main() {
     }
     modules.file(root.join("vendor/cjson/cJSON.c"));
     modules.file(root.join("csrc/mosaico_platform.c"));
+    modules.file(root.join("csrc/mosaico_hardware.c"));
     // arg_schema.lua is compiled into the image as a C string.
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let src = std::fs::read(claw.join("lua_module_system/arg_schema.lua")).unwrap();
@@ -133,6 +134,29 @@ fn main() {
     c.push_str(&format!(
         "0}};\nconst size_t mosaico_arg_schema_lua_len = {};\n",
         src.len()
+    ));
+    // A shared local scope plus one private block per module. Sources stay
+    // small and reviewable, while device builds need no filesystem loader.
+    let mut hardware = Vec::new();
+    for name in [
+        "common",
+        "imu",
+        "magnetometer",
+        "fuel_gauge",
+        "haptic",
+        "led_strip",
+        "button",
+    ] {
+        hardware.extend(std::fs::read(root.join(format!("csrc/hardware/{name}.lua"))).unwrap());
+    }
+    hardware.extend_from_slice(b"return modules\n");
+    c.push_str("const char mosaico_hardware_lua[] = {");
+    for b in &hardware {
+        c.push_str(&format!("{b},"));
+    }
+    c.push_str(&format!(
+        "0}};\nconst size_t mosaico_hardware_lua_len = {};\n",
+        hardware.len()
     ));
     let gen = out.join("mosaico_embedded.c");
     std::fs::write(&gen, c).unwrap();

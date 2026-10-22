@@ -50,7 +50,7 @@ pub const ICON_BOX: u16 = 96;
 
 /// Modules every app gets: the Lua standard libraries and the esp-claw
 /// modules `mosaico-lua` provides.
-pub const PROVIDED_MODULES: [&str; 15] = [
+pub const PROVIDED_MODULES: [&str; 22] = [
     "string",
     "table",
     "math",
@@ -66,6 +66,13 @@ pub const PROVIDED_MODULES: [&str; 15] = [
     "json",
     "arg_schema",
     "storage",
+    "imu",
+    "magnetometer",
+    "fuel_gauge",
+    "lib_fuel_gauge",
+    "haptic",
+    "led_strip",
+    "button",
 ];
 
 /// Where an app comes from.
