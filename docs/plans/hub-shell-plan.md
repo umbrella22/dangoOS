@@ -1,6 +1,6 @@
 # RFC 0006：Hub 外壳、原生应用与 Lua 应用层
 
-> 状态：H0–H2 实施中；L0–L2 待 H2 真机验收后开始。
+> 状态：H0–H2 完成并真机验收；Lua L0–L2 完成并真机验收（见 [lua-runtime-plan.md](lua-runtime-plan.md)）。后续见 [HANDOFF.md](../HANDOFF.md)。
 > 范围：主页（狐狸）、应用网格、系统手势、三个原生应用（设置 / 传感器 / 计时器）、官方兼容的 Lua 应用层。
 > 不在范围：Wi-Fi / 蓝牙（锁定的 esp-hal `bb239a0` 中 S31 的 `wifi`、`bt`、`phy` 均为 `not_supported`）、语音、C3 协处理器。
 
@@ -88,10 +88,10 @@ INPUT (触摸样本)
 | --- | --- | --- |
 | L0 | Lua 5.5 C 源码随 `cc` 编进固件；C 库适配层（`setjmp`/`longjmp`、`snprintf`、`strtod`、数学函数）；`lua_Alloc` 接到 Rust PSRAM 堆并设上限 | 串口跑通 `print("hi")`；记录固件增量、内存占用 |
 | L1 | Lua 任务 + `display`（`begin`/`present`/填充矩形·圆·三角·圆角矩形/文字/`touch`）、`delay`、`system`、`json`；指令计数钩子限制单次运行时长 | 官方 `snake`、`game_2048` 原样运行；通过官方 `display_contract.lua` |
-| L2 | `storage` 子集、`imu`、`launcher.json` 解析、应用网格显示 Lua 应用；USB 串口推送应用与热重载 | 从电脑推一个应用到板子，网格出现图标并能打开 |
+| L2 | `storage` 子集、`imu`（未做，移到 HANDOFF N1）、`launcher.json` 解析、应用网格显示 Lua 应用；USB 串口推送应用与热重载 | 从电脑推一个应用到板子，网格出现图标并能打开 |
 
 - Lua 应用独占画面期间，左边右滑会抛出 Lua 错误终止脚本并回到网格；官方应用自带的退出按钮照常可用。
-- 不实现官方的 `lvgl`、`gpio`、`i2c`、`http`、`ble` 模块。
+- 不实现官方的 `gpio`、`i2c`、`http`、`ble` 模块。`lvgl` 原本也不做，现在为了 album_app 列进 HANDOFF N5。
 - 锁定官方 `esp-claw` 的某个提交作为接口基线，升级时用契约测试检查差异。
 
 ## 6. 实施阶段与验收

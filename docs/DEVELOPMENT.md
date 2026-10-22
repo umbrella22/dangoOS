@@ -2,7 +2,9 @@
 
 ## 依赖
 
-- 根 `Cargo.toml` 是只有 `crates/mosaico-s31` 一个成员的 workspace。
+- 根 `Cargo.toml` 是 workspace，成员是 `crates/mosaico-s31`、`crates/mosaico-lua`、`crates/mosaico-fs`。
+- `mosaico-lua` / `mosaico-fs` 的 C 代码用 `cc` 编译，主机测试需要 clang（`LIBCLANG_PATH`）；
+  固件链接 riscv32-esp-elf 工具链里的 newlib。
 - `esp-hal`、`esp-bootloader-esp-idf`、`esp-alloc`、`esp-rtos` 固定在 esp-hal 仓库的同一个
   Git revision（S31 支持还没进正式版）。升级时四者一起改，并做真机验证。
 - `lvgl` / `lvgl-ui` 是 [lvgl_binding_rust](https://github.com/umbrella22/lvgl_binding_rust) 的 Git 依赖，`rev` 固定在根 `Cargo.toml`
@@ -17,10 +19,14 @@
 
 ```bash
 cargo test -p mosaico-s31 --offline                          # 库的 host 测试
+cargo test -p mosaico-lua --offline                          # Lua 运行时与模块
+cargo test -p mosaico-fs --offline                           # 文件系统
 ./scripts/test-drivers.sh                                    # 纯驱动模块
-cargo run -p mosaico-s31 --example preview --offline         # 16 表情 LVGL host 预览
+cargo run -p mosaico-s31 --example preview --offline         # 表情 LVGL host 预览
+cargo run -p mosaico-s31 --example hub_preview --offline     # Hub 各页面截图
 cargo run -p mosaico-s31 --example splash_preview --offline  # 启动页 / 入场 PPM 帧
 cargo fw --offline                                           # 固件 release 构建
+./scripts/check-rom-symbols.sh                               # vendored C 与 S31 ROM 符号冲突
 ./scripts/check.sh                                           # 以上全部
 ```
 
@@ -29,7 +35,9 @@ cargo fw --offline                                           # 固件 release �
 
 ## 改代码时放在哪里
 
-- 不碰硬件的逻辑放库里（`behavior/`、`fox/`、`ui/`、`telemetry/`），并补 host 测试。
+- 不碰硬件的逻辑放库里（`behavior/`、`fox/`、`hub/`、`ui/`、`telemetry/`），并补 host 测试。
+- 新的 Lua 模块：C 侧放 `mosaico-lua/csrc` 或 `vendor/esp-claw`（改动记进 `vendor/NOTICE.md`），
+  设备能力经 `platform.rs` 的 host 钩子注入；vendor 新的 C 库后跑 `scripts/check-rom-symbols.sh`。
 - 外设驱动放 `drivers/`；能写成纯函数的部分（报告解码、打包、几何、槽位描述符、去抖）单独成文件，
   加进 `scripts/test-drivers.sh`。
 - 编译期嵌入的二进制资源放 `src/assets/`，并在其 README 登记来源。
@@ -53,6 +61,8 @@ cargo fw --offline                                           # 固件 release �
 ```
 
 脚本会构建、`espflash save-image`、打印 SHA-256，再用 esptool 写 `0x210000`。
+镜像超过 main_app 里 `/data` 之前的空间（6,094,848 B）时脚本拒绝烧录。
+主程序起不来时引导程序会回滚到出厂的 vibe_mode，重新刷 main_app 即可。
 
 ## 串口
 
@@ -65,4 +75,25 @@ plane p50=<ms> p95=<ms> max=<ms> n=<样本> tx=<ms> fps=<n> anim=<µs> ras=<µs>
 ```
 
 `p50/p95/max` 是触摸到首个像素的延迟，`anim`/`ras` 是上一帧动画和渲染耗时，`tx` 是上传耗时。
-plane 任务在第一帧和之后每隔一段打印 `plane: frame=<n> chunks=11 transfer=<µs>us ok=<bool>`。
+plane 任务在第一帧和之后每隔一段打印 `plane: frame=<n> chunks=<n> transfer=<µs>us ok=<bool>`。
+
+## 崩溃
+
+开机或运行中 panic 时，`crashlog.rs` 把消息、位置和所处阶段存进 RTC 快速内存，软件复位。
+下次启动等 USB 连上（最多 5 s）后打印 `[boot] reset ... after panic`，并跳过上次出事的阶段
+（挂载存储、扫描应用）。`mepc` 用同一个 ELF 跑 addr2line 还原，见
+[lessons/l2-storage-boot.md](lessons/l2-storage-boot.md)。
+
+## 推送 Lua 应用
+
+```bash
+P=python3   # 需要 pyserial；esptool 自带的 Python 也行
+$P scripts/push-app.py push examples/lua-apps/hello_push --run --follow   # 推送、运行、跟日志
+$P scripts/push-app.py ls              # 板子上的应用
+$P scripts/push-app.py status          # 剩余空间
+$P scripts/push-app.py run hello_push  # 也有 stop / reload / rm <id> / reboot
+```
+
+应用目录里要有 `launcher.json`（官方格式）和 `scripts/main.lua`。文件先写进
+`/data/apps/.incoming/<id>`，全部 CRC 校验通过后才替换正式目录；正在运行的同名应用会自动重启。
+协议细节见 [plans/lua-runtime-plan.md](plans/lua-runtime-plan.md) 第 11 节。

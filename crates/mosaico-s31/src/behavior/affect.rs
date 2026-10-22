@@ -20,7 +20,10 @@
 //! ## Thresholds
 //!
 //! Values marked "plan" come from RFC 0004 section 4. Values marked "chosen"
-//! fill a gap in the plan.
+//! fill a gap in the plan. RFC 0004 (and RFC 0005, cited by the tasks) are no
+//! longer in `docs/`; read them with
+//! `git show 4f601de:docs/plans/grok-ball-sensor-reactions-plan.md` (or
+//! `platform-runtime-plan.md`). This table is the current specification.
 //!
 //! | Item | Value |
 //! | --- | --- |

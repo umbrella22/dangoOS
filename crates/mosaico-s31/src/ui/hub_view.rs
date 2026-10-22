@@ -7,9 +7,8 @@
 //!   [`gesture::LEFT_BAND_X`]: those bands belong to the system gestures;
 //! - content stays inside a 60 px corner safe area, so pages are centred
 //!   columns at most 400 px wide;
-//! - colours and sizes follow the legacy design tokens
-//!   (`docs/legacy/MOSAICO_UI_DESIGN.md`): black field, 30 px titles, 24 px
-//!   labels, 22 px values, orange accent.
+//! - colours and sizes: black field, 30 px titles, 24 px labels, 22 px
+//!   values, orange accent (the earlier Mosaico UI design tokens).
 
 use alloc::format;
 use alloc::string::String;

@@ -1,8 +1,7 @@
 # 素材需求清单
 
 狐狸团子已经覆盖全部 18 个表情（含光线反应 `peering`、`dazzled`，外加 `annoyed`、`charging` 两张额外姿势），
-早期 grok-ball 小球时代用别的表情顶替的条目都已解决，原清单见
-[legacy/ASSET_REQUESTS_grok_ball.md](legacy/ASSET_REQUESTS_grok_ball.md)。
+早期 grok-ball 小球时代用别的表情顶替的条目都已解决。
 
 ## 新增或修改狐狸素材的规格
 
