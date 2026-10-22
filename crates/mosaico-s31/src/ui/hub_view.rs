@@ -15,7 +15,8 @@ use alloc::format;
 use alloc::string::String;
 
 use lvgl_ui::{
-    symbol, Align, Color, FlexAlign, Font, GridTrack, Key, Node, Part, Size, State, Style, TextAlign,
+    symbol, Align, Color, FlexAlign, Font, GridTrack, Key, Node, Part, Size, State, Style,
+    TextAlign,
 };
 
 use super::hub_font::{HUB_20, HUB_24, HUB_30, HUB_DIGITS_64};
@@ -197,6 +198,9 @@ pub fn launcher() -> Node<AppMsg> {
                 Node::obj()
                     .key(Key::Named("icon"))
                     .scrollable(false)
+                    // Plain objects are clickable by default; the tap must
+                    // land on the tile, which owns the click handler.
+                    .clickable(false)
                     .style(
                         Style::neutral()
                             .bg(tile.color)
@@ -279,19 +283,23 @@ pub fn settings(settings: &Settings, uptime_s: u64, free_kib: u32) -> Node<AppMs
                 ),
         )
         .child(
-            Node::slider(Settings::MIN_BRIGHTNESS as i32, 100, settings.brightness as i32)
-                .key(Key::Named("slider"))
-                .style(
-                    Style::default()
-                        .width(Size::Px(COLUMN_W - 40 - 16))
-                        .height(Size::Px(10))
-                        .offset(8, 0)
-                        .bg(CARD_HI)
-                        .radius(5),
-                )
-                .part_style(Part::Indicator, Style::default().bg(ACCENT).radius(5))
-                .part_style(Part::Knob, Style::default().bg(TEXT).pad(8))
-                .on_value_changed(AppMsg::Brightness),
+            Node::slider(
+                Settings::MIN_BRIGHTNESS as i32,
+                100,
+                settings.brightness as i32,
+            )
+            .key(Key::Named("slider"))
+            .style(
+                Style::default()
+                    .width(Size::Px(COLUMN_W - 40 - 16))
+                    .height(Size::Px(10))
+                    .offset(8, 0)
+                    .bg(CARD_HI)
+                    .radius(5),
+            )
+            .part_style(Part::Indicator, Style::default().bg(ACCENT).radius(5))
+            .part_style(Part::Knob, Style::default().bg(TEXT).pad(8))
+            .on_value_changed(AppMsg::Brightness),
         );
 
     let minutes = uptime_s / 60;
@@ -547,7 +555,10 @@ pub fn timer(hub: &Hub) -> Node<AppMsg> {
                         .arc_color(CARD_HI)
                         .arc_width(14),
                 )
-                .part_style(Part::Indicator, Style::default().arc_color(ACCENT).arc_width(14))
+                .part_style(
+                    Part::Indicator,
+                    Style::default().arc_color(ACCENT).arc_width(14),
+                )
                 .part_style(Part::Knob, Style::default().bg_opacity(0).pad(0)),
         )
         .child(

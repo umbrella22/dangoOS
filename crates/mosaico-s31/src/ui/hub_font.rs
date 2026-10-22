@@ -284,7 +284,10 @@ mod tests {
             let data = font.data();
             assert!(data.count() > 0);
             for i in 1..data.count() {
-                assert!(data.code_point(i - 1) < data.code_point(i), "sorted, unique");
+                assert!(
+                    data.code_point(i - 1) < data.code_point(i),
+                    "sorted, unique"
+                );
             }
             let last = data.glyph(data.count() - 1);
             assert!(
@@ -320,7 +323,11 @@ mod tests {
         ];
         for source in sources {
             for literal in source.split('"').skip(1).step_by(2) {
-                for ch in literal.chars().filter(|&c| ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3000}'..='\u{303F}').contains(&c) || ('\u{FF00}'..='\u{FFEF}').contains(&c)) {
+                for ch in literal.chars().filter(|&c| {
+                    ('\u{4E00}'..='\u{9FFF}').contains(&c)
+                        || ('\u{3000}'..='\u{303F}').contains(&c)
+                        || ('\u{FF00}'..='\u{FFEF}').contains(&c)
+                }) {
                     for font in [&HUB_20, &HUB_24, &HUB_30] {
                         assert!(
                             has_glyph(font, ch),

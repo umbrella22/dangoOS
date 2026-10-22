@@ -46,9 +46,9 @@ use embassy_time::{Duration, Instant, Timer};
 use log::{info, warn};
 use lvgl::sys;
 use lvgl_ui::Ui;
+use mosaico_s31::behavior::affect::HapticPattern;
 use mosaico_s31::behavior::personality::PointerSample;
 use mosaico_s31::behavior::{Expression, Runtime};
-use mosaico_s31::behavior::affect::HapticPattern;
 use mosaico_s31::fox::entrance;
 use mosaico_s31::hub::gesture::{EdgeGestures, Route};
 use mosaico_s31::hub::{AppId, Page};
@@ -197,6 +197,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
             };
             match gestures.feed(sample) {
                 Route::Gesture(gesture) => {
+                    // Swiping between pages counts as using her: stay awake.
+                    runtime.on_interaction(sample.at_ms);
                     if let Err(error) = ui.post(AppMsg::Gesture(gesture)) {
                         warn!("ui_task: gesture post rejected: {error}");
                     }
@@ -214,6 +216,11 @@ pub async fn ui_task(mut plane: PlaneUi) {
                     }
                 }
                 Route::Pass => {
+                    if event.pressed && !press_state {
+                        // Using an app keeps her awake, without a wake face.
+                        runtime.on_interaction(sample.at_ms);
+                    }
+                    press_state = event.pressed;
                     lvgl_port::set_pointer(sample.x, sample.y, sample.pressed);
                 }
             }

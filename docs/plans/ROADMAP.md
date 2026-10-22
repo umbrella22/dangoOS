@@ -39,4 +39,4 @@
 ## 约束
 
 - 烧录只写 main_app `0x210000`；不碰 bootloader、分区表和 `0x20000` vibe_mode。
-- `lv_binding_rust` 固定在 `lvgl.rev`，用 `scripts/check-lvgl-pin.sh` 检查。
+- `lvgl` / `lvgl-ui` 是 lvgl_binding_rust 的 Git 依赖，`rev` 固定在根 `Cargo.toml`。

@@ -33,9 +33,9 @@ use core::cell::Cell;
 use lvgl_ui::{App, Color, Key, Node, Style, Theme};
 
 use crate::behavior::Expression;
+use crate::fox::entrance;
 use crate::hub::gesture::SystemGesture;
 use crate::hub::{AppId, Hub, Page};
-use crate::fox::entrance;
 use fox_widget::{FoxControl, FoxWidget};
 use splash::{SplashControl, SplashWidget};
 
@@ -241,12 +241,12 @@ impl App for MosaicoApp {
 impl MosaicoApp {
     fn fox_view(&self, theme: &Theme) -> Node<AppMsg> {
         Node::obj()
-                .key(Key::Named("fox-root"))
-                .style(Style::screen(theme))
-                .child(
-                    Node::custom(FoxWidget::new(Rc::clone(&self.control)))
-                        .key(Key::Named("fox-widget")),
-                )
+            .key(Key::Named("fox-root"))
+            .style(Style::screen(theme))
+            .child(
+                Node::custom(FoxWidget::new(Rc::clone(&self.control)))
+                    .key(Key::Named("fox-widget")),
+            )
     }
 }
 
@@ -351,5 +351,134 @@ mod tests {
             Expression::Idle,
             "an expression outside the ring returns to Idle"
         );
+    }
+
+    // ---- a simulated touch panel for the hub pages ----
+
+    use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+
+    static TOUCH_X: AtomicI32 = AtomicI32::new(0);
+    static TOUCH_Y: AtomicI32 = AtomicI32::new(0);
+    static TOUCH_DOWN: AtomicBool = AtomicBool::new(false);
+
+    unsafe extern "C" fn read_touch(
+        _indev: *mut lvgl::sys::lv_indev_t,
+        data: *mut lvgl::sys::lv_indev_data_t,
+    ) {
+        let data = unsafe { &mut *data };
+        data.point.x = TOUCH_X.load(Ordering::Relaxed);
+        data.point.y = TOUCH_Y.load(Ordering::Relaxed);
+        data.state = if TOUCH_DOWN.load(Ordering::Relaxed) {
+            lvgl::sys::lv_indev_state_t_LV_INDEV_STATE_PRESSED
+        } else {
+            lvgl::sys::lv_indev_state_t_LV_INDEV_STATE_RELEASED
+        };
+    }
+
+    fn run(ui: &mut lvgl_ui::Ui<AppMsg>, app: &mut MosaicoApp, ms: u32) {
+        let mut t = 0;
+        while t < ms {
+            lvgl::tick_inc(core::time::Duration::from_millis(10));
+            ui.timer_handler();
+            ui.drain(app, 16).expect("drain");
+            t += 10;
+        }
+    }
+
+    fn tap(ui: &mut lvgl_ui::Ui<AppMsg>, app: &mut MosaicoApp, x: i32, y: i32) {
+        TOUCH_X.store(x, Ordering::Relaxed);
+        TOUCH_Y.store(y, Ordering::Relaxed);
+        TOUCH_DOWN.store(true, Ordering::Relaxed);
+        run(ui, app, 120);
+        TOUCH_DOWN.store(false, Ordering::Relaxed);
+        run(ui, app, 120);
+    }
+
+    #[test]
+    fn a_tap_anywhere_on_a_launcher_tile_opens_its_app() {
+        let _guard = test_support::lock();
+        // SAFETY: the test lock is the only LVGL user in this test binary.
+        unsafe { lvgl::deinit() };
+        lvgl::init();
+        let display =
+            Display::register::<_, { 480 * 48 }>(480, 480, |_| {}).expect("memory display");
+        // SAFETY: LVGL is initialized and only this thread uses it.
+        let indev = unsafe {
+            let indev = lvgl::sys::lv_indev_create();
+            lvgl::sys::lv_indev_set_type(indev, lvgl::sys::lv_indev_type_t_LV_INDEV_TYPE_POINTER);
+            lvgl::sys::lv_indev_set_read_cb(indev, Some(read_touch));
+            indev
+        };
+
+        let mut ui = lvgl_ui::Ui::new(&display, theme()).expect("Ui::new");
+        let control = FoxControl::new(Expression::Idle);
+        let splash = SplashControl::new();
+        let mut app = MosaicoApp::new(Rc::clone(&control), Rc::clone(&splash));
+        ui.mount(&app).expect("mount");
+
+        // Tile centres: three 120 px columns, 16 px apart, centred; the icon
+        // square is the upper part, the name the lower part.
+        let tiles = [
+            (104, AppId::Settings),
+            (240, AppId::Sensors),
+            (376, AppId::Timer),
+        ];
+        for (x, id) in tiles {
+            for y in [208, 286] {
+                app.go(Page::Launcher);
+                ui.mark_dirty();
+                run(&mut ui, &mut app, 60);
+                tap(&mut ui, &mut app, x, y);
+                assert_eq!(app.page(), Page::App(id), "tap at ({x}, {y})");
+            }
+        }
+
+        // Settings: the slider, then both switches.
+        app.go(Page::App(AppId::Settings));
+        ui.mark_dirty();
+        run(&mut ui, &mut app, 60);
+        tap(&mut ui, &mut app, 240, 166);
+        let brightness = app.hub().settings.brightness;
+        assert!(
+            (40..=80).contains(&brightness),
+            "slider tap set {brightness}%"
+        );
+        tap(&mut ui, &mut app, 388, 233);
+        assert!(!app.hub().settings.lights, "the lights switch toggles");
+        tap(&mut ui, &mut app, 388, 309);
+        assert!(!app.hub().settings.haptics, "the haptics switch toggles");
+
+        // Timer: pick the 1-minute chip, then start.
+        app.go(Page::App(AppId::Timer));
+        ui.mark_dirty();
+        run(&mut ui, &mut app, 60);
+        tap(&mut ui, &mut app, 88, 334);
+        assert_eq!(
+            app.hub().countdown.preset(),
+            0,
+            "the first chip selects 1 min"
+        );
+        tap(&mut ui, &mut app, 154, 390);
+        assert_eq!(
+            app.hub().countdown.phase(),
+            crate::hub::countdown::Phase::Running,
+            "the primary pill starts the countdown"
+        );
+
+        // A tap between tiles does nothing.
+        app.go(Page::Launcher);
+        ui.mark_dirty();
+        run(&mut ui, &mut app, 60);
+        tap(&mut ui, &mut app, 240, 60);
+        assert_eq!(app.page(), Page::Launcher);
+
+        ui.unmount();
+        drop(ui);
+        // SAFETY: nothing references the input device or the display anymore.
+        unsafe {
+            lvgl::sys::lv_indev_delete(indev);
+            display.delete();
+            lvgl::deinit();
+        }
     }
 }

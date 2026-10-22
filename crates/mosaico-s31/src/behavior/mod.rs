@@ -83,5 +83,6 @@ mod tests {
     mod module_events;
     mod personality;
     mod shake_timeline;
+    mod sleep_wake;
     mod touch_gestures;
 }

@@ -34,9 +34,6 @@ cargo fw --offline
 
 # 以上全部
 ./scripts/check.sh
-
-# LVGL UI 层测试
-cargo test -p lvgl-ui --manifest-path ../lv_binding_rust/Cargo.toml -- --test-threads=1
 ```
 
 如果 registry 很慢，在命令前加 `CARGO_NET_OFFLINE=true`。依赖缓存和 `Cargo.lock` 已完整。
@@ -57,7 +54,7 @@ cargo test -p lvgl-ui --manifest-path ../lv_binding_rust/Cargo.toml -- --test-th
 
 - `crates/mosaico-s31`：唯一的 crate，库（host 可测）+ 固件，结构见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
 - `assets/fox-dango`：角色素材与生成脚本
-- `../lv_binding_rust/lvgl-ui`：`App`/`Node`/`Ui` 声明式 UI 层
+- [`lvgl_binding_rust`](https://github.com/umbrella22/lvgl_binding_rust) 的 `lvgl-ui`：`App`/`Node`/`Ui` 声明式 UI 层（Git 依赖，`rev` 固定在根 `Cargo.toml`）
 - 渲染管线讲解：[docs/FOX_RENDER_PIPELINE.md](docs/FOX_RENDER_PIPELINE.md)
 
 引脚、电源轨和扩展槽定义见 [Mosaico v1.2 硬件真相](docs/MOSAICO_V12_HARDWARE.md)。

@@ -4,7 +4,7 @@
 use crate::behavior::affect::{
     AffectEngine, EventKind, EventSource, HapticPattern, ReactionReason, SensorEvent,
     DAWN_CURIOUS_MS, LIGHT_BRIGHT_MS, LIGHT_COVER_MAX_MS, LIGHT_DARK_MS, LIGHT_FAST_WINDOW_MS,
-    MIN_DWELL_MS, PIR_CURIOUS_MS, PIR_SATISFIED_MS, PIR_VISIT_GAP_MS,
+    MIN_DWELL_MS, PIR_CURIOUS_MS, PIR_SATISFIED_MS, PIR_VISIT_GAP_MS, WAKE_DROWSY_MS,
 };
 use crate::behavior::Expression;
 
@@ -169,12 +169,15 @@ fn ninety_seconds_of_darkness_sleeps_and_touch_wakes() {
     assert_eq!(engine.tick(60_000).state.expression, Expression::Sleep);
     assert_eq!(engine.tick(70_000).state.expression, Expression::Sleep);
 
+    // The first poke is spent on waking up: a drowsy face, no poke reaction.
     engine.on_event(touch(70_100, EventKind::TouchPoke));
     let woken = engine.tick(70_100);
-    assert_eq!(woken.state.expression, Expression::Puzzled);
-
-    // The poke itself ends 1.5 s after the wake.
-    assert_eq!(engine.tick(71_600).state.expression, Expression::Idle);
+    assert_eq!(woken.state.expression, Expression::Tired);
+    assert_eq!(woken.state.reason, ReactionReason::Wake);
+    assert_eq!(
+        engine.tick(70_100 + WAKE_DROWSY_MS).state.expression,
+        Expression::Idle
+    );
 }
 
 #[test]

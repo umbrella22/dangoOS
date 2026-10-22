@@ -5,8 +5,11 @@
 - 根 `Cargo.toml` 是只有 `crates/mosaico-s31` 一个成员的 workspace。
 - `esp-hal`、`esp-bootloader-esp-idf`、`esp-alloc`、`esp-rtos` 固定在 esp-hal 仓库的同一个
   Git revision（S31 支持还没进正式版）。升级时四者一起改，并做真机验证。
-- `lvgl` / `lvgl-ui` 是 `../lv_binding_rust` 的 path 依赖，已测版本记在 `lvgl.rev`，
-  `scripts/check-lvgl-pin.sh` 会在版本不一致或工作区有改动时提醒。
+- `lvgl` / `lvgl-ui` 是 [lvgl_binding_rust](https://github.com/umbrella22/lvgl_binding_rust) 的 Git 依赖，`rev` 固定在根 `Cargo.toml`
+  （`Cargo.lock` 也记着）。升级时两行一起改。想临时试本地 checkout，在自己的
+  `.cargo/config.toml` 里加 `[patch."https://github.com/umbrella22/lvgl_binding_rust"]`，不要提交。
+- 机器连不上 GitHub 时，第一次拉依赖用镜像配置：
+  `CARGO_NET_GIT_FETCH_WITH_CLI=true GIT_CONFIG_GLOBAL=$PWD/git-proxy.config cargo fetch`，之后 `--offline` 即可。
 - 交叉编译工具链路径在 `.cargo/config.toml` 的 `[env]`。Cargo 不会覆盖已经设置的环境变量，
   所以换机器时在 shell 里导出自己的路径即可，不用改文件（见 README）。
 

@@ -1366,6 +1366,7 @@ dependencies = [
 [[package]]
 name = "lvgl"
 version = "0.7.0"
+source = "git+https://github.com/umbrella22/lvgl_binding_rust?rev=cad031112d4d176a415e8029d9bc3963da364381#cad031112d4d176a415e8029d9bc3963da364381"
 dependencies = [
  "bitflags 2.13.2",
  "cstr_core",
@@ -1381,6 +1382,7 @@ dependencies = [
 [[package]]
 name = "lvgl-codegen"
 version = "0.7.0"
+source = "git+https://github.com/umbrella22/lvgl_binding_rust?rev=cad031112d4d176a415e8029d9bc3963da364381#cad031112d4d176a415e8029d9bc3963da364381"
 dependencies = [
  "Inflector",
  "lazy_static",
@@ -1393,6 +1395,7 @@ dependencies = [
 [[package]]
 name = "lvgl-sys"
 version = "0.7.0"
+source = "git+https://github.com/umbrella22/lvgl_binding_rust?rev=cad031112d4d176a415e8029d9bc3963da364381#cad031112d4d176a415e8029d9bc3963da364381"
 dependencies = [
  "bindgen",
  "cc",
@@ -1402,6 +1405,7 @@ dependencies = [
 [[package]]
 name = "lvgl-ui"
 version = "0.1.0"
+source = "git+https://github.com/umbrella22/lvgl_binding_rust?rev=cad031112d4d176a415e8029d9bc3963da364381#cad031112d4d176a415e8029d9bc3963da364381"
 dependencies = [
  "cstr_core",
  "cty",

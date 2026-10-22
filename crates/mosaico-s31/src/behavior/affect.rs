@@ -51,6 +51,8 @@
 //! | Haptic rate limit | one pattern per `150 ms` (plan) |
 //! | Battery tired | state of charge `<= 15%`; leaves above `18%` (chosen) |
 //! | Battery dying | state of charge `<= 5%`; leaves above `8%` (chosen) |
+//! | Awake hold | `5 min` after the last interaction no sleep timer may fire (chosen; the user asked for 5–10 min) |
+//! | Wake face | drowsy (`Tired`) `3 s`; grumpy (`Angry`) `2.5 s` for a knock `>= 950 mg` or a second poke/tap while drowsy |
 //!
 //! The H0 event contract has no pickup/flip or long-stroke event and the H0
 //! work package does not include those rules; they are not implemented here.
@@ -87,7 +89,23 @@
 //! reaction: a low battery changes the resting face, so `Tired`/`Dying` replace
 //! the idle baseline while reactions and Activity still play above them.
 //! Thresholds have 3-point hysteresis so a gauge flickering around 15% cannot
-//! make the face flap between `Idle` and `Tired`.
+//! make the face flap between `Idle` and `Tired`. Because it replaces the
+//! resting layer, a low battery also shows through Sleep: she wakes up tired.
+//!
+//! ## Sleep and waking
+//!
+//! She falls asleep after `60 s` without presence (PIR) or `60 s` of darkness,
+//! which also happens once the Interaction board, and with it the PIR and the
+//! light sensor, is gone. Any interaction wakes her: screen taps
+//! ([`AffectEngine::on_screen_touch`]), board touch and keys, the power
+//! button, picking her up or bumping her, a magnet, a module plugged in.
+//! Each interaction holds the sleep timers off for the awake hold; when it
+//! runs out and the room is still empty or dark, she goes back to sleep.
+//!
+//! Being woken shows on her face. A gentle interaction (a stroke, a key, a
+//! tap, lifting her) gets a drowsy face; a knock (`>= 950 mg`) or poking her
+//! again while she is still drowsy makes her grumpy. That first interaction
+//! is spent on waking up and does not trigger its own reaction.
 
 use crate::behavior::Expression;
 
@@ -207,6 +225,8 @@ pub enum ReactionReason {
     ModuleRemove,
     /// The resting face changed because of the battery.
     Battery,
+    /// Woken from sleep by an interaction (drowsy or grumpy face).
+    Wake,
     Error,
 }
 
@@ -373,6 +393,24 @@ const HAPTIC_RATE_LIMIT_MS: u64 = 150;
 /// priority. Deliberate input (keys, touch, shaking) and follow-ups from the
 /// same source still switch at once.
 pub(crate) const MIN_DWELL_MS: u64 = 1_200;
+
+/// No sleep timer fires within this long of the last interaction.
+pub(crate) const AWAKE_HOLD_MS: u64 = 5 * 60_000;
+/// Drowsy face after a gentle wake.
+pub(crate) const WAKE_DROWSY_MS: u64 = 3_000;
+/// Grumpy face after a rough wake.
+pub(crate) const WAKE_GRUMPY_MS: u64 = 2_500;
+
+/// How the interaction that may wake her felt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Rouse {
+    /// A stroke, a key, lifting her: drowsy.
+    Gentle,
+    /// A poke or a tap: drowsy, and grumpy if repeated while drowsy.
+    Poke,
+    /// A knock: grumpy.
+    Rough,
+}
 
 /// Tire below this state of charge.
 const BATTERY_TIRED_PCT: u8 = 15;
@@ -563,6 +601,8 @@ pub struct AffectEngine {
     module_left_present: bool,
     /// State-of-charge driven resting face; `None` is the normal idle.
     battery_expression: Option<Expression>,
+    /// Sleep timers may not fire before this (last interaction + hold).
+    awake_until: Option<u64>,
 }
 
 impl AffectEngine {
@@ -610,7 +650,30 @@ impl AffectEngine {
             module_right_present: false,
             module_left_present: false,
             battery_expression: None,
+            awake_until: None,
         }
+    }
+
+    /// A press on the screen (the fox page). Returns `true` when the press
+    /// was spent on waking her up, so the caller should not also start a tap
+    /// reaction for it.
+    pub fn on_screen_touch(&mut self, at_ms: u64) -> bool {
+        let at = at_ms.max(self.now_ms);
+        self.advance(at);
+        self.rouse(at, Rouse::Poke)
+    }
+
+    /// Interaction that does not involve the fox page (the hub apps): keeps
+    /// her awake without a wake face.
+    pub fn on_interaction(&mut self, at_ms: u64) {
+        let at = at_ms.max(self.now_ms);
+        self.advance(at);
+        self.keep_awake(at);
+    }
+
+    /// Whether the resting layer is Sleep (ignoring the battery face).
+    pub fn is_asleep(&self) -> bool {
+        self.idle_expression == Expression::Sleep
     }
 
     /// Apply one sensor event. Timers are advanced to the event timestamp
@@ -961,7 +1024,9 @@ impl AffectEngine {
                 self.pir_presence_since = None;
                 self.pir_sustained_fired = false;
             }
-            let sleep_at = since.saturating_add(PIR_ABSENCE_SLEEP_MS);
+            let sleep_at = since
+                .saturating_add(PIR_ABSENCE_SLEEP_MS)
+                .max(self.awake_until.unwrap_or(0));
             if !self.pir_debounced && now >= sleep_at && self.idle_expression != Expression::Sleep {
                 self.idle_expression = Expression::Sleep;
                 self.fallback_since_ms = sleep_at;
@@ -1001,7 +1066,9 @@ impl AffectEngine {
 
     fn advance_night(&mut self, now: u64) {
         if let Some(since) = self.dark_since {
-            let sleep_at = since.saturating_add(NIGHT_SLEEP_MS);
+            let sleep_at = since
+                .saturating_add(NIGHT_SLEEP_MS)
+                .max(self.awake_until.unwrap_or(0));
             if now >= sleep_at && self.idle_expression != Expression::Sleep {
                 self.idle_expression = Expression::Sleep;
                 self.fallback_since_ms = sleep_at;
@@ -1028,6 +1095,60 @@ impl AffectEngine {
         if self.idle_expression == Expression::Sleep {
             self.idle_expression = Expression::Idle;
             self.fallback_since_ms = at;
+        }
+    }
+
+    /// Wake up silently and hold the sleep timers off.
+    fn keep_awake(&mut self, at: u64) {
+        self.awake_until = Some(at.saturating_add(AWAKE_HOLD_MS));
+        self.wake(at);
+    }
+
+    /// An interaction: wake up, hold the sleep timers off, and show how it
+    /// felt to be woken. Returns `true` when the interaction was spent on a
+    /// wake face (the caller then skips its own reaction).
+    fn rouse(&mut self, at: u64, how: Rouse) -> bool {
+        let asleep = self.idle_expression == Expression::Sleep;
+        // Sleep must actually be on screen for a wake face to make sense.
+        let sleep_visible = asleep
+            && !self.error_active
+            && self.activity.is_none()
+            && self.battery_expression.is_none()
+            && self.reaction.is_none()
+            && self.module_sequence.is_none();
+        let drowsy = matches!(
+            self.reaction,
+            Some(r) if r.reason == ReactionReason::Wake
+                && r.expression == Expression::Tired
+                && at < r.ends_ms
+        );
+        self.keep_awake(at);
+
+        let grumpy = match (sleep_visible, drowsy, how) {
+            (true, _, Rouse::Rough) => true,
+            (true, _, _) => false,
+            (false, true, Rouse::Poke | Rouse::Rough) => true,
+            _ => return false,
+        };
+        if grumpy {
+            self.reaction = None;
+            self.try_start_reaction(
+                Expression::Angry,
+                ReactionReason::Wake,
+                PRIO_PHYSICAL,
+                at,
+                WAKE_GRUMPY_MS,
+                Some(HapticPattern::Angry),
+            )
+        } else {
+            self.try_start_reaction(
+                Expression::Tired,
+                ReactionReason::Wake,
+                PRIO_PHYSICAL,
+                at,
+                WAKE_DROWSY_MS,
+                None,
+            )
         }
     }
 
@@ -1163,6 +1284,12 @@ impl AffectEngine {
         }
 
         self.note_motion(at);
+        let how = if dynamic_mg >= ACCEL_VIOLENT_MG {
+            Rouse::Rough
+        } else {
+            Rouse::Gentle
+        };
+        let _ = self.rouse(at, how);
 
         if dynamic_mg > ACCEL_LARGE_MG {
             self.shake.burst_large = true;
@@ -1195,6 +1322,7 @@ impl AffectEngine {
             return;
         }
         self.note_motion(at);
+        let _ = self.rouse(at, Rouse::Gentle);
         // Turning the fox over in the hand is not a reason to scream: a fast
         // rotation only makes her dizzier.
         if max_dps >= GYRO_SHAKY_DPS {
@@ -1365,7 +1493,9 @@ impl AffectEngine {
     // -----------------------------------------------------------------------
 
     fn on_touch_pet(&mut self, at: u64) {
-        self.wake(at);
+        if self.rouse(at, Rouse::Gentle) {
+            return;
+        }
         if let Some(reaction) = self.reaction {
             if reaction.reason == ReactionReason::TouchPet
                 && reaction.expression == Expression::Happy
@@ -1388,7 +1518,9 @@ impl AffectEngine {
     }
 
     fn on_touch_poke(&mut self, at: u64) {
-        self.wake(at);
+        if self.rouse(at, Rouse::Poke) {
+            return;
+        }
         push_window(
             &mut self.poke_times,
             &mut self.poke_count,
@@ -1522,6 +1654,11 @@ impl AffectEngine {
     // -----------------------------------------------------------------------
 
     fn on_key_down(&mut self, at: u64, source: EventSource) {
+        if matches!(source, EventSource::KeyLeft | EventSource::KeyRight)
+            && self.rouse(at, Rouse::Gentle)
+        {
+            return;
+        }
         match source {
             EventSource::KeyLeft => self.on_key_left_down(at),
             EventSource::KeyRight => self.on_key_right_down(at),
@@ -1643,6 +1780,8 @@ impl AffectEngine {
         if source != EventSource::ButtonPower {
             return;
         }
+        // Listening starts either way; the Activity layer hides the face.
+        self.keep_awake(at);
         if !self.error_active {
             self.activity = Some(Expression::Listening);
             self.fallback_since_ms = at;
@@ -1769,6 +1908,9 @@ impl AffectEngine {
     // -----------------------------------------------------------------------
 
     fn on_magnetic_approach(&mut self, at: u64) {
+        if self.rouse(at, Rouse::Gentle) {
+            return;
+        }
         let _ = self.try_start_reaction(
             Expression::Curious,
             ReactionReason::Magnetic,
@@ -1780,6 +1922,7 @@ impl AffectEngine {
     }
 
     fn on_magnetic_contact(&mut self, at: u64) {
+        self.keep_awake(at);
         if self.magnetic_contacted {
             return;
         }
@@ -1848,6 +1991,9 @@ impl AffectEngine {
     }
 
     fn on_module_inserted(&mut self, at: u64, source: EventSource, kind: ModuleKind) {
+        // Plugging a module in is an interaction; its own sequence is the
+        // wake face. Removing one is not: without the board she may doze off.
+        self.keep_awake(at);
         // The sensor task re-learns the magnetometer baselines after a module
         // change and reports no release for a magnet attached at that time.
         self.magnetic_contacted = false;

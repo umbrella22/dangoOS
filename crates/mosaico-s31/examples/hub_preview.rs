@@ -67,7 +67,7 @@ fn main() {
     let _ = fs::remove_dir_all(&out);
     fs::create_dir_all(&out).expect("output dir");
 
-    let mut step = |ui: &mut Ui<AppMsg>, app: &mut MosaicoApp, msgs: &[AppMsg], name: &str| {
+    let step = |ui: &mut Ui<AppMsg>, app: &mut MosaicoApp, msgs: &[AppMsg], name: &str| {
         for &msg in msgs {
             ui.post(msg).expect("post");
         }
@@ -83,9 +83,19 @@ fn main() {
         println!("{:<20} page={:?} -> {}", name, app.page(), path.display());
     };
 
-    step(&mut ui, &mut app, &[AppMsg::Gesture(SystemGesture::Up)], "1-launcher");
+    step(
+        &mut ui,
+        &mut app,
+        &[AppMsg::Gesture(SystemGesture::Up)],
+        "1-launcher",
+    );
     assert_eq!(app.page(), Page::Launcher);
-    step(&mut ui, &mut app, &[AppMsg::Open(AppId::Settings)], "2-settings");
+    step(
+        &mut ui,
+        &mut app,
+        &[AppMsg::Open(AppId::Settings)],
+        "2-settings",
+    );
     step(
         &mut ui,
         &mut app,
@@ -95,20 +105,31 @@ fn main() {
     step(
         &mut ui,
         &mut app,
-        &[AppMsg::Gesture(SystemGesture::Back), AppMsg::Open(AppId::Sensors)],
+        &[
+            AppMsg::Gesture(SystemGesture::Back),
+            AppMsg::Open(AppId::Sensors),
+        ],
         "4-sensors",
     );
     step(
         &mut ui,
         &mut app,
-        &[AppMsg::Gesture(SystemGesture::Back), AppMsg::Open(AppId::Timer)],
+        &[
+            AppMsg::Gesture(SystemGesture::Back),
+            AppMsg::Open(AppId::Timer),
+        ],
         "5-timer-ready",
     );
     app.hub_mut().now_ms = 10_000;
     step(&mut ui, &mut app, &[AppMsg::TimerToggle], "6-timer-start");
     app.hub_mut().now_ms = 10_000 + 83_400;
     step(&mut ui, &mut app, &[AppMsg::TimerToggle], "7-timer-paused");
-    step(&mut ui, &mut app, &[AppMsg::Gesture(SystemGesture::Up)], "8-home");
+    step(
+        &mut ui,
+        &mut app,
+        &[AppMsg::Gesture(SystemGesture::Up)],
+        "8-home",
+    );
     assert_eq!(app.page(), Page::Home);
     assert_eq!(control.create_count(), 2, "the fox is remounted on return");
 
@@ -127,7 +148,8 @@ fn register_capturing_display(pixels: Capture) -> Display {
         for y in 0..height {
             for x in 0..width {
                 let color = refresh.colors[y * width + x];
-                let i = (refresh.area.y1 as usize + y) * stride + (refresh.area.x1 as usize + x) * BPP;
+                let i =
+                    (refresh.area.y1 as usize + y) * stride + (refresh.area.x1 as usize + x) * BPP;
                 pixels[i] = color.r();
                 pixels[i + 1] = color.g();
                 pixels[i + 2] = color.b();

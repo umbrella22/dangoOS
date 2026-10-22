@@ -10,10 +10,10 @@ edition = "2021"
 authors = ["Kiro", "Claude", "GLM"]
 
 [workspace.dependencies]
-# Sibling checkout; the tested revision is pinned in lvgl.rev
-# (scripts/check-lvgl-pin.sh).
-lvgl = { path = "../lv_binding_rust/lvgl", default-features = false, features = ["alloc", "unsafe_no_autoinit"] }
-lvgl-ui = { path = "../lv_binding_rust/lvgl-ui", default-features = false, features = ["alloc", "no-autoinit"] }
+# LVGL bindings: pinned Git revision of https://github.com/umbrella22/lvgl_binding_rust
+# (Cargo.lock records it too; bump `rev` in both lines together).
+lvgl = { git = "https://github.com/umbrella22/lvgl_binding_rust", rev = "cad031112d4d176a415e8029d9bc3963da364381", default-features = false, features = ["alloc", "unsafe_no_autoinit"] }
+lvgl-ui = { git = "https://github.com/umbrella22/lvgl_binding_rust", rev = "cad031112d4d176a415e8029d9bc3963da364381", default-features = false, features = ["alloc", "no-autoinit"] }
 log = "0.4"
 critical-section = "1"
 esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = ["esp32s31", "unstable"] }

@@ -20,7 +20,8 @@ See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for the full tree
 and [docs/FOX_RENDER_PIPELINE.md](docs/FOX_RENDER_PIPELINE.md) for how a frame
 goes from PNG masters to the panel. The art and its Python pipeline live in
 `assets/fox-dango/`. The UI layer is
-[`lv_binding_rust/lvgl-ui`](../lv_binding_rust/lvgl-ui/README.md).
+[`lvgl-ui`](https://github.com/umbrella22/lvgl_binding_rust/blob/master/lvgl-ui/README.md) from
+[lvgl_binding_rust](https://github.com/umbrella22/lvgl_binding_rust).
 
 The earlier vector "grok-ball" core (`crates/grok-ball`) was removed after the
 fox shipped; its behaviour logic moved into `behavior/`, the rest is in git
@@ -35,7 +36,6 @@ cargo run -p mosaico-s31 --example preview --offline         # 16 expressions on
 cargo run -p mosaico-s31 --example splash_preview --offline  # splash + entrance frames (PPM)
 cargo fw --offline                                           # firmware release build
 ./scripts/check.sh                                           # all of the above
-cargo test -p lvgl-ui --manifest-path ../lv_binding_rust/Cargo.toml -- --test-threads=1
 ```
 
 ## Current firmware behavior
@@ -54,9 +54,10 @@ cargo test -p lvgl-ui --manifest-path ../lv_binding_rust/Cargo.toml -- --test-th
 
 ## Build environment
 
-- `../lv_binding_rust` is a path dependency. The tested revision is recorded
-  in `lvgl.rev`; `scripts/check-lvgl-pin.sh` warns if the sibling checkout
-  differs or is dirty.
+- `lvgl` and `lvgl-ui` are Git dependencies on
+  [lvgl_binding_rust](https://github.com/umbrella22/lvgl_binding_rust), pinned by `rev` in the root `Cargo.toml`. To
+  try a local checkout, add a `[patch."https://github.com/umbrella22/lvgl_binding_rust"]` section in your own
+  `.cargo/config.toml`; do not commit it.
 - `.cargo/config.toml` sets the Espressif C toolchain (`CC_…`, `AR_…`),
   `LIBCLANG_PATH` and `LVGL_SYSROOT` for the author's machine. Cargo's `[env]`
   does not override variables that are already set, so on another machine
@@ -92,6 +93,7 @@ for the stats line.
 
 - [Source layout](docs/PROJECT_STRUCTURE.md)
 - [Fox render pipeline](docs/FOX_RENDER_PIPELINE.md) (Chinese)
+- [How the fox is drawn, and how to draw a new character](docs/FOX_DRAWING_GUIDE.md) (Chinese)
 - [Development, checks, flashing](docs/DEVELOPMENT.md)
 - [Mosaico v1.2 hardware notes](docs/MOSAICO_V12_HARDWARE.md)
 - [Current state and remaining work](docs/plans/ROADMAP.md); RFCs in `docs/plans/`, archived plans and ledgers in `docs/legacy/plans/`

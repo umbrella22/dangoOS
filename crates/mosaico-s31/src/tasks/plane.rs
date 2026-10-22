@@ -410,22 +410,42 @@ fn outside(inner: DirtyRect) -> [DirtyRect; 4] {
         y1: 0,
     };
     let top = if inner.y0 > 0 {
-        DirtyRect { x0: 0, y0: 0, x1: right, y1: inner.y0 - 1 }
+        DirtyRect {
+            x0: 0,
+            y0: 0,
+            x1: right,
+            y1: inner.y0 - 1,
+        }
     } else {
         empty
     };
     let below = if inner.y1 < bottom {
-        DirtyRect { x0: 0, y0: inner.y1 + 1, x1: right, y1: bottom }
+        DirtyRect {
+            x0: 0,
+            y0: inner.y1 + 1,
+            x1: right,
+            y1: bottom,
+        }
     } else {
         empty
     };
     let left = if inner.x0 > 0 {
-        DirtyRect { x0: 0, y0: inner.y0, x1: inner.x0 - 1, y1: inner.y1 }
+        DirtyRect {
+            x0: 0,
+            y0: inner.y0,
+            x1: inner.x0 - 1,
+            y1: inner.y1,
+        }
     } else {
         empty
     };
     let side = if inner.x1 < right {
-        DirtyRect { x0: inner.x1 + 1, y0: inner.y0, x1: right, y1: inner.y1 }
+        DirtyRect {
+            x0: inner.x1 + 1,
+            y0: inner.y0,
+            x1: right,
+            y1: inner.y1,
+        }
     } else {
         empty
     };
@@ -440,7 +460,12 @@ async fn clear(panel: &mut Display<esp_hal::Async>, band: DirtyRect) -> bool {
     let mut y = band.y0;
     while y <= band.y1 {
         let y2 = (y + CLEAR_ROWS - 1).min(band.y1);
-        let dst = DirtyRect { x0: band.x0, y0: y, x1: band.x1, y1: y2 };
+        let dst = DirtyRect {
+            x0: band.x0,
+            y0: y,
+            x1: band.x1,
+            y1: y2,
+        };
         let src = DirtyRect {
             x0: 0,
             y0: 0,

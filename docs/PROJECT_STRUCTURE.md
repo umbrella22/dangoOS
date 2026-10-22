@@ -33,15 +33,14 @@ tasks::plane（中断执行器）── TE 同步 + 32 行 QSPI DMA → drivers:
 ├── Cargo.toml / Cargo.lock      workspace（唯一成员 crates/mosaico-s31）
 ├── .cargo/config.toml           cargo fw 别名、交叉编译工具链路径
 ├── rust-toolchain.toml          stable + riscv32imafc 目标
-├── lvgl.rev                     ../lv_binding_rust 的已测版本
 ├── assets/fox-dango/            角色素材与 Python 管线（生成 src/fox/data.rs、src/assets/fox.bin）
 ├── scripts/
 │   ├── check.sh                 不需要板子的全部检查
 │   ├── test-drivers.sh          纯驱动模块的 rustc --test
-│   ├── flash-app.sh             构建并只写 main_app（0x210000）
-│   └── check-lvgl-pin.sh        检查 lv_binding_rust 版本
+│   └── flash-app.sh             构建并只写 main_app（0x210000）
 ├── docs/
 │   ├── FOX_RENDER_PIPELINE.md   渲染管线学习笔记
+│   ├── FOX_DRAWING_GUIDE.md     角色美术怎么画、怎么画新角色
 │   ├── MOSAICO_V12_HARDWARE.md  引脚、电源、扩展槽
 │   ├── ASSET_REQUESTS.md        素材规格
 │   ├── lessons/                 真机调试复盘（现象、日志、原因、经验）

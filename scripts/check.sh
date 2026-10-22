@@ -3,8 +3,6 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-./scripts/check-lvgl-pin.sh || true
-
 # Library: behaviour, fox renderer, UI tree, telemetry.
 cargo test -p mosaico-s31 --offline
 

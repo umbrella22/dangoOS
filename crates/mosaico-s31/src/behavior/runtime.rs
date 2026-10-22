@@ -56,6 +56,8 @@ pub struct Runtime {
     pending_len: usize,
     /// The merged expression the control currently shows.
     merged: Expression,
+    /// Whether the last pointer sample was a press (to find press edges).
+    pointer_down: bool,
 }
 
 impl Runtime {
@@ -70,6 +72,7 @@ impl Runtime {
             pending_haptics: [None; 2],
             pending_len: 0,
             merged: Expression::Idle,
+            pointer_down: false,
         };
         runtime.publish();
         runtime
@@ -118,6 +121,18 @@ impl Runtime {
     /// deliberately produced no visible response.
     pub fn on_pointer(&mut self, sample: PointerSample) -> bool {
         let at = sample.at_ms;
+        let press = sample.pressed && !self.pointer_down;
+        self.pointer_down = sample.pressed;
+        // Every press is an interaction for the sleep logic. A press that
+        // wakes her up shows the wake face instead of a tap reaction; the
+        // rest of that touch is ignored by the personality.
+        if press && self.affect.on_screen_touch(at) {
+            self.personality
+                .ignore_until(at.saturating_add(crate::behavior::affect::WAKE_DROWSY_MS));
+            self.refresh_affect(at);
+            self.publish();
+            return true;
+        }
         if !self.personality.accepts(at) {
             return false;
         }
@@ -129,6 +144,16 @@ impl Runtime {
         self.refresh_affect(at);
         self.publish();
         true
+    }
+
+    /// The user is busy in a hub app: keep the fox awake (no wake face).
+    pub fn on_interaction(&mut self, now_ms: u64) {
+        // The finger may have left the fox's page: the next press on it is
+        // a fresh press edge.
+        self.pointer_down = false;
+        self.affect.on_interaction(now_ms);
+        self.refresh_affect(now_ms);
+        self.publish();
     }
 
     /// Advance timers and merge the layers. Call once per UI loop.
@@ -258,6 +283,29 @@ mod tests {
             y: SCREEN_CENTER_Y,
             pressed: false,
         });
+    }
+
+    #[test]
+    fn a_screen_tap_wakes_her_drowsy_instead_of_a_tap_reaction() {
+        let control = FoxControl::new(Expression::Idle);
+        let mut runtime = Runtime::new(0, Rc::clone(&control));
+        runtime.on_sensor(SensorEvent {
+            at_ms: 0,
+            source: EventSource::Light,
+            kind: EventKind::LightLevel(5),
+        });
+        runtime.tick(60_000);
+        assert_eq!(runtime.expression(), Expression::Sleep);
+
+        tap(&mut runtime, 61_000);
+        runtime.tick(61_300);
+        assert_eq!(runtime.expression(), Expression::Tired);
+        assert_eq!(runtime.affect_state().reason, ReactionReason::Wake);
+
+        // A second tap while she is still drowsy makes her grumpy.
+        tap(&mut runtime, 62_000);
+        runtime.tick(62_100);
+        assert_eq!(runtime.expression(), Expression::Angry);
     }
 
     #[test]

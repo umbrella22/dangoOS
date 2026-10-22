@@ -203,7 +203,11 @@ mod tests {
         let mut g = EdgeGestures::new();
         let routes = run(
             &mut g,
-            &[s(0, 240, 240, true), s(20, 240, 100, true), s(40, 240, 100, false)],
+            &[
+                s(0, 240, 240, true),
+                s(20, 240, 100, true),
+                s(40, 240, 100, false),
+            ],
         );
         assert_eq!(routes, [Route::Pass; 3]);
         assert!(!g.holding());
@@ -240,11 +244,19 @@ mod tests {
         let mut g = EdgeGestures::new();
         let routes = run(
             &mut g,
-            &[s(0, 10, 200, true), s(40, 100, 210, true), s(80, 100, 210, false)],
+            &[
+                s(0, 10, 200, true),
+                s(40, 100, 210, true),
+                s(80, 100, 210, false),
+            ],
         );
         assert_eq!(
             routes,
-            [Route::Held, Route::Gesture(SystemGesture::Back), Route::Held]
+            [
+                Route::Held,
+                Route::Gesture(SystemGesture::Back),
+                Route::Held
+            ]
         );
     }
 
@@ -261,13 +273,21 @@ mod tests {
         // From the bottom band, mostly sideways.
         let routes = run(
             &mut g,
-            &[s(0, 100, 460, true), s(40, 300, 360, true), s(80, 300, 360, false)],
+            &[
+                s(0, 100, 460, true),
+                s(40, 300, 360, true),
+                s(80, 300, 360, false),
+            ],
         );
         assert!(!routes.contains(&Route::Gesture(SystemGesture::Up)));
         // From the left band, upward.
         let routes = run(
             &mut g,
-            &[s(200, 10, 300, true), s(240, 40, 100, true), s(280, 40, 100, false)],
+            &[
+                s(200, 10, 300, true),
+                s(240, 40, 100, true),
+                s(280, 40, 100, false),
+            ],
         );
         assert!(!routes.iter().any(|r| matches!(r, Route::Gesture(_))));
     }
@@ -293,7 +313,12 @@ mod tests {
         let mut g = EdgeGestures::new();
         let routes = run(
             &mut g,
-            &[s(0, 240, 300, true), s(30, 240, 470, true), s(60, 240, 300, true), s(90, 240, 300, false)],
+            &[
+                s(0, 240, 300, true),
+                s(30, 240, 470, true),
+                s(60, 240, 300, true),
+                s(90, 240, 300, false),
+            ],
         );
         assert_eq!(routes, [Route::Pass; 4]);
     }
@@ -301,8 +326,22 @@ mod tests {
     #[test]
     fn two_gestures_in_a_row_both_fire() {
         let mut g = EdgeGestures::new();
-        let first = run(&mut g, &[s(0, 240, 460, true), s(40, 240, 340, true), s(60, 240, 340, false)]);
-        let second = run(&mut g, &[s(200, 5, 240, true), s(240, 120, 240, true), s(260, 120, 240, false)]);
+        let first = run(
+            &mut g,
+            &[
+                s(0, 240, 460, true),
+                s(40, 240, 340, true),
+                s(60, 240, 340, false),
+            ],
+        );
+        let second = run(
+            &mut g,
+            &[
+                s(200, 5, 240, true),
+                s(240, 120, 240, true),
+                s(260, 120, 240, false),
+            ],
+        );
         assert_eq!(first[1], Route::Gesture(SystemGesture::Up));
         assert_eq!(second[1], Route::Gesture(SystemGesture::Back));
     }

@@ -3,7 +3,8 @@
 固件的角色形象（取代了早期的 grok-ball 矢量小球）。20 个表情的静态姿势、15 个表情的
 局部补丁（眨眼 / 嘴型 / 耳朵 / 视线 / 螺旋眼）、8 个表情的独立符号精灵，以及描述
 这一切的 `device/manifest.json`。固件已接入：`crates/mosaico-s31/src/fox/`。
-整条管线的讲解见 [docs/FOX_RENDER_PIPELINE.md](../../docs/FOX_RENDER_PIPELINE.md)。
+整条管线的讲解见 [docs/FOX_RENDER_PIPELINE.md](../../docs/FOX_RENDER_PIPELINE.md)，
+画新角色的步骤见 [docs/FOX_DRAWING_GUIDE.md](../../docs/FOX_DRAWING_GUIDE.md)。
 
 | 目录 | 内容 | 是否入库 |
 | --- | --- | --- |

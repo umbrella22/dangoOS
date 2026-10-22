@@ -151,7 +151,10 @@ mod tests {
     fn events_update_the_matching_field() {
         let mut s = SystemSnapshot::new();
         assert!(s.observe(&event(EventSource::Light, EventKind::LightLevel(42))));
-        assert!(!s.observe(&event(EventSource::Light, EventKind::LightLevel(42))), "unchanged");
+        assert!(
+            !s.observe(&event(EventSource::Light, EventKind::LightLevel(42))),
+            "unchanged"
+        );
         assert!(s.observe(&event(EventSource::Battery, EventKind::BatteryLevel(87))));
         assert!(s.observe(&event(
             EventSource::ModuleRight,
@@ -175,7 +178,11 @@ mod tests {
         assert_eq!(s.magnet, MagnetState::Near);
         s.observe(&event(EventSource::Bmm150, EventKind::MagneticContact));
         s.observe(&event(EventSource::Bmm150, EventKind::MagneticOrbit));
-        assert_eq!(s.magnet, MagnetState::Contact, "orbit does not downgrade contact");
+        assert_eq!(
+            s.magnet,
+            MagnetState::Contact,
+            "orbit does not downgrade contact"
+        );
         s.observe(&event(EventSource::Bmm150, EventKind::MagneticRelease));
         assert_eq!(s.magnet, MagnetState::Away);
     }

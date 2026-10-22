@@ -162,7 +162,10 @@ mod tests {
 
     #[test]
     fn back_walks_up_one_level() {
-        assert_eq!(Page::App(AppId::Settings).after(SystemGesture::Back), Page::Launcher);
+        assert_eq!(
+            Page::App(AppId::Settings).after(SystemGesture::Back),
+            Page::Launcher
+        );
         assert_eq!(Page::Launcher.after(SystemGesture::Back), Page::Home);
         assert_eq!(Page::Home.after(SystemGesture::Back), Page::Home);
     }
