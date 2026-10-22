@@ -57,7 +57,8 @@ USB CDC ── console：日志输出 + 推送协议（hub::push）→ /data/app
 
 - 刷机**只写 main_app `0x210000`**。不碰 bootloader（S31 上在 `0x2000`）、分区表（`0x8000`）
   和 `0x20000` 的出厂 `vibe_mode`。主程序起不来时，引导程序会回滚到 vibe_mode，重刷 main_app 即可。
-- 只在本地提交，不推送。不修改相邻仓库 `lvgl_binding_rust`。
+  唯一计划内的例外是 N6 第 3 步重划分区：必须先备份 0x0–0x20000，并得到明确同意。
+- 只在本地提交，不推送。不修改相邻仓库 `lv_binding_rust`。
 - 插拔模块不屏蔽光线反应（有意保留）。
 
 ### 常用
@@ -131,6 +132,94 @@ USB CDC ── console：日志输出 + 推送协议（hub::push）→ /data/app
 - `thread`：官方语义是后台 worker；可以用第二个 VM + 消息队列实现，不共享 Lua 状态。
 - 验收：album_app 原样运行，浏览 `/data` 里的图片。
 
+### N6. A/B 分区与 OTA（方案已定，未动手）
+
+目标：板子正常运行时把新固件写进另一个槽，切换后重启；新固件起不来就自动退回旧的。
+传输先走 USB，有 Wi-Fi 以后再加无线。
+
+#### 已确认的事实
+
+- 库已经有：锁定的 esp-hal `bb239a0` 里的 `esp-bootloader-esp-idf` 自带三个模块。
+  我们的固件已经依赖它（`esp_app_desc!()`），不用换版本。
+  - `partitions`：读分区表，`booted_partition()` 有 S31 分支，能读 MMU 判断当前从哪个槽启动。
+  - `ota`：读写 `otadata` 和镜像状态。
+  - `ota_updater::OtaUpdater`：负责下一槽查找、写入和切换。
+  - 参考 `examples/ota/update/src/main.rs`。
+- 库不管的部分要自己写：分区怎么划、固件从哪来、自检和回滚策略。
+- 现有分区（0x8000，官方表）：
+
+  | 分区 | 偏移 | 大小 | 说明 |
+  | --- | --- | --- | --- |
+  | otadata | 0x9000 | 8 KiB | 已存在 |
+  | vibe_mode | 0x20000 | 1.75 MiB | app subtype 0x20（test），官方出厂固件，充当救援 |
+  | main_app | 0x210000 | 0x7D0000（约 7.8 MiB） | app subtype 0x10 = ota_0；末尾 2 MiB 是 `/data` |
+  | ui_apps / system | 0x9E0000 / 0xD00000 | — | 不动 |
+
+  只有一个 OTA 槽，缺 ota_1。
+- 固件实际要写入的内容约 2.6 MB（从 ELF 的 LOAD 段算的）。其中 `fox.bin` 739,512 B。
+
+#### 计划步骤
+
+1. 摸底，不改任何东西。
+   - 用 `esptool read-flash 0x0 0x20000` 备份 bootloader、分区表和 otadata，放在仓库外。
+   - 从引导程序日志和镜像里的字符串看 ESP-IDF 版本，判断有没有打开 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`。
+   - 解析 `otadata` 的两个 select 条目：seq、state、crc。
+2. 先给固件瘦身（与 N3 合并）。
+   - `fox.bin` 挪到 `/data/skins` 或 `/system`，固件能降到约 1.9 MB。
+   - `scripts/flash-app.sh` 的上限改成槽大小。
+3. 重划分区（碰红线，需要明确同意后再做）。只改 0x210000–0x9E0000 这一段：
+
+   | 分区 | 偏移 | 大小 |
+   | --- | --- | --- |
+   | main_app（ota_0，名字和起点不变） | 0x210000 | 0x300000（3 MiB） |
+   | ota_1 | 0x510000 | 0x300000（3 MiB） |
+   | data（LittleFS `/data`） | 0x810000 | 0x1D0000（约 1.8 MiB） |
+
+   - 用 `gen_esp32part.py` 生成二进制，表尾 MD5 由它算。只写 0x8000 这一个扇区。
+   - 擦掉 `otadata`（0x9000），让引导程序回到“默认第一个槽”的状态。
+   - `storage.rs` 目前从 main_app 末尾切 `/data`。改为按名字或 subtype 找独立的 data 分区，旧数据不迁移，首次启动格式化。
+   - bootloader（0x2000）、vibe_mode、ui_apps、system 都不碰。
+4. 固件端 `ota` 模块。
+   - 新建 `crates/mosaico-s31/src/ota.rs`，或者放进 `storage` 模块旁边。
+   - 写入前用 `booted_partition()` 确认目标不是正在运行的槽，不能只信 `otadata`（见“预计会遇到的问题”第 2 条）。
+   - 逐扇区擦除和写入，每块 4 KiB，写入时让出 CPU，避免喂狗超时和 UI 卡死。
+   - 写完从 flash 回读，算 SHA256，跟镜像尾部自带的哈希比对。
+   - 校验通过后 `activate_next_partition()`，状态标为 `New`，然后重启。
+5. 主机端 `push-app.py ota <bin>`。
+   - 沿用现有 USB 推送协议，加 `ota_begin(size, sha256)`、`ota_chunk`、`ota_end` 三种帧。
+   - 中途断开就作废，下次重新开始，不做续传。
+   - 重启导致 USB 掉线属于正常（`reboot` 已经这样处理）。
+6. 自检与确认。
+   - 启动后做到这几项再 `set_current_ota_state(Valid)`：屏幕首帧送出、`/system` 和 `/data` 挂上、Lua VM 起来、主循环跑满 30 秒。
+   - 如果引导程序不支持回滚，自己实现：在 RTC 保留内存或 `/data` 之外的固定扇区记启动尝试次数。连续 3 次没走到确认，就把 `otadata` 改回旧槽并重启。
+   - 控制台加 `ota status`，打印当前槽、另一个槽的状态和版本（`esp_app_desc` 的 version 字段）。
+7. 无线 OTA（等 Wi-Fi）。
+   - 传输层抽象成 `trait OtaSource { fn read(&mut self, buf) }`。USB 和 HTTP 共用第 4 步的写入逻辑。
+
+#### 预计会遇到的问题与对策
+
+| # | 现象 | 原因 | 对策 |
+| --- | --- | --- | --- |
+| 1 | 改完分区表后不启动，直接进了 vibe_mode | 新表里 main_app 的起点或类型错了，或者 MD5 不对 | 进下载模式，用第 1 步的备份写回 0x8000；用 `gen_esp32part.py` 反解检查后再写 |
+| 2 | OTA 把正在运行的固件写坏了 | 新镜像坏掉时引导程序会自动换槽，`otadata` 记的“当前槽”就不准了（[issue #3918](https://github.com/esp-rs/esp-hal/issues/3918)） | 目标槽一律用 `booted_partition()` 反推，两者不一致时拒绝写入并报错 |
+| 3 | 切换后引导程序仍从旧槽启动 | `otadata` 的 seq 或 crc 写错，或者两个 select 条目都无效 | 回读 `otadata` 打印两个条目；必要时 `reset_data()` 再切 |
+| 4 | 新固件崩溃后没有回滚 | 官方引导程序没开 `APP_ROLLBACK_ENABLE`，`New` 状态被忽略 | 第 6 步的自管启动计数；最后还有 vibe_mode 兜底，下载模式重刷 main_app 也能恢复 |
+| 5 | 新固件正常，但每次重启都退回旧槽 | 开了回滚却忘了标记 `Valid` | 自检完成后必须调用；`ota status` 能看到 `PendingVerify` 卡住 |
+| 6 | 写入时看门狗复位或画面卡住 | 擦大片 flash 时长时间占着临界区 | 按扇区擦写，每个扇区之间 `yield`；OTA 期间暂停灯效和 Lua 应用 |
+| 7 | 写入或擦除期间崩溃 | flash 操作时 cache 被关，这时如果跑到 flash 里的代码或常量就会出错（L2 已踩过，见 `docs/lessons/l2-storage-boot.md`） | 继续用 `esp_storage::ll` 的临界区写法；回调和中断处理不要碰 flash 常量 |
+| 8 | 固件超过 3 MiB，`flash-app.sh` 或 OTA 拒收 | 加 lvgl、字体、资源后变大 | 资源进文件系统（N3）；不够再把 `/data` 挪到 SPI NAND，腾出空间给槽 |
+| 9 | `/data` 里推送过的应用没了 | 重划分区后 data 的位置变了，首次启动会格式化 | 重划前用 `push-app.py` 拉取备份，或者接受重新推送 |
+| 10 | vibe_mode 的官方固件行为异常 | 官方固件可能按旧表找 main_app 或 `ui_apps` | 只改 main_app 的大小，名字、起点、类型都不变；改完进一次 vibe_mode 验证 |
+| 11 | 主机端推送一半 USB 断了 | 线松（以前遇到过） | 不续传，重新 `ota_begin`；另一个槽没激活前旧固件不受影响 |
+| 12 | 校验过了但启动报 image invalid | 镜像头里的 flash 大小或模式跟引导程序要求不一致，或者没带 app 描述符 | 用 `espflash save-image --chip esp32s31` 出 bin，参数跟 `flash-app.sh` 保持一致；`esp_app_desc!()` 不能删 |
+
+#### 验收
+
+- 运行 `push-app.py ota build.bin` 后自动重启进另一个槽，`ota status` 显示槽号已切换且状态为 Valid。
+- 故意推送一个启动即 panic 的镜像，3 次之内回到旧槽。
+- 连续 OTA 10 次，`/data` 里的应用都还在，旧槽始终可用。
+- 全程不碰 0x2000 的 bootloader 和 0x20000 的 vibe_mode。
+
 ### 零碎待办
 
 - 真机复核：电量 Tired / Dying 表情；磁力计新基线日志（`sensor mag[i] baseline ...`）。
@@ -144,7 +233,7 @@ USB CDC ── console：日志输出 + 推送协议（hub::push）→ /data/app
 | --- | --- | --- |
 | 音频（ES8311，麦克风 + 喇叭） | 无驱动；esp-hal 的 S31 I2S 为 partial。引脚：I2C `0x19`，MCLK 54、BCLK 37、WS 49、DOUT 52、DIN 40、PA_EN 45 | 先 I2S 放一段 PCM 验证；再做 Lua `audio`；狐狸配音效、声音大小影响情绪 |
 | 语音 / LLM | Listening / Thinking / Speaking 姿势与 `EventKind::Activity` 已就绪，没有语音来源 | 依赖音频 + 网络或 C3 协处理器，需单独立项 |
-| Wi-Fi / 蓝牙 | 锁定的 esp-hal 中 S31 的 `wifi`、`bt`、`phy` 都是 `not_supported` | 等上游；之后才有 app_store（`capability`）、时钟同步、天气 |
+| Wi-Fi / 蓝牙 | 锁定的 esp-hal 中 S31 的 `wifi`、`bt`、`phy` 都是 `not_supported` | 等上游；之后才有 app_store（`capability`）、无线 OTA（见 N6 第 7 步）、时钟同步、天气 |
 | 相机模块（左槽） | 只识别；esp-hal 相机 partial、硬件 JPEG 不支持；部分 DVP 信号与 USB Serial/JTAG 冲突 | 先抓一帧灰度验证；做 Lua `camera`；狐狸“看见”你 |
 | 手柄（Handle）模块 | 只识别 | ADC 摇杆 + 按键，做 Lua `button` / `knob` |
 | 红外发射 | 搁置：只有发射管（GPIO48/47，RMT NEC），没有接收头，码表未知 | 查到品牌 NEC 码表或用别的板子录码后再做；狐狸困了关灯、生气静音电视 |
