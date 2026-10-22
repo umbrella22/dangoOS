@@ -15,15 +15,16 @@
 //! The ROM routines are called through `esp_storage::ll` (each call in a
 //! critical section) rather than `FlashStorage`: on the ESP32-S31 its flash
 //! size detection does not give a usable size, so every bounds-checked read
-//! failed. The size comes from the bootloader image header instead.
+//! failed. The size comes from the bootloader image header (at 0x2000 on the
+//! S31, 0 on older chips), or else from the end of the partition table.
 
 use alloc::boxed::Box;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use esp_storage::{ll, FlashStorage};
+use esp_storage::ll;
 use log::{info, warn};
-use mosaico_fs::{global, BlockDevice, Errno, Fs, Geometry, Kind, Vfs};
+use mosaico_fs::{global, BlockDevice, Errno, Fs, Geometry, Vfs};
 
 /// Size of `/data`; the firmware image must end below `main_app.end - DATA_SIZE`
 /// (`scripts/flash-app.sh` checks it).
@@ -230,18 +231,11 @@ pub fn ready() -> bool {
     READY.load(Ordering::Acquire)
 }
 
-/// Let the console pump flush the last log line before the next risky step.
-async fn step(what: &str) {
-    info!("fs: {what}");
-    embassy_time::Timer::after_millis(30).await;
-}
-
 /// Read the partition table, mount `/system` and `/data`, and install the VFS.
 /// Failures are logged; the firmware runs on without the missing mount.
-pub async fn init(flash: esp_hal::peripherals::FLASH<'static>) {
-    step("opening flash").await;
-    // `FlashStorage` only for its size guess, logged for comparison.
-    let guess = FlashStorage::new(flash).capacity();
+///
+/// Takes the `FLASH` peripheral so nothing else drives the chip meanwhile.
+pub fn init(_flash: esp_hal::peripherals::FLASH<'static>) {
     // SAFETY: no block device exists yet. The size is provisional: enough
     // for the bootloader header and the partition table.
     unsafe {
@@ -254,36 +248,25 @@ pub async fn init(flash: esp_hal::peripherals::FLASH<'static>) {
     for at in [0u32, 0x2000] {
         let mut header = [0u8; 32];
         if read_bounced(at, &mut header).is_ok() {
-            info!("fs: flash @{at:#x}: {:02x?}", &header[..8]);
             header_size = header_size.or(header_flash_size(&header));
         }
     }
-    step("reading the partition table").await;
     let mut table = [0u8; PARTITION_TABLE_LEN];
     if let Err(e) = read_bounced(PARTITION_TABLE, &mut table) {
         warn!("fs: partition table unreadable: {e}");
     }
-    info!("fs: partition table: {:02x?}", &table[..16]);
     // Without a header, the end of the last partition bounds the chip.
     let table_end = partitions(&table)
         .map(|(_, _, _, off, len)| off.saturating_add(len))
         .max()
         .map(|end| end.next_power_of_two());
-    info!(
-        "fs: flash size: header {} KiB, partitions {} KiB, esp-storage {} KiB",
-        header_size.unwrap_or(0) / 1024,
-        table_end.unwrap_or(0) / 1024,
-        guess / 1024
-    );
-    let Some(size) = header_size
-        .or(table_end)
-        .or((guess >= 0x10_0000).then_some(guess as u32))
-    else {
+    let Some(size) = header_size.or(table_end) else {
         warn!("fs: flash size unknown; no file systems");
         global::install(Vfs::new());
         return;
     };
     shared().0.size = size;
+    info!("fs: flash {} MiB", size / (1024 * 1024));
 
     let (mut system, mut main_app) = (None, None);
     for (label, kind, subtype, off, len) in partitions(&table) {
@@ -297,7 +280,6 @@ pub async fn init(flash: esp_hal::peripherals::FLASH<'static>) {
 
     let mut vfs = Vfs::new();
     if let Some((base, len)) = system {
-        step("mounting /system").await;
         let dev = FlashRegion {
             base,
             blocks: len / BLOCK,
@@ -322,7 +304,6 @@ pub async fn init(flash: esp_hal::peripherals::FLASH<'static>) {
                 blocks,
                 writable: true,
             };
-            step("mounting /data").await;
             match Fs::mount_or_format(Box::new(dev), Geometry::flash(blocks)) {
                 Ok((fs, formatted)) => {
                     vfs.mount("data", fs);
@@ -335,25 +316,12 @@ pub async fn init(flash: esp_hal::peripherals::FLASH<'static>) {
         _ => warn!("fs: no room for /data in main_app"),
     }
     global::install(vfs);
-    step("listing").await;
-
     let _ = global::with(|v| {
         for dir in ["/system", "/data"] {
             if let Ok(s) = v.space(dir) {
                 info!("fs: {dir} {}/{} blocks used", s.blocks - s.free, s.blocks);
             }
         }
-        let _ = v.create_dir_all("/data/apps");
-        for root in ["/data/apps", "/system/apps"] {
-            if let Ok(entries) = v.read_dir(root) {
-                let mut names = alloc::string::String::new();
-                for e in entries.iter().filter(|e| e.meta.kind == Kind::Dir) {
-                    names.push(' ');
-                    names.push_str(&e.name);
-                }
-                info!("fs: {root}:{names}");
-            }
-        }
-        Ok(())
+        v.create_dir_all("/data/apps")
     });
 }

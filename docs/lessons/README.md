@@ -5,3 +5,4 @@
 | 日期 | 主题 | 文档 |
 | --- | --- | --- |
 | 2026-10-22 | 交互板电容触摸键（S31 touch，寄存器级驱动） | [touch-keys.md](touch-keys.md) |
+| 2026-10-22 | L2 上机：开机循环重启（ROM 符号冲突）、flash 大小识别为 0 | [l2-storage-boot.md](l2-storage-boot.md) |

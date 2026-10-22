@@ -246,10 +246,10 @@ id 为 1–63 个 `[A-Za-z0-9_-]`，`entry` 为相对路径；最多 64 个应�
 固件镜像 2,606,608 B（上限 6,094,848 B 的 43%）。真机启动日志：
 
 ```
-fs: flash @0x2000: [e9, 03, 02, 4f, ...]          （S31 的二级引导在 0x2000，0 处全是 FF）
-fs: flash size: header 16384 KiB, partitions 16384 KiB, esp-storage 0 KiB
-fs: /system ro @0xd00000 3000 KiB                   738/750 块已用
+fs: flash 16 MiB                                    （S31 的二级引导在 0x2000，0 处全是 FF）
+fs: /system ro @0xd00000 3000 KiB
 fs: /data rw @0x7e0000 2048 KiB (formatted)
+fs: /system 738/750 blocks used
 apps: 6 in 161 ms: dino flappybird game_2048 snake app_store* album_app*
 ```
 
@@ -257,7 +257,7 @@ apps: 6 in 161 ms: dino flappybird game_2048 snake app_store* album_app*
   `io` 计数器在 `/data` 里递增（第 5 次启动显示 `launch 5`）。`reboot` 之后 `ls` 仍有 hello_push。
 - `app_store`、`album_app` 需要 `lvgl` 等模块，格子变暗，符合预期。
 
-上机时踩到的两个坑，都已修：
+上机时踩到的两个坑，都已修（完整过程见 `docs/lessons/l2-storage-boot.md`）：
 
 1. S31 的 ROM 链接脚本把 `jd_prepare`/`jd_decomp` 定义成 ROM 里的 TJpgDec（JDEC 结构不同）。
    我们自带的 TJpgDec 被链接到 ROM 版本上，解第一个图标就 `Load address misaligned`，开机循环重启。

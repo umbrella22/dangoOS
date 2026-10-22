@@ -272,7 +272,7 @@ async fn mount_storage(flash: esp_hal::peripherals::FLASH<'static>) {
         warn!("fs: not mounted this boot (the last one panicked there); built-in apps only");
     } else {
         crashlog::enter(crashlog::Stage::Storage);
-        drivers::storage::init(flash).await;
+        drivers::storage::init(flash);
         crashlog::enter(crashlog::Stage::Running);
     }
     drivers::storage::mark_ready();

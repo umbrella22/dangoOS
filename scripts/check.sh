@@ -21,3 +21,6 @@ cargo run -p mosaico-s31 --example splash_preview --offline >/dev/null
 
 # Firmware for the device target.
 cargo fw --offline
+
+# Vendored C must not collide with symbols the S31 ROM scripts assign.
+./scripts/check-rom-symbols.sh
