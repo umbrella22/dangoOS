@@ -46,11 +46,38 @@ N7 已将数据根改为每 VM 独立上下文，默认根只在创建时复制�
 | N7 | `codex/n7-app-uninstall` | `2cb36dd` → `09c252d` | 完成；328 项主机测试、17 项工具测试、8 个真实 LVGL 指针场景与 release 通过；[收据](N7_APP_LIFECYCLE.md#2026-10-23-independent-acceptance-receipt) | not-run |
 | N4 | `codex/n4-lua-brain` | `c571e2e` → `d0835e2` | 完成；341 项主机测试、4161 条原生对照、12 个外部恶意脚本进程、21 项工具测试；[收据](N4_LUA_BRAIN.md#2026-10-23-independent-acceptance-receipt) | not-run |
 | N5 | `codex/n5-album` | `ab1be60` → `5410697` | 完成；347 项主机测试、25 项工具测试、11 个真实 LVGL 场景、48 次往返、独立图像 / worker 验收；[收据](LUA-N5-RUNTIME.md#2026-10-23-independent-acceptance-receipt) | not-run |
-| N6 | `codex/n6-usb-ota`（完成时创建） | 待记录 | 实现中 | not-run |
+| N6 | `codex/n6-usb-ota` | `df6b6b4` → `586cfc9` | 完成；360 项主机测试、46 项工具测试、39 个镜像语料、十次 NOR 更新 / 39 故障点与迁移恢复模拟；[收据](N6_USB_OTA.md#2026-10-23-independent-acceptance-receipt) | not-run；未迁移设备 |
 
 后续修复：N2 的实际 Sleep 帧回执修复提交为 `1b4cf33`。Animator 切换初期绘制的
 上一姿态不再启动关机计时；真实 widget 过渡时间线测试通过。N2 冻结分支保留当时快照，
 集中验收使用含此修复的集成版本。
+
+七项实现均已有固定评审快照。当前集成代码为 N6 完成提交 `586cfc9`，其后只有台账文档
+提交。每个表格范围均是可直接评审的阶段增量，不要把后阶段分支与 `main` 比较后误认为
+所有祖先变更都属于该阶段。例如：
+
+```sh
+git diff 80e362e..0f86227   # N1
+git diff ab1be60..5410697   # N5
+git diff df6b6b4..586cfc9   # N6
+```
+
+修复继续提交到 `codex/n1-n7-integration`，提交标题注明阶段，记录补丁 SHA 并重跑受影响
+检查。历史分支保持冻结；如确需分别发布某阶段版本，再建立新的维护分支并选择性移植
+修复。常规验收不需要在七个历史快照上同时维护相同补丁。
+
+## 集成版本的最终主机验收
+
+完整收据为 `target/n6-acceptance-20261023/receipt.json`。最终默认 BIN 为 **3045376 字节**，
+3 MiB 槽剩 **100352 字节**；包含 N1–N7 全部实现，兼容已明确识别的旧表和新 A/B 表。
+SHA-256 为 `17b1949ef90c1cd72de4f8fe7d6b1330e91c1d1de9390ed6c693883c0f9b6ab4`。
+正常与故障注入镜像分别命名；当前 Cargo target ELF 已恢复正常默认版本。
+
+最终检查覆盖 360 项 Rust 测试（255 S31、53 Lua、10 FS、42 驱动）、46 项 Python 测试、
+预览、默认及 panic feature 构建和 713 个 C 符号的 ROM 冲突检查。独立 N6 探针覆盖
+39 个新旧镜像语料、十次全镜像交替更新、六类拒绝与 39 个 I/O 故障场景。
+这些检查均为主机 / 构建证据。N1 的既有真机观察只适用于 N1 镜像；马达手持无震动
+仍为失败，后续全部阶段实物验证尚未运行。
 
 ## 每阶段交付与验收
 
@@ -61,4 +88,6 @@ N7 已将数据根改为每 VM 独立上下文，默认根只在创建时复制�
 N6 的实现包含分区表生成、备份要求、校验、迁移与恢复命令。实物重划分区需要保留
 `0x0..0x20000` 备份并在集中验收时明确授权，来源是 [HANDOFF.md 的红线](HANDOFF.md#红线)。
 代码准备与主机验证可以先完成；实际擦写分区表和旧 `/data` 的结果必须单独记录。
-正常应用刷机仍只允许写 main_app `0x210000`，不碰 bootloader 或出厂 vibe_mode。
+迁移前的 ROM 刷机只写 main_app `0x210000`；迁移后正常 OTA 写入非运行槽及 otadata，
+不碰 bootloader 或出厂 vibe_mode。N1–N5/N7 历史镜像不支持新的 data 定位，迁移后不能
+刷回做阶段复现。因此先完成其他阶段的现场检查，再做 N6 备份、迁移与 OTA 验收。
