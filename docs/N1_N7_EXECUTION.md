@@ -44,8 +44,8 @@ N7 已将数据根改为每 VM 独立上下文，默认根只在创建时复制�
 | N2 | `codex/n2-buttons-power` | `973eb77` → `9b5ee37` | 完成；306 项主机测试、预览 / release / ROM 检查通过；[收据](N2_BUTTONS_POWER.md#2026-10-23-acceptance-receipt) | not-run |
 | N3 | `codex/n3-skin-pack` | `1b4cf33` → `c45966c` | 完成；317 项主机测试、20 姿态像素等价、真实打包渲染与 release 通过；[收据](N3_SKIN_PACK.md#2026-10-23-independent-acceptance-receipt) | not-run |
 | N7 | `codex/n7-app-uninstall` | `2cb36dd` → `09c252d` | 完成；328 项主机测试、17 项工具测试、8 个真实 LVGL 指针场景与 release 通过；[收据](N7_APP_LIFECYCLE.md#2026-10-23-independent-acceptance-receipt) | not-run |
-| N4 | `codex/n4-lua-brain`（完成时创建） | 待记录 | 实现中 | not-run |
-| N5 | `codex/n5-album`（完成时创建） | 待记录 | 待实现 | not-run |
+| N4 | `codex/n4-lua-brain` | `c571e2e` → `d0835e2` | 完成；341 项主机测试、4161 条原生对照、12 个外部恶意脚本进程、21 项工具测试；[收据](N4_LUA_BRAIN.md#2026-10-23-independent-acceptance-receipt) | not-run |
+| N5 | `codex/n5-album`（完成时创建） | 待记录 | 实现中 | not-run |
 | N6 | `codex/n6-usb-ota`（完成时创建） | 待记录 | 待实现 | not-run |
 
 后续修复：N2 的实际 Sleep 帧回执修复提交为 `1b4cf33`。Animator 切换初期绘制的
