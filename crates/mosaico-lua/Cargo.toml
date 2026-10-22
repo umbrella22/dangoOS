@@ -12,5 +12,11 @@ build = "build.rs"
 [dependencies]
 mosaico-fs = { path = "../mosaico-fs" }
 
+[target.'cfg(target_os = "none")'.dependencies]
+critical-section.workspace = true
+
+[target.'cfg(not(target_os = "none"))'.dependencies]
+critical-section = { workspace = true, features = ["std"] }
+
 [build-dependencies]
 cc = "1"

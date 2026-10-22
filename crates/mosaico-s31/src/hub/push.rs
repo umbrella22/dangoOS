@@ -53,6 +53,7 @@ pub enum Effect {
         run: Option<String>,
     },
     Run(String),
+    Manage(super::uninstall::Operation),
     Stop,
     /// Reset the chip once the reply is out.
     Reboot,
@@ -75,18 +76,40 @@ struct Upload {
 pub struct Session {
     line: Vec<u8>,
     overflow: bool,
+    management_busy: bool,
+    #[cfg(test)]
+    payload_writes: Vec<usize>,
     staging: Option<String>,
     skin: bool,
     upload: Option<Upload>,
 }
 
 impl Session {
+    pub fn set_management_busy(&mut self, busy: bool) {
+        self.management_busy = busy;
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Feed bytes from the host; effects come out in order.
     pub fn feed(&mut self, vfs: &mut Vfs, mut data: &[u8], out: &mut dyn FnMut(Effect)) {
+        while !data.is_empty() {
+            let consumed = self.feed_until_deferred(vfs, data, out);
+            data = &data[consumed..];
+        }
+    }
+
+    /// Consume whole payload chunks, but stop exactly after a deferred
+    /// management command. Execute it before feeding the unconsumed tail.
+    pub fn feed_until_deferred(
+        &mut self,
+        vfs: &mut Vfs,
+        mut data: &[u8],
+        out: &mut dyn FnMut(Effect),
+    ) -> usize {
+        let original_len = data.len();
         while !data.is_empty() {
             if self.upload.is_some() {
                 data = self.feed_upload(vfs, data, out);
@@ -103,7 +126,14 @@ impl Session {
                     } else if let Ok(text) = core::str::from_utf8(&line) {
                         let text = text.trim_end_matches('\r');
                         if let Some(cmd) = text.strip_prefix(PREFIX) {
-                            self.command(vfs, cmd.trim(), out);
+                            let mut deferred = false;
+                            self.command(vfs, cmd.trim(), &mut |effect| {
+                                deferred |= matches!(effect, Effect::Manage(_));
+                                out(effect);
+                            });
+                            if deferred {
+                                return original_len - data.len();
+                            }
                             if self.upload.as_ref().is_some_and(|u| u.left == 0) {
                                 // An empty file: no payload follows.
                                 self.feed_upload(vfs, &[], out);
@@ -117,6 +147,7 @@ impl Session {
                 }
             }
         }
+        original_len
     }
 
     /// The host went away: drop a half-written file and the staging area.
@@ -148,7 +179,12 @@ impl Session {
         let up = self.upload.as_mut().expect("upload");
         let n = (up.left as usize).min(data.len());
         let (chunk, rest) = data.split_at(n);
+        if up.failed.is_none() && vfs.stat(&up.path).is_err() {
+            up.failed = Some(Errno::NOENT);
+        }
         if up.failed.is_none() && n > 0 {
+            #[cfg(test)]
+            self.payload_writes.push(n);
             if let Err(e) =
                 vfs.write(up.fd, chunk)
                     .and_then(|w| if w == n { Ok(()) } else { Err(Errno::NOSPC) })
@@ -181,6 +217,12 @@ impl Session {
         let mut words = cmd.split_ascii_whitespace();
         let verb = words.next().unwrap_or("");
         let args: Vec<&str> = words.collect();
+        if self.management_busy
+            && matches!(verb, "run" | "begin" | "file" | "commit" | "rm" | "rmdata")
+        {
+            out(Effect::Reply("@err app management busy".into()));
+            return;
+        }
         let result = match (verb, args.as_slice()) {
             ("hello", []) => Ok(format!("hello mosaico-push {VERSION}")),
             ("begin", [id]) => self.begin(vfs, id, false),
@@ -231,13 +273,23 @@ impl Session {
                 out(Effect::Reload { run: None });
                 Ok("reload".into())
             }
-            ("rm", [id]) if id_is_valid(id) => {
-                match vfs.remove_tree(&format!("{DATA_APPS}/{id}")) {
-                    Ok(()) => {
-                        out(Effect::Reload { run: None });
-                        Ok(format!("rm {id}"))
+            (verb @ ("rm" | "rmdata"), [id]) if id_is_valid(id) => {
+                match super::uninstall::resolve(vfs, id) {
+                    Ok(identity) => {
+                        // Invalidate in-memory staging as well as the on-disk
+                        // incoming tree, preventing a stale file/commit resurrection.
+                        if !self.skin && self.staging.as_deref() == Some(id) {
+                            self.staging = None;
+                        }
+                        let op = if verb == "rm" {
+                            super::uninstall::Operation::Remove(identity)
+                        } else {
+                            super::uninstall::Operation::Clear(identity)
+                        };
+                        out(Effect::Manage(op));
+                        return; // completion reply belongs to the executor
                     }
-                    Err(e) => Err(format!("rm {id}: {e}")),
+                    Err(e) => Err(e),
                 }
             }
             ("ls", []) => list(vfs),
@@ -266,6 +318,9 @@ impl Session {
         if !id_is_valid(id) {
             return Err(format!("bad id {id}"));
         }
+        if !skin {
+            super::uninstall::ensure_ready(vfs, id)?;
+        }
         if skin && id == "default" {
             return Err("reserved skin id default".into());
         }
@@ -286,6 +341,9 @@ impl Session {
 
     fn file(&mut self, vfs: &mut Vfs, rel: &str, size: &str, crc: &str) -> Result<(), String> {
         let id = self.staging.as_deref().ok_or("file before begin")?;
+        if vfs.stat(&format!("{}/{id}", self.staging_root())).is_err() {
+            return Err("staging invalidated".into());
+        }
         let size: u32 = size.parse().map_err(|_| format!("bad size {size}"))?;
         let want = u32::from_str_radix(crc, 16).map_err(|_| format!("bad crc {crc}"))?;
         if !rel_is_safe(rel) {
@@ -323,6 +381,7 @@ impl Session {
         if self.skin || self.staging.as_deref() != Some(id) {
             return Err(format!("commit {id}: not staged"));
         }
+        super::uninstall::ensure_ready(vfs, id)?;
         let staged = format!("{STAGING}/{id}");
         let text = registry::read_text(vfs, &format!("{staged}/{MANIFEST}"), MANIFEST_MAX_BYTES)?;
         let m = registry::parse_manifest(&text, id)?;
@@ -527,18 +586,104 @@ mod tests {
         let mut sess = Session::new();
         run(&mut v, &mut sess, &push_stream(false), 512);
         assert!(v.stat("/data/apps/hello/old/stale.lua").is_err());
-        let e = run(
+        let e = run(&mut v, &mut sess, b"@mosaico rm hello\n", 512);
+        assert!(
+            replies(&e).is_empty(),
+            "queueing must never claim completion"
+        );
+        assert!(
+            v.stat("/data/apps/hello").is_ok(),
+            "feed cannot delete a running app"
+        );
+        let Effect::Manage(op) = e[0] else {
+            panic!("expected deferred operation")
+        };
+        super::super::uninstall::execute(&mut v, op).unwrap();
+        assert!(v.stat("/data/apps/hello").is_err());
+        let r = replies(&run(
             &mut v,
             &mut sess,
-            b"@mosaico ls\n@mosaico rm hello\n@mosaico ls\n@mosaico rm hello\n",
+            b"@mosaico ls\n@mosaico rm hello\n",
+            512,
+        ));
+        assert_eq!(r[0], "@ok ls");
+        assert!(r[1].starts_with("@err app hello not found"));
+    }
+
+    #[test]
+    fn partial_upload_ui_removal_cannot_resurrect_app_or_commit() {
+        let mut v = vfs();
+        let mut session = Session::new();
+        run(&mut v, &mut session, &push_stream(false), 512);
+        run(
+            &mut v,
+            &mut session,
+            b"@mosaico begin hello\n@mosaico file main.lua 6 0\nabc",
             512,
         );
-        let r = replies(&e);
-        assert_eq!(r[0], "@ok ls hello");
-        assert_eq!(r[1], "@ok rm hello");
-        assert_eq!(r[2], "@ok ls");
-        assert!(r[3].starts_with("@err rm hello"));
-        assert!(e.contains(&Effect::Reload { run: None }));
+        assert_eq!(v.open_files(), 1);
+        let identity = super::super::uninstall::resolve(&mut v, "hello").unwrap();
+        super::super::uninstall::execute(
+            &mut v,
+            super::super::uninstall::Operation::Remove(identity),
+        )
+        .unwrap();
+        let e = run(
+            &mut v,
+            &mut session,
+            b"def@mosaico commit hello\n@mosaico file resurrect.lua 0 0\n",
+            512,
+        );
+        assert!(
+            replies(&e).iter().all(|r| r.starts_with("@err")),
+            "{:?}",
+            replies(&e)
+        );
+        assert_eq!(v.open_files(), 0);
+        assert!(v.stat("/data/apps/hello").is_err());
+        assert!(v.stat("/data/apps/.incoming/hello").is_err());
+    }
+    #[test]
+    fn deferred_boundary_preserves_single_packet_tail_and_payload_batching() {
+        for chunk in [64, 512] {
+            let mut v = vfs();
+            let mut session = Session::new();
+            run(&mut v, &mut session, &push_stream(false), 512);
+            run(&mut v, &mut session, b"@mosaico begin hello\n", 512);
+            let packet = b"@mosaico rm hello\n@mosaico commit hello run\n";
+            let mut effects = Vec::new();
+            let consumed = session.feed_until_deferred(&mut v, packet, &mut |e| effects.push(e));
+            assert_eq!(&packet[consumed..], b"@mosaico commit hello run\n");
+            let Effect::Manage(op) = effects[0] else {
+                panic!("expected deferred delete")
+            };
+            super::super::uninstall::execute(&mut v, op).unwrap();
+            effects.clear();
+            session.feed_until_deferred(&mut v, &packet[consumed..], &mut |e| effects.push(e));
+            assert!(replies(&effects)[0].starts_with("@err"));
+            assert!(v.stat("/data/apps/hello").is_err());
+            run(&mut v, &mut session, b"@mosaico begin payload\n", 512);
+            let payload = vec![42u8; 4096];
+            let header = format!("@mosaico file big.bin 4096 {:08x}\n", crc32(&payload));
+            run(&mut v, &mut session, header.as_bytes(), 512);
+            session.payload_writes.clear();
+            run(&mut v, &mut session, &payload, chunk);
+            assert_eq!(
+                session.payload_writes,
+                vec![chunk; 4096 / chunk],
+                "one write per USB block"
+            );
+        }
+    }
+
+    #[test]
+    fn management_barrier_rejects_navigation_and_mutations_explicitly() {
+        let mut v = vfs();
+        let mut session = Session::new();
+        session.set_management_busy(true);
+        let e = run(&mut v, &mut session, b"@mosaico run snake\n@mosaico begin hello\n@mosaico rmdata snake\n@mosaico commit hello run\n", 512);
+        assert_eq!(replies(&e), ["@err app management busy"; 4]);
+        assert!(e.iter().all(|e| matches!(e, Effect::Reply(_))));
     }
 
     #[test]

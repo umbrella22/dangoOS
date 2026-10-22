@@ -520,14 +520,8 @@ static int luaopen_system(lua_State *L)
 /* ---- storage root ------------------------------------------------------ */
 
 /* storage.get_root_dir(): the writable data root (claw_paths CLAW_PATH_DATA). */
-static char s_data_root[128] = "/data";
-
-const char *mosaico_data_root(void) { return s_data_root; }
-
-void mosaico_set_data_root(const char *path)
-{
-    snprintf(s_data_root, sizeof(s_data_root), "%s", path);
-}
+extern const char *mosaico_host_data_root(void);
+const char *mosaico_data_root(void) { return mosaico_host_data_root(); }
 
 /* ---- preload ------------------------------------------------------------- */
 

@@ -1418,6 +1418,7 @@ name = "mosaico-lua"
 version = "0.2.0"
 dependencies = [
  "cc",
+ "critical-section",
  "mosaico-fs",
 ]
 

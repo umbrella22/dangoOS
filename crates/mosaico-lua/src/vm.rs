@@ -176,6 +176,7 @@ struct Heap {
 }
 
 pub(crate) struct Ctx {
+    pub(crate) data_root: Vec<u8>,
     pub(crate) host: Box<dyn Host>,
     heap: *const Heap,
     pub(crate) limits: Limits,
@@ -244,6 +245,19 @@ unsafe extern "C" fn lua_alloc(
 }
 
 impl Vm {
+    /// Set this VM's storage root, including code run during `lua_close`.
+    /// This is a storage convention, not an `io` sandbox.
+    pub fn set_storage_root(&mut self, path: &str) -> Result<(), String> {
+        if path.len() >= 128 || !path.starts_with('/') {
+            return Err("data root must be absolute and shorter than 128 bytes".into());
+        }
+        let root = c_string(path)?;
+        unsafe {
+            (*self.ctx).data_root = root;
+        }
+        Ok(())
+    }
+
     /// A fresh state with the standard libraries Mosaico supports: base,
     /// package (preload only), coroutine, debug, math, string, table, utf8.
     pub fn new(
@@ -260,7 +274,13 @@ impl Vm {
             limit: limits.memory_bytes,
             in_host: Cell::new(0),
         }));
+        let default_root = critical_section::with(|cs| *DEFAULT_ROOT.borrow(cs).borrow());
+        let root_len = default_root
+            .iter()
+            .position(|&b| b == 0)
+            .expect("validated root");
         let ctx = Box::into_raw(Box::new(Ctx {
+            data_root: default_root[..=root_len].to_vec(),
             host,
             heap,
             limits,
@@ -637,13 +657,31 @@ unsafe extern "C" fn mosaico_lua_error_text(
 
 static LOG_SINK: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
 
-/// Where Lua's own warnings and panic messages go (the firmware log).
-/// `storage.get_root_dir()` (default `/data`). Host tests point it at a
-/// temporary directory.
-pub fn set_data_root(path: &str) {
-    if let Ok(c) = c_string(path) {
-        unsafe { mosaico_set_data_root(c.as_ptr().cast()) };
+const fn initial_root() -> [u8; 128] {
+    let mut root = [0; 128];
+    root[0] = b'/';
+    root[1] = b'd';
+    root[2] = b'a';
+    root[3] = b't';
+    root[4] = b'a';
+    root
+}
+// Readers copy a fixed-size snapshot under the same short lock as writers.
+// No pointer into this mutable default ever crosses the C boundary.
+static DEFAULT_ROOT: critical_section::Mutex<core::cell::RefCell<[u8; 128]>> =
+    critical_section::Mutex::new(core::cell::RefCell::new(initial_root()));
+
+/// Set the validated default copied into subsequently created VMs.
+/// Existing VMs retain their own root. The no-context C fallback is `/data`.
+pub fn set_data_root(path: &str) -> Result<(), String> {
+    if path.len() >= 128 || !path.starts_with('/') {
+        return Err("data root must be absolute and shorter than 128 bytes".into());
     }
+    let c = c_string(path)?;
+    let mut root = [0; 128];
+    root[..c.len()].copy_from_slice(&c);
+    critical_section::with(|cs| *DEFAULT_ROOT.borrow(cs).borrow_mut() = root);
+    Ok(())
 }
 
 /// A NUL-terminated copy of `s` (which must not contain NUL).
@@ -657,6 +695,7 @@ fn c_string(s: &str) -> Result<Vec<u8>, String> {
     Ok(v)
 }
 
+/// Where Lua's own warnings and panic messages go (the firmware log).
 pub fn set_log_sink(sink: fn(&[u8])) {
     LOG_SINK.store(sink as *mut (), Ordering::Relaxed);
 }

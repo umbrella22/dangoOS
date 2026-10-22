@@ -89,6 +89,7 @@ pub struct LuaBlit {
 unsafe impl Send for LuaBlit {}
 
 static START: Signal<CriticalSectionRawMutex, LuaApp> = Signal::new();
+static MANAGEMENT: AtomicBool = AtomicBool::new(false);
 static STOP: AtomicBool = AtomicBool::new(false);
 static FRAME: Mutex<RefCell<Option<Vec<LuaBlit>>>> = Mutex::new(RefCell::new(None));
 static FRAME_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -101,6 +102,9 @@ static POINTER_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// Run `app` (the UI opened its page). Stops a running app first.
 pub fn start(app: LuaApp) {
+    if MANAGEMENT.load(Ordering::Acquire) {
+        return;
+    }
     STOP.store(false, Ordering::Release);
     START.signal(app);
 }
@@ -318,6 +322,9 @@ pub async fn lua_task() {
             Some(app) => app,
             None => START.wait().await,
         };
+        if MANAGEMENT.load(Ordering::Acquire) {
+            continue;
+        }
         next = run(app).await;
     }
 }
@@ -326,6 +333,13 @@ pub async fn lua_task() {
 /// when a start request arrived meanwhile.
 async fn run(app: LuaApp) -> Option<LuaApp> {
     STATE.store(1, Ordering::Release);
+    let ready =
+        mosaico_fs::global::with(|vfs| Ok(mosaico_s31::hub::uninstall::ensure_ready(vfs, &app.id)));
+    if !matches!(ready, Ok(Ok(()))) {
+        warn!("lua[{}]: pending recovery or unavailable storage", app.id);
+        STATE.store(2, Ordering::Release);
+        return None;
+    }
     let free_before = esp_alloc::HEAP.free();
     let seed = Instant::now().as_ticks() as u32;
     let host = DeviceHost {
@@ -341,6 +355,17 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
             return None;
         }
     };
+    let root = alloc::format!("/data/appdata/{}", app.id);
+    let root_ready = mosaico_fs::global::with(|vfs| vfs.create_dir_all(&root));
+    if let Err(e) = root_ready
+        .map_err(|e| alloc::format!("{e}"))
+        .and_then(|()| vm.set_storage_root(&root))
+    {
+        warn!("lua[{}]: data root: {e}", app.id);
+        drop(vm);
+        STATE.store(2, Ordering::Release);
+        return None;
+    }
     if let Err(e) = vm.set_args_json(&app.args_json) {
         warn!("lua[{}]: args: {e}", app.id);
     }
@@ -434,4 +459,17 @@ async fn wait_stop() {
     while !STOP.load(Ordering::Acquire) && !START.signaled() {
         Timer::after_millis(10).await;
     }
+}
+
+/// Acquire the start barrier before requesting stop. State becomes non-running
+/// only after lua_close and its finalizers have completed.
+pub async fn quiesce() {
+    MANAGEMENT.store(true, Ordering::Release);
+    stop();
+    while STATE.load(Ordering::Acquire) == 1 {
+        Timer::after_millis(1).await;
+    }
+}
+pub fn release_management() {
+    MANAGEMENT.store(false, Ordering::Release);
 }

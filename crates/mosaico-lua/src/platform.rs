@@ -420,3 +420,12 @@ unsafe extern "C" fn mosaico_host_hardware_request(kind: u32, data: *const u8) -
         Err(e) => e,
     }
 }
+
+// The context guard remains active during Lua finalizers in Vm::drop.
+#[no_mangle]
+extern "C" fn mosaico_host_data_root() -> *const c_char {
+    match current() {
+        Some(ctx) => ctx.data_root.as_ptr().cast(),
+        None => b"/data\0".as_ptr().cast(),
+    }
+}

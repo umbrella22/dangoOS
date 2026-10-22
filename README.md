@@ -57,3 +57,13 @@ python3 scripts/push-app.py push examples/lua-apps/hello_push --run --follow   #
 
 USB-OTG HS CDC-ACM（不是 USB-Serial-JTAG），运行时枚举为 `/dev/cu.usbmodemmosaico_s31_r11`。
 同一个口既出日志也收推送命令。统计行的含义见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+
+## Lua 应用数据与卸载
+
+每个 Lua VM 的 `storage.get_root_dir()` 指向 `/data/appdata/<id>/`，包含应用关闭时的 finalizer。
+启动器短按打开、长按确认；下载应用可卸载本体和数据，出厂应用只能清除数据。
+删除遮蔽出厂版本的下载应用后，出厂版本会重新显示。
+USB 可用 `scripts/push-app.py rm <id>` 卸载下载应用，或 `rmdata <id>` 清除任意 Lua 应用的数据；
+成功回执表示停止并销毁 VM 后的实际文件操作已完成。
+旧版本散落在 `/data` 根下的文件无法可靠归属，保留不动；Lua 绝对路径 `io` 不是沙箱。
+恢复流程、边界和验证说明见 [N7_APP_LIFECYCLE.md](docs/N7_APP_LIFECYCLE.md)。

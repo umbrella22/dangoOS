@@ -226,6 +226,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
     // Built-ins until the file systems are mounted (`main::mount_storage`).
     let mut icons = IconCache::new();
     let mut scanned = false;
+    let mut pending_management = None;
+    let mut management_frame_submitted = false;
     let mut skin_loaded = false;
     app.set_registry(mosaico_s31::hub::registry::Registry::builtin_only(
         &mut icons,
@@ -396,6 +398,10 @@ pub async fn ui_task(mut plane: PlaneUi) {
         if let Err(error) = ui.drain(&mut app, DRAIN_MAX) {
             warn!("ui_task: Ui::drain rejected: {error}");
         }
+        apps::set_ui_management_pending(app.management_busy());
+        if app.take_management_haptic() && app.hub().settings.haptics {
+            haptic::play(HapticPattern::MagneticContact);
+        }
         if app.screen() != last_screen {
             if app.screen() == Screen::Fox {
                 runtime.ignore_touch_until(now_ms + entrance::TOTAL_MS);
@@ -407,9 +413,29 @@ pub async fn ui_task(mut plane: PlaneUi) {
             app.set_registry(apps::scan_at_boot(&mut icons));
             ui.mark_dirty();
         }
-        if let Some(req) = apps::take_request() {
-            apply_apps_request(&mut app, &mut icons, req);
-            ui.mark_dirty();
+        if management_frame_submitted && !port.is_busy() && !buttons::shutdown_requested() {
+            if let Some(op) = pending_management.take() {
+                let result = apps::manage(op).await;
+                app.management_finished(op, result);
+                apps::set_ui_management_pending(false);
+                ui.mark_dirty();
+            }
+            management_frame_submitted = false;
+        }
+        // The request is retained through this loop's render/submit before
+        // its potentially slow stop barrier and flash writes next iteration.
+        if pending_management.is_none() {
+            pending_management = app.take_management();
+            if pending_management.is_some() {
+                apps::set_ui_management_pending(true);
+            }
+        }
+        if pending_management.is_none() {
+            if let Some(req) = apps::take_request() {
+                apply_apps_request(&mut app, &mut icons, req);
+                apps::acknowledge_management_refresh();
+                ui.mark_dirty();
+            }
         }
         // A Lua app that ended by itself (finished or failed) leaves its page.
         if lua::take_ended() && is_lua_page(app.page()) {
@@ -534,7 +560,13 @@ pub async fn ui_task(mut plane: PlaneUi) {
             if let Err(error) = ui.drain(&mut app, DRAIN_MAX) {
                 warn!("ui_task: Ui::drain rejected: {error}");
             }
+            apps::set_ui_management_pending(app.management_busy());
             if let Some((screen, damage)) = port.take_frame() {
+                // This is the ordinary LVGL busy-state frame, never a Lua
+                // or transition frame. Its lease must finish before deletion.
+                if pending_management.is_some() && app.page() == Page::Launcher {
+                    management_frame_submitted = true;
+                }
                 plane.submit(PlaneJob {
                     shutdown_sleep: false,
                     canvas: Frame::Screen(screen),

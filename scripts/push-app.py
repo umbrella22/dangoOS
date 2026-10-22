@@ -2,7 +2,7 @@
 """Push a Lua app to a Mosaico S31 over the USB console, or control apps.
 
     scripts/push-app.py push <app-dir> [--run] [--follow]
-    scripts/push-app.py run <id> | stop | reload | ls | rm <id> [--follow]
+    scripts/push-app.py run <id> | stop | reload | ls | rm <id> | rmdata <id> [--follow]
     scripts/push-app.py status | reboot [--follow]
     scripts/push-app.py skin-push <skin-dir> [--select] [--follow]
     scripts/push-app.py skin-select <id> | skin-rm <id> | skin-ls
@@ -164,8 +164,8 @@ def push_skin(dev, root, select):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls"])
-    ap.add_argument("target", nargs="?", help="app directory (push) or app id (run, rm)")
+    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls"])
+    ap.add_argument("target", nargs="?", help="app directory (push) or app id (run, rm, rmdata)")
     ap.add_argument("--select", action="store_true", help="select after skin-push")
     ap.add_argument("--run", action="store_true", help="open the app after pushing")
     ap.add_argument("--follow", action="store_true", help="keep printing the device log")
@@ -173,7 +173,7 @@ def main():
     ap.add_argument("--verbose", "-v", action="store_true", help="print device log lines while waiting")
     args = ap.parse_args()
 
-    needs_target = args.action in ("push", "run", "rm", "skin-push", "skin-select", "skin-rm")
+    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
 
@@ -194,8 +194,8 @@ def main():
         print(dev.command("ls")[len("@ok ls"):].strip() or "(no apps in /data/apps)")
     elif args.action == "status":
         print(dev.command("status")[len("@ok status"):].strip())
-    elif args.action in ("run", "rm"):
-        dev.command(f"{args.action} {args.target}")
+    elif args.action in ("run", "rm", "rmdata"):
+        dev.command(f"{args.action} {args.target}", timeout=30.0)
     elif args.action == "reboot":
         # The device drops off USB as it resets, often before the reply.
         try:

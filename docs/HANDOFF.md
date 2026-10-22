@@ -250,110 +250,28 @@ AI 长按使系统进入终态 Sleep，只有当前 Sleep 帧成功上传并显�
 - 连续 OTA 10 次，`/data` 里的应用都还在，旧槽始终可用。
 - 全程不碰 0x2000 的 bootloader 和 0x20000 的 vibe_mode。
 
-### N7. 长按卸载 Lua 应用（方案已定，未动手）
+### N7. 长按卸载 Lua 应用（代码与主机检查完成；真机待测）
 
-目标：在启动器里长按一个 Lua 应用的图标，确认后删除应用本体和它的数据。
-Rust 原生应用（设置、传感器、计时器）不允许删除。
+每个前台 VM 的数据根为 `/data/appdata/<id>/`，存储于独立 VM 上下文；关闭时的
+finalizer 也访问相同根。兼容默认根采用短锁复制，既有 VM 不受后续修改影响。
+旧 `/data` 根文件保留；绝对路径 `io` 仍不构成沙箱。
 
-#### 已确认的事实
+启动器短按打开、长按确认，完整 id 与预期来源共同决定操作：Data 可卸载本体与
+数据，System / Builtin 只能清数据，原生应用没有卸载动作。返回和背景可取消；
+列表重排不改变目标，来源变化要求重新确认，长名称不会挤掉操作按钮。
 
-- 应用来源（`hub/registry.rs` 的 `Origin`）：
+UI 与 USB 共用管理路径，先关闭 VM 并等待 finalizer 完成，再执行文件操作。
+管理状态保留到强制停止与列表刷新完成，上传 / 启动冲突明确报忙。UI 在 busy
+状态帧提交并释放后才执行删除。USB 支持 `rm` 和 `rmdata`，真实完成后才回复成功，
+同一 USB 包内的后续命令不会越过删除边界，原始文件内容继续按块写入。
 
-  | 来源 | 位置 | 能否卸载 |
-  | --- | --- | --- |
-  | Data | `/data/apps/<id>`，USB 推送的 | 能删本体和数据 |
-  | System | `/system/apps/<id>`，官方只读分区 | 本体删不掉，只能清数据 |
-  | Builtin | 编进固件的 Lua 应用（Snake、2048） | 本体删不掉，只能清数据 |
-  | 原生 | `AppId::Settings / Sensors / Timer`，Rust | 不响应长按 |
+`.trash/<id>` 与 `.clear/<id>` 记录删除 / 清数据意图；启动恢复也清理同 id 的
+appdata 和未完成上传。恢复失败的 id 禁止运行或重新上传，旧数据和其他应用不动。
 
-- 同一个 id 可以同时出现在 `/data/apps` 和 `/system/apps`，`/data` 那份优先显示（遮蔽规则）。
-  删掉 `/data` 那份以后，`/system` 那份会重新出现。
-- USB 推送协议已经有 `rm <id>`（`hub/push.rs`）：只会 `remove_tree("/data/apps/<id>")` 然后重扫，**不删数据**。
-- **应用数据目前没有隔离**。`storage.get_root_dir()` 返回 C 侧的数据根（`mosaico-lua/csrc/mosaico_platform.c`，默认 `/data`）。
-  固件从没调用过 `mosaico_lua::set_data_root`，所以所有应用共用 `/data` 根目录。
-  例如 `hello_push` 把计数写在 `/data/hello_push.count`，无法判断这个文件属于哪个应用。
-- 文件系统已有 `Vfs::remove_tree`、`Vfs::rename`，通过 `mosaico_fs::global::with` 访问。
-  `registry::scan` 会跳过以 `.` 开头的目录（`.incoming` 就是靠这个隐藏的）。
-- 界面框架（`lvgl-ui`）的事件里有 `LongPressed` 和 `ShortClicked`，用 `Node::on_event` 接；还有 `components::dialog` 可以做确认框。
-  LVGL 默认长按时间是 400 ms（`LV_INDEV_DEF_LONG_PRESS_TIME`）。
-- 启动器图标现在用 `.on_click(AppMsg::Open(app))`（`ui/hub_view.rs`）。
-  `AppMsg` 是 `Copy` 的，Lua 应用用注册表下标 `AppId::Lua(i)` 表示，重扫后下标可能变。
-
-#### 计划步骤
-
-1. 先给数据分家（不做这步，“删除应用数据”就无从谈起）。
-   - 约定每个应用的数据目录是 `/data/appdata/<id>/`。
-   - `lua::start` 之前调用 `set_data_root("/data/appdata/<id>")`，并 `create_dir_all`。
-   - `storage.get_root_dir()` 就会指向自己的目录，`hello_push` 这类写法不用改。
-   - 已经散落在 `/data` 根下的旧文件无法归属，留着不动，在 README 里说明。
-2. 一个共享的卸载函数，放在 `hub/` 下（例如 `hub/uninstall.rs`），能在主机上测试：
-   - `uninstall(vfs, id) -> Result<Outcome, Error>`，只接受来源为 Data 的应用。
-   - 步骤：
-     1. `rename("/data/apps/<id>", "/data/apps/.trash/<id>")`。LittleFS 的 rename 是原子的，这一步之后启动器就看不到它了。
-     2. `remove_tree("/data/appdata/<id>")`，目录不存在不算错误。
-     3. `remove_tree("/data/apps/.trash/<id>")`。
-   - `clear_data(vfs, id)` 只做第 2 步，给 System 和 Builtin 用。
-   - 启动时（`storage::init` 挂载之后）清空 `/data/apps/.trash`，处理卸载到一半断电的情况。
-   - USB 的 `rm` 改成调用同一个函数，再加一个 `rmdata <id>` 命令。
-3. 界面。
-   - 图标从 `on_click` 改成 `on_event`：
-     - `ShortClicked` 发 `Open`。
-     - `LongPressed` 发 `AskUninstall(AppId)`。
-     - 原生应用的图标不接 `LongPressed`。
-   - `MosaicoApp` 新增 `pending_uninstall: Option<String>`，存应用 **id**，不存下标。
-     收到 `AskUninstall` 时按下标查到 id 存进去，并震一下（现有 haptic 模式）。
-   - 启动器页面在 `pending_uninstall` 有值时叠一个 `dialog`：
-     - Data 应用：
-       - 标题：卸载“<名字>”？
-       - 正文：会删除应用和它保存的数据，无法恢复。
-       - 如果 `/system` 有同名应用，再加一句：卸载后恢复为出厂版本。
-       - 按钮：取消 / 卸载。
-     - System / Builtin 应用：
-       - 标题：清除“<名字>”的数据？
-       - 按钮：取消 / 清除。
-     - 点背景等于取消。
-   - 确认后发 `ConfirmUninstall`。`update` 只负责把 id 交给执行方，不在界面回调里碰文件系统。
-4. 执行与刷新。
-   - `tasks/apps.rs` 的 `Action` 加 `Uninstall(String)` 和 `ClearData(String)`。
-     UI 任务在主循环里取到请求后，在 `global::with` 里执行，然后 `reload` 重扫。
-   - 应用较大时删除可能要几百毫秒，先在 UI 任务里做，期间对话框显示“正在卸载…”。
-     实测卡顿明显再挪到单独的小任务里。
-   - 完成后弹一个 toast（`components::toast`）：已卸载，或者“卸载失败：<错误>”。
-5. 测试。
-   - 主机测试（仿照 `push.rs` 的内存 Vfs）：
-     - 卸载 Data 应用后本体和数据都没了。
-     - System 和 Builtin 拒绝卸载、只能清数据。
-     - 遮蔽的同名应用在卸载后重新出现。
-     - 卸载到一半中断，留下的 `.trash` 在下次启动时被清掉。
-     - 不存在的 id 和非法 id 返回错误。
-     - `rm` 和 `rmdata` 走同一条路径。
-   - 界面测试：长按不会顺带打开应用；重扫后对话框里的 id 不变。
-
-#### 预计会遇到的问题与对策
-
-| # | 现象 | 原因 | 对策 |
-| --- | --- | --- | --- |
-| 1 | 长按松手后应用被打开了 | LVGL 的 `CLICKED` 不管有没有长按都会发 | 打开改用 `ShortClicked` |
-| 2 | 在滚动的应用列表里拖动时误触发长按 | 手指按住不动超过 400 ms 才算长按，但慢速拖动的开头可能被判成按住 | 收到 `ScrollBegin` 或 `PressLost` 时取消；需要的话把长按时间调到 600 ms |
-| 3 | 删错了应用 | 重扫后 `AppId::Lua(i)` 指向了另一个应用 | 对话框只认 id；确认时再 `registry.find(id)` 核对一次，找不到就取消 |
-| 4 | 卸载后出现一个同名的“新”应用 | 遮蔽规则，`/system` 有同名应用 | 对话框里提前说明“恢复为出厂版本”，属于正常现象 |
-| 5 | 系统或内置应用也出现了“卸载” | 没区分 `Origin` | 按来源决定对话框内容；卸载函数本身也拒绝非 Data 来源，两层把关 |
-| 6 | 数据没删干净 | 旧应用把文件写在 `/data` 根，或用绝对路径 `io.open` 写到了别处 | 第 1 步之后新数据都在自己的目录里；绝对路径无法拦截（Lua `io` 不是沙箱），文档写明 |
-| 7 | 卸载时屏幕或灯效卡一下 | 在 UI 任务里删大目录，LittleFS 擦写占时间 | 先测；明显就挪到单独任务，或者每删一个文件让出一次 |
-| 8 | 卸载到一半断电，启动器里出现残缺应用 | 删除不是原子的 | 先 rename 到 `.trash`（原子）再删；启动时清 `.trash`，`scan` 本来就跳过点目录 |
-| 9 | USB 正在推送同一个应用时被卸载 | 推送暂存在 `.incoming/<id>`，commit 时会再出现 | 卸载时一并删除 `.incoming/<id>`；推送 commit 时目标已不存在属于正常 |
-| 10 | 应用正在运行时被卸载 | 只有启动器页能长按，正常情况下不会；但 USB 的 `rm` 可以在应用运行时执行 | `rm` 和卸载都先判断：如果是当前应用，先 `lua::stop()` 再删 |
-| 11 | 数据根在多个应用之间串了 | `set_data_root` 是全局的 C 变量，切换应用时忘了重设 | 只在 `lua::start` 一处设置；单测覆盖连续启动两个应用 |
-| 12 | 对话框挡住了边缘手势，或者手势把对话框关了 | 顶部、底部、左边的手势区域归系统 | 对话框打开时返回手势等于取消；关掉对话框再执行手势 |
-
-#### 验收
-
-- 长按推送的 `hello_push` 后弹出卸载确认。确认后图标消失，`/data/apps/hello_push` 和 `/data/appdata/hello_push` 都不存在。
-- 重新推送后计数从 1 开始。
-- 长按 dino（`/system`）和 2048（内置）只出现“清除数据”；长按设置、传感器、计时器没有任何反应。
-- 推送一个与 dino 同名的应用，卸载后出厂版 dino 回来了。
-- 长按松手不会打开应用；快速点击仍然正常打开。
-- `cargo test` 新增的卸载测试全部通过，`scripts/check.sh` 通过。
+独立检查通过 328 项主机测试、17 项 Python 工具测试、8 个真实 LVGL 指针场景、
+固件 release、预览和 ROM 符号检查。实现细节与固件指纹见
+[N7_APP_LIFECYCLE.md](N7_APP_LIFECYCLE.md)。真机长按、停止时序、物理断电恢复和
+提示震动仍为 not-run，集中测试见 [统一清单](N1_N7_DEVICE_ACCEPTANCE.md)。
 
 ### 零碎待办
 

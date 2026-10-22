@@ -228,36 +228,54 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                 Err(EndpointError::Disabled) => break,
                 Err(EndpointError::BufferOverflow) => continue,
             };
-            let mut effects = Vec::new();
-            let fed = mosaico_fs::global::with(|vfs| {
-                session.feed(vfs, &buf[..n], &mut |e| effects.push(e));
-                Ok(())
-            });
-            if fed.is_err() {
-                // No VFS installed: `status` reports that, `reboot` still
-                // works, everything else fails on the missing mounts.
-                session.feed(&mut no_mounts, &buf[..n], &mut |e| effects.push(e));
-            }
-            for effect in effects {
-                match effect {
-                    Effect::Reply(text) => reply(&text).await,
-                    Effect::Reload { run } => {
-                        info!(
-                            "push: reload{}",
-                            run.as_deref()
-                                .map(|id| alloc::format!(", run {id}"))
-                                .unwrap_or_default()
-                        );
-                        apps::request(true, run.map(apps::Action::Run));
+            // Preserve whole USB payload chunks, stopping only at a deferred
+            // command boundary before processing the packet's remaining bytes.
+            let mut consumed = 0;
+            while consumed < n {
+                session.set_management_busy(apps::is_managing());
+                let mut effects = Vec::new();
+                let fed = mosaico_fs::global::with(|vfs| {
+                    Ok(session
+                        .feed_until_deferred(vfs, &buf[consumed..n], &mut |e| effects.push(e)))
+                });
+                consumed += match fed {
+                    Ok(n) => n,
+                    Err(_) => {
+                        session.feed_until_deferred(&mut no_mounts, &buf[consumed..n], &mut |e| {
+                            effects.push(e)
+                        })
                     }
-                    Effect::Run(id) => apps::request(false, Some(apps::Action::Run(id))),
-                    Effect::Stop => apps::request(false, Some(apps::Action::Stop)),
-                    Effect::SkinsChanged => crate::tasks::skins::request_reload(),
-                    Effect::Reboot => {
-                        warn!("push: reboot requested");
-                        // Let the reply and the log line go out first.
-                        Timer::after_millis(300).await;
-                        esp_hal::system::software_reset();
+                };
+                for effect in effects {
+                    match effect {
+                        Effect::Manage(op) => {
+                            let id = op.identity();
+                            let result = apps::manage(op).await;
+                            let text = match result {
+                                Ok(()) => alloc::format!("@ok {} {}", op.verb(), id.id()),
+                                Err(e) => alloc::format!("@err {} {}: {e}", op.verb(), id.id()),
+                            };
+                            reply(&text).await;
+                        }
+                        Effect::Reply(text) => reply(&text).await,
+                        Effect::Reload { run } => {
+                            info!(
+                                "push: reload{}",
+                                run.as_deref()
+                                    .map(|id| alloc::format!(", run {id}"))
+                                    .unwrap_or_default()
+                            );
+                            apps::request(true, run.map(apps::Action::Run));
+                        }
+                        Effect::Run(id) => apps::request(false, Some(apps::Action::Run(id))),
+                        Effect::Stop => apps::request(false, Some(apps::Action::Stop)),
+                        Effect::SkinsChanged => crate::tasks::skins::request_reload(),
+                        Effect::Reboot => {
+                            warn!("push: reboot requested");
+                            // Let the reply and the log line go out first.
+                            Timer::after_millis(300).await;
+                            esp_hal::system::software_reset();
+                        }
                     }
                 }
             }

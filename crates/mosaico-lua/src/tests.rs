@@ -317,3 +317,93 @@ fn clocked_blocked_limit() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn per_vm_root_interleaves_and_survives_finalizers() {
+    use std::sync::{Arc, Mutex};
+    struct Roots(Arc<Mutex<Vec<String>>>);
+    impl Host for Roots {
+        fn print(&mut self, text: &[u8]) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(text).into_owned());
+        }
+    }
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let mut a = Vm::new(
+        Box::new(Roots(captured.clone())),
+        Limits::default(),
+        &GLOBAL_ALLOCATOR,
+        1,
+    )
+    .unwrap();
+    let mut b = Vm::new(
+        Box::new(Roots(captured.clone())),
+        Limits::default(),
+        &GLOBAL_ALLOCATOR,
+        2,
+    )
+    .unwrap();
+    a.set_storage_root("/data/appdata/a").unwrap();
+    b.set_storage_root("/data/appdata/b").unwrap();
+    assert!(a.set_storage_root("/bad\0root").is_err());
+    assert!(a
+        .set_storage_root(&alloc::format!("/{}", "x".repeat(128)))
+        .is_err());
+    let source = br#"
+        local storage = require('storage')
+        keeper = setmetatable({}, {__gc=function() print('gc:' .. storage.get_root_dir()) end})
+        print(storage.get_root_dir())
+        coroutine.yield()
+        print(storage.get_root_dir())
+    "#;
+    a.load("a", source).unwrap();
+    b.load("b", source).unwrap();
+    a.resume();
+    b.resume();
+    a.resume();
+    b.resume();
+    drop(b);
+    drop(a);
+    let lines = captured.lock().unwrap();
+    assert_eq!(
+        &*lines,
+        &[
+            "/data/appdata/a",
+            "/data/appdata/b",
+            "/data/appdata/a",
+            "/data/appdata/b",
+            "gc:/data/appdata/b",
+            "gc:/data/appdata/a"
+        ]
+    );
+}
+
+#[test]
+fn compatibility_default_is_a_validated_owned_snapshot() {
+    set_data_root("/data/default-before").unwrap();
+    let mut before = fresh();
+    set_data_root("/data/default-after").unwrap();
+    let mut after = fresh();
+    // Restore configuration immediately so concurrently constructed unrelated
+    // VMs do not retain this test's default longer than necessary.
+    set_data_root("/data").unwrap();
+    assert!(set_data_root("relative").is_err());
+    assert!(set_data_root("/bad\0root").is_err());
+    assert!(set_data_root(&alloc::format!("/{}", "x".repeat(128))).is_err());
+    before
+        .load(
+            "before",
+            br#"assert(require('storage').get_root_dir() == '/data/default-before')"#,
+        )
+        .unwrap();
+    after
+        .load(
+            "after",
+            br#"assert(require('storage').get_root_dir() == '/data/default-after')"#,
+        )
+        .unwrap();
+    assert_eq!(before.resume(), Step::Done);
+    assert_eq!(after.resume(), Step::Done);
+}

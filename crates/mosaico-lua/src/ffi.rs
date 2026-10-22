@@ -103,5 +103,4 @@ extern "C" {
     pub fn mosaico_lua_exit(l: *mut lua_State);
 
     // csrc/mosaico_platform.c
-    pub fn mosaico_set_data_root(path: *const c_char);
 }

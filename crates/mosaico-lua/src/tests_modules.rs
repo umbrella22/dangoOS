@@ -449,7 +449,6 @@ fn file_apps_require_io_and_storage() {
     std::fs::write(shared.join("common.lua"), "return 'shared'").unwrap();
     let data = root.join("data");
     std::fs::create_dir_all(&data).unwrap();
-    set_data_root(data.to_str().unwrap());
     std::fs::write(
         app.join("scripts/main.lua"),
         r#"
@@ -484,6 +483,7 @@ fn file_apps_require_io_and_storage() {
     )
     .unwrap();
     let mut vm = vm();
+    vm.set_storage_root(data.to_str().unwrap()).unwrap();
     let entry = app.join("scripts/main.lua");
     vm.load_file(entry.to_str().unwrap(), &[shared.to_str().unwrap()])
         .unwrap();
@@ -512,9 +512,9 @@ fn example_push_app_runs() {
     let app =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/lua-apps/hello_push");
     let data = temp_dir("hello_push");
-    set_data_root(data.to_str().unwrap());
     for launch in 1..=2u32 {
         let mut vm = vm();
+        vm.set_storage_root(data.to_str().unwrap()).unwrap();
         vm.load_file(app.join("scripts/main.lua").to_str().unwrap(), &[])
             .unwrap();
         let out = drive(&mut vm, 10);

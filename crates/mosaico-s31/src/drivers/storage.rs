@@ -315,6 +315,9 @@ pub fn init(_flash: esp_hal::peripherals::FLASH<'static>) {
         }
         _ => warn!("fs: no room for /data in main_app"),
     }
+    if let Err(e) = mosaico_s31::hub::uninstall::recover(&mut vfs) {
+        warn!("fs: app recovery incomplete: {e}; pending identities remain blocked");
+    }
     global::install(vfs);
     let _ = global::with(|v| {
         for dir in ["/system", "/data"] {

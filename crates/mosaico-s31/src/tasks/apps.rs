@@ -39,7 +39,7 @@ pub fn request(reload: bool, action: Option<Action>) {
     critical_section::with(|cs| {
         let mut p = PENDING.borrow_ref_mut(cs);
         p.reload |= reload;
-        if action.is_some() {
+        if action.is_some() && !is_managing() {
             p.action = action;
         }
     });
@@ -47,7 +47,11 @@ pub fn request(reload: bool, action: Option<Action>) {
 
 pub fn take_request() -> Option<Request> {
     critical_section::with(|cs| {
-        let req = core::mem::take(&mut *PENDING.borrow_ref_mut(cs));
+        let mut req = core::mem::take(&mut *PENDING.borrow_ref_mut(cs));
+        if *MANAGING.borrow_ref(cs) == mosaico_s31::hub::uninstall::Phase::AwaitingRefresh {
+            req.reload = true;
+            req.action = Some(Action::Stop);
+        }
         (req.reload || req.action.is_some()).then_some(req)
     })
 }
@@ -60,6 +64,14 @@ pub fn scan_at_boot(icons: &mut IconCache) -> Registry {
         return Registry::builtin_only(icons);
     }
     enter(Stage::AppScan);
+    let recovery = mosaico_fs::global::with(|vfs| {
+        mosaico_s31::hub::uninstall::recover(vfs).map_err(|_| mosaico_fs::Errno::IO)
+    });
+    if let Err(e) = recovery {
+        warn!("apps: recovery failed ({e}); built-ins only");
+        enter(Stage::Running);
+        return Registry::builtin_only(icons);
+    }
     let reg = scan(icons);
     enter(Stage::Running);
     reg
@@ -95,4 +107,34 @@ pub fn scan(icons: &mut IconCache) -> Registry {
         started.elapsed().as_millis()
     );
     reg
+}
+
+static MANAGING: Mutex<RefCell<mosaico_s31::hub::uninstall::Phase>> =
+    Mutex::new(RefCell::new(mosaico_s31::hub::uninstall::Phase::Idle));
+static UI_PENDING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub fn set_ui_management_pending(pending: bool) {
+    UI_PENDING.store(pending, core::sync::atomic::Ordering::Release);
+}
+pub fn is_managing() -> bool {
+    UI_PENDING.load(core::sync::atomic::Ordering::Acquire)
+        || critical_section::with(|cs| MANAGING.borrow_ref(cs).busy())
+}
+pub fn acknowledge_management_refresh() {
+    critical_section::with(|cs| {
+        let mut phase = MANAGING.borrow_ref_mut(cs);
+        if *phase == mosaico_s31::hub::uninstall::Phase::AwaitingRefresh {
+            phase.acknowledge_refresh();
+            super::lua::release_management();
+        }
+    });
+}
+/// A second owner gets busy. The start barrier remains held through UI rescan.
+pub async fn manage(op: mosaico_s31::hub::uninstall::Operation) -> Result<(), String> {
+    critical_section::with(|cs| MANAGING.borrow_ref_mut(cs).acquire()).map_err(String::from)?;
+    super::lua::quiesce().await;
+    let result = mosaico_fs::global::with(|vfs| Ok(mosaico_s31::hub::uninstall::execute(vfs, op)))
+        .map_err(|e| alloc::format!("{e}"))
+        .and_then(|r| r);
+    critical_section::with(|cs| MANAGING.borrow_ref_mut(cs).completed());
+    result
 }

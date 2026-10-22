@@ -205,7 +205,14 @@ enum TileFace<'a> {
     Letter(String, Color),
 }
 
-fn tile(key: Key, app: AppId, face: TileFace, name: &str, dim: bool) -> Node<AppMsg> {
+fn tile(
+    key: Key,
+    app: AppId,
+    face: TileFace,
+    name: &str,
+    dim: bool,
+    identity: Option<crate::hub::uninstall::Identity>,
+) -> Node<AppMsg> {
     let square = Node::obj()
         .key(Key::Named("icon"))
         .scrollable(false)
@@ -243,7 +250,14 @@ fn tile(key: Key, app: AppId, face: TileFace, name: &str, dim: bool) -> Node<App
         .key(key)
         .scrollable(false)
         .clickable(true)
-        .on_click(AppMsg::Open(app))
+        .on_event(move |event| match event {
+            lvgl_ui::Event::ShortClicked => {
+                Some(identity.map(AppMsg::OpenLua).unwrap_or(AppMsg::Open(app)))
+            }
+            lvgl_ui::Event::LongPressed => identity.map(AppMsg::ManageAsk),
+            lvgl_ui::Event::PressLost | lvgl_ui::Event::ScrollBegin => Some(AppMsg::ManageCancel),
+            _ => None,
+        })
         .style(
             Style::neutral()
                 .width(Size::Px(120))
@@ -259,15 +273,22 @@ fn tile(key: Key, app: AppId, face: TileFace, name: &str, dim: bool) -> Node<App
 
 /// `name` shortened with "…" to fit under a 120 px tile at 24 px.
 fn fit_name(name: &str) -> String {
-    const MAX: u32 = 120;
+    fit_text(name, 120)
+}
+fn fit_text(name: &str, max: u32) -> String {
+    let clean: String = name
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let name = clean.as_str();
     let w = |c: char| super::hub_font::advance(&HUB_24, c).unwrap_or(24) as u32;
-    if name.chars().map(w).sum::<u32>() <= MAX {
+    if name.chars().map(w).sum::<u32>() <= max {
         return name.into();
     }
     let mut out = String::new();
     let mut used = w('…');
     for c in name.chars() {
-        if used + w(c) > MAX {
+        if used + w(c) > max {
             break;
         }
         used += w(c);
@@ -297,6 +318,7 @@ pub fn launcher(registry: &Registry) -> Node<AppMsg> {
                 TileFace::Symbol(t.icon, t.color),
                 t.app.title(),
                 false,
+                None,
             )
         })
         .collect();
@@ -319,6 +341,7 @@ pub fn launcher(registry: &Registry) -> Node<AppMsg> {
             face,
             &entry.title,
             !entry.runnable(),
+            crate::hub::uninstall::Identity::new(&entry.app.id, entry.origin),
         ));
     }
     let row_count = tiles.len().div_ceil(TILES_PER_ROW);
@@ -815,3 +838,99 @@ pub fn app(hub: &Hub, registry: &Registry, app: AppId) -> Node<AppMsg> {
         AppId::Lua(i) => lua_app(registry.apps.get(i as usize)),
     }
 }
+
+/// Confirmation is keyed separately from the grid. Identity is captured in
+/// tile events; neither dialog nor execution relies on a registry index.
+pub fn launcher_managed(
+    registry: &Registry,
+    confirmation: Option<crate::hub::uninstall::Identity>,
+    busy: bool,
+    toast: Option<&str>,
+) -> Node<AppMsg> {
+    let mut root = launcher(registry);
+    if let Some(identity) = confirmation {
+        let name = registry
+            .find(identity.id())
+            .map(|i| registry.apps[i].title.as_str())
+            .unwrap_or(identity.id());
+        let name = fit_text(name, 232);
+        let prompt = if identity.origin == crate::hub::registry::Origin::Data {
+            alloc::format!("卸载 {name}？\n应用和数据将删除。\n如有出厂版本，将恢复显示。")
+        } else {
+            alloc::format!("清除 {name} 数据？\n出厂应用将保留。")
+        };
+        let dialog = Node::column()
+            .key(Key::Named("manage-dialog"))
+            .clickable(true)
+            .scrollable(false)
+            .style(
+                card()
+                    .width(Size::Px(360))
+                    .height(Size::Content)
+                    .align(Align::Center)
+                    .gap(20),
+            )
+            .child(text(prompt, font_24(), TEXT).style(Style::default().width(Size::Px(320))))
+            .child(
+                Node::obj()
+                    .clickable(true)
+                    .scrollable(false)
+                    .style(card().width(Size::Px(300)).height(Size::Px(56)))
+                    .key(Key::Named("manage-confirm"))
+                    .on_click(AppMsg::ManageConfirm)
+                    .child(
+                        text("确认", font_24(), TEXT)
+                            .style(Style::default().align(Align::Center))
+                            .clickable(false),
+                    ),
+            )
+            .child(
+                Node::obj()
+                    .clickable(true)
+                    .scrollable(false)
+                    .style(card().width(Size::Px(300)).height(Size::Px(56)))
+                    .key(Key::Named("manage-cancel"))
+                    .on_click(AppMsg::ManageCancel)
+                    .child(
+                        text("取消", font_24(), TEXT)
+                            .style(Style::default().align(Align::Center))
+                            .clickable(false),
+                    ),
+            );
+        root = root.child(
+            Node::obj()
+                .key(Key::Named("manage-overlay"))
+                .clickable(true)
+                .scrollable(false)
+                .on_click(AppMsg::ManageCancel)
+                .style(
+                    Style::neutral()
+                        .bg(BG)
+                        .width(Size::Percent(100))
+                        .height(Size::Percent(100))
+                        .align(Align::Center),
+                )
+                .child(dialog),
+        );
+    } else if busy || toast.is_some() {
+        root = root.child(
+            text(
+                if busy {
+                    "正在处理…"
+                } else {
+                    toast.unwrap_or("")
+                },
+                font_24(),
+                TEXT,
+            )
+            .key(Key::Named("manage-toast"))
+            .style(card().align(Align::BottomMid).width(Size::Percent(100))),
+        );
+    }
+    root
+}
+
+pub const REMOVED_TOAST: &str = "应用已卸载";
+pub const CLEARED_TOAST: &str = "应用数据已清除";
+
+pub const SOURCE_CHANGED_TOAST: &str = "应用来源已变化，请重新确认";

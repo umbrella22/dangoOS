@@ -27,7 +27,9 @@ pub mod hub_font;
 pub mod hub_view;
 pub mod splash;
 
+use crate::hub::uninstall::{Identity, Operation};
 use alloc::rc::Rc;
+use alloc::string::String;
 use core::cell::Cell;
 
 use lvgl_ui::{App, Color, Key, Node, Style, Theme};
@@ -87,6 +89,10 @@ pub enum AppMsg {
     Next,
     /// A launcher tile was tapped.
     Open(AppId),
+    OpenLua(Identity),
+    ManageAsk(Identity),
+    ManageCancel,
+    ManageConfirm,
     /// A system edge gesture (from the UI task, not LVGL).
     Gesture(SystemGesture),
     /// Settings: panel brightness, percent.
@@ -110,6 +116,11 @@ pub struct MosaicoApp {
     screen: Cell<Screen>,
     hub: Hub,
     registry: Registry,
+    confirmation: Option<Identity>,
+    management_haptic: bool,
+    management: Option<Operation>,
+    management_busy: bool,
+    toast: Option<String>,
 }
 
 impl MosaicoApp {
@@ -130,6 +141,11 @@ impl MosaicoApp {
             }),
             hub: Hub::new(),
             registry: Registry::default(),
+            confirmation: None,
+            management_haptic: false,
+            management: None,
+            management_busy: false,
+            toast: None,
         }
     }
 
@@ -191,7 +207,30 @@ impl MosaicoApp {
     }
 
     /// Change page. Coming back to the fox replays its entrance.
+    pub fn take_management_haptic(&mut self) -> bool {
+        core::mem::take(&mut self.management_haptic)
+    }
+    pub fn management_busy(&self) -> bool {
+        self.management_busy
+    }
+    pub fn take_management(&mut self) -> Option<Operation> {
+        self.management.take()
+    }
+    pub fn management_finished(&mut self, op: Operation, result: Result<(), String>) {
+        self.management_busy = false;
+        self.toast = Some(match result {
+            Ok(()) => match op {
+                Operation::Remove(_) => hub_view::REMOVED_TOAST.into(),
+                Operation::Clear(_) => hub_view::CLEARED_TOAST.into(),
+            },
+            Err(e) => e,
+        });
+    }
+    pub fn confirmation(&self) -> Option<Identity> {
+        self.confirmation
+    }
     pub fn go(&mut self, page: Page) {
+        self.confirmation = None;
         if page == self.hub.page {
             return;
         }
@@ -222,12 +261,70 @@ impl App for MosaicoApp {
                 self.control
                     .set_expression(next_ai_state(self.control.expression()));
             }
+            AppMsg::OpenLua(identity) => {
+                if self.hub.page == Page::Launcher
+                    && self.confirmation.is_none()
+                    && !self.management_busy
+                {
+                    if let Some(i) = self.registry.find(identity.id()) {
+                        if self.registry.apps[i].origin == identity.origin {
+                            self.go(Page::App(AppId::Lua(i as u8)));
+                        }
+                    }
+                }
+            }
+            AppMsg::ManageAsk(identity) => {
+                if self.hub.page == Page::Launcher && !self.management_busy {
+                    if let Some(i) = self.registry.find(identity.id()) {
+                        if self.registry.apps[i].origin == identity.origin {
+                            if self.confirmation != Some(identity) {
+                                self.management_haptic = true;
+                            }
+                            self.confirmation = Some(identity);
+                            self.toast = None;
+                        }
+                    }
+                }
+            }
+            AppMsg::ManageCancel => {
+                self.confirmation = None;
+            }
+            AppMsg::ManageConfirm => {
+                if let Some(identity) = self.confirmation.take() {
+                    if !self
+                        .registry
+                        .find(identity.id())
+                        .is_some_and(|i| self.registry.apps[i].origin == identity.origin)
+                    {
+                        self.toast = Some(hub_view::SOURCE_CHANGED_TOAST.into());
+                        return;
+                    }
+                    if !self.management_busy {
+                        self.management_busy = true;
+                        self.management =
+                            Some(if identity.origin == crate::hub::registry::Origin::Data {
+                                Operation::Remove(identity)
+                            } else {
+                                Operation::Clear(identity)
+                            });
+                    }
+                }
+            }
             AppMsg::Open(app) => {
-                if self.hub.page == Page::Launcher {
+                if self.hub.page == Page::Launcher
+                    && self.confirmation.is_none()
+                    && !self.management_busy
+                {
                     self.go(Page::App(app));
                 }
             }
             AppMsg::Gesture(gesture) => {
+                if self.management_busy {
+                    return;
+                }
+                if self.confirmation.take().is_some() {
+                    return;
+                }
                 if self.screen.get() == Screen::Fox {
                     let next = self.hub.page.after(gesture);
                     self.go(next);
@@ -258,7 +355,12 @@ impl App for MosaicoApp {
                 ),
             Screen::Fox => match self.hub.page {
                 Page::Home => self.fox_view(theme),
-                Page::Launcher => hub_view::launcher(&self.registry),
+                Page::Launcher => hub_view::launcher_managed(
+                    &self.registry,
+                    self.confirmation,
+                    self.management_busy,
+                    self.toast.as_deref(),
+                ),
                 Page::App(app) => hub_view::app(&self.hub, &self.registry, app),
             },
         }
