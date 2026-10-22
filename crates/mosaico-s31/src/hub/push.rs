@@ -48,6 +48,8 @@ const DEPTH_MAX: usize = 6;
 /// What the firmware should do after a command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
+    /// Cancel a transfer silently while its malformed binary body is drained.
+    OtaCancel,
     /// One reply line, without the line ending.
     Reply(String),
     /// Rescan the apps, then open `run` if given.
@@ -63,6 +65,7 @@ pub enum Effect {
     SkinsChanged,
     /// The UI task validates/commits the resident brain and returns the reply.
     Brain(super::brain_store::Action),
+    Ota(crate::ota::Command),
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -84,9 +87,20 @@ struct Upload {
     failed: Option<Errno>,
 }
 
+struct OtaBody {
+    offset: u32,
+    len: usize,
+    crc: u32,
+    bytes: Vec<u8>,
+    invalid: bool,
+}
+
 /// One connection's protocol state.
 #[derive(Default)]
 pub struct Session {
+    ota_body: Option<OtaBody>,
+    ota_active: bool,
+    ota_poisoned: bool,
     line: Vec<u8>,
     overflow: bool,
     management_busy: bool,
@@ -99,6 +113,9 @@ pub struct Session {
 }
 
 impl Session {
+    pub fn set_ota_active(&mut self, active: bool) {
+        self.ota_active = active;
+    }
     pub fn set_management_busy(&mut self, busy: bool) {
         self.management_busy = busy;
     }
@@ -125,6 +142,30 @@ impl Session {
     ) -> usize {
         let original_len = data.len();
         while !data.is_empty() {
+            if self.ota_poisoned {
+                return original_len;
+            }
+            if let Some(body) = self.ota_body.as_mut() {
+                let n = (body.len - body.bytes.len()).min(data.len());
+                body.bytes.extend_from_slice(&data[..n]);
+                data = &data[n..];
+                if body.bytes.len() == body.len {
+                    let body = self.ota_body.take().unwrap();
+                    if body.invalid {
+                        out(Effect::Reply(
+                            "@err ota-chunk invalid header; body discarded".into(),
+                        ));
+                    } else {
+                        out(Effect::Ota(crate::ota::Command::Chunk {
+                            offset: body.offset,
+                            bytes: body.bytes,
+                            crc: body.crc,
+                        }));
+                    }
+                    return original_len - data.len();
+                }
+                continue;
+            }
             if self.upload.is_some() {
                 data = self.feed_upload(vfs, data, out);
                 continue;
@@ -135,14 +176,30 @@ impl Session {
                     data = &data[n + 1..];
                     let line = core::mem::take(&mut self.line);
                     let overflow = core::mem::replace(&mut self.overflow, false);
-                    if overflow {
-                        out(Effect::Reply("@err line too long".into()));
+                    if overflow || core::str::from_utf8(&line).is_err() {
+                        // The discarded prefix may have been a binary-body header.
+                        // Its length is unknowable; only reconnect can restore framing.
+                        self.ota_active = false;
+                        self.ota_poisoned = true;
+                        out(Effect::OtaCancel);
+                        out(Effect::Reply(if overflow {
+                            "@err line too long; reconnect required".into()
+                        } else {
+                            "@err invalid UTF-8 control line; reconnect required".into()
+                        }));
+                        return original_len - data.len();
                     } else if let Ok(text) = core::str::from_utf8(&line) {
                         let text = text.trim_end_matches('\r');
                         if let Some(cmd) = text.strip_prefix(PREFIX) {
                             let mut deferred = false;
                             self.command(vfs, cmd.trim(), &mut |effect| {
-                                deferred |= matches!(effect, Effect::Manage(_) | Effect::Brain(_));
+                                deferred |= matches!(
+                                    effect,
+                                    Effect::Manage(_)
+                                        | Effect::Brain(_)
+                                        | Effect::Ota(_)
+                                        | Effect::OtaCancel
+                                );
                                 out(effect);
                             });
                             if deferred {
@@ -166,6 +223,9 @@ impl Session {
 
     /// The host went away: drop a half-written file and the staging area.
     pub fn reset(&mut self, vfs: &mut Vfs) {
+        self.ota_body = None;
+        self.ota_active = false;
+        self.ota_poisoned = false;
         self.completed_photo = None;
         if let Some(up) = self.upload.take() {
             let _ = vfs.close(up.fd);
@@ -232,10 +292,76 @@ impl Session {
         rest
     }
 
+    fn ota_command(&mut self, verb: &str, args: &[&str], out: &mut dyn FnMut(Effect)) {
+        use crate::ota::Command;
+        let result: core::result::Result<Option<Command>, &str> = match (verb, args) {
+            ("ota-status", []) => Ok(Some(Command::Status)),
+            ("ota-abort", []) => {
+                self.ota_active = false;
+                Ok(Some(Command::Abort))
+            }
+            ("ota-end", []) => Ok(Some(Command::End)),
+            ("ota-begin", [size, sha]) => {
+                if self.management_busy || self.staging.is_some() || self.upload.is_some() {
+                    Err("other upload/management busy")
+                } else {
+                    match (size.parse::<u32>(), crate::ota::parse_sha(sha)) {
+                        (Ok(size), Ok(sha)) => Ok(Some(Command::Begin { size, sha })),
+                        _ => Err("invalid size/SHA256"),
+                    }
+                }
+            }
+            ("ota-chunk", _) => {
+                let len = args.get(1).and_then(|s| s.parse::<usize>().ok());
+                match len {
+                    Some(len) if (1..=crate::ota::SECTOR).contains(&len) => {
+                        let offset = args.first().and_then(|s| s.parse::<u32>().ok());
+                        let crc = args
+                            .get(2)
+                            .filter(|s| s.len() == 8)
+                            .and_then(|s| u32::from_str_radix(s, 16).ok());
+                        self.ota_body = Some(OtaBody {
+                            offset: offset.unwrap_or(0),
+                            len,
+                            crc: crc.unwrap_or(0),
+                            bytes: Vec::with_capacity(len),
+                            invalid: args.len() != 3 || offset.is_none() || crc.is_none(),
+                        });
+                        if args.len() != 3 || offset.is_none() || crc.is_none() {
+                            self.ota_active = false;
+                            out(Effect::OtaCancel);
+                        }
+                        Ok(None)
+                    }
+                    _ => {
+                        self.ota_active = false;
+                        self.ota_poisoned = true;
+                        out(Effect::OtaCancel);
+                        Err("invalid body length; reconnect required")
+                    }
+                }
+            }
+            _ => Err("invalid OTA command"),
+        };
+        match result {
+            Ok(Some(cmd)) => out(Effect::Ota(cmd)),
+            Ok(None) => {}
+            Err(e) => out(Effect::Reply(format!("@err {verb}: {e}"))),
+        }
+    }
+
     fn command(&mut self, vfs: &mut Vfs, cmd: &str, out: &mut dyn FnMut(Effect)) {
         let mut words = cmd.split_ascii_whitespace();
         let verb = words.next().unwrap_or("");
         let args: Vec<&str> = words.collect();
+        if verb.starts_with("ota-") {
+            self.ota_command(verb, &args, out);
+            return;
+        }
+        if self.ota_active && !matches!(verb, "hello") {
+            out(Effect::Reply("@err OTA busy".into()));
+            return;
+        }
         if self.management_busy
             && matches!(
                 verb,
@@ -1061,16 +1187,28 @@ mod tests {
             b"\n@mosaico run snake\n@mosaico stop\n@mosaico reload\n@mosaico begin x\n",
         );
         let e = run(&mut v, &mut sess, &s, 100);
+        assert_eq!(replies(&e), ["@err line too long; reconnect required"]);
+        assert_eq!(e.len(), 2);
+        assert!(e.contains(&Effect::OtaCancel));
+        assert!(v.stat("/data/apps/.incoming/x").is_err());
+        assert!(run(
+            &mut v,
+            &mut sess,
+            b"@mosaico run snake\n@mosaico stop\n",
+            100
+        )
+        .is_empty());
+        sess.reset(&mut v);
+        let e = run(
+            &mut v,
+            &mut sess,
+            b"@mosaico run snake\n@mosaico stop\n@mosaico reload\n@mosaico begin x\n",
+            100,
+        );
         let r = replies(&e);
         assert_eq!(
             r,
-            [
-                "@err line too long",
-                "@ok run snake",
-                "@ok stop",
-                "@ok reload",
-                "@ok begin x"
-            ]
+            ["@ok run snake", "@ok stop", "@ok reload", "@ok begin x"]
         );
         assert!(e.contains(&Effect::Run("snake".into())) && e.contains(&Effect::Stop));
         assert!(v.stat("/data/apps/.incoming/x").is_ok());

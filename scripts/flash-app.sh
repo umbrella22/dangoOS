@@ -1,33 +1,35 @@
 #!/usr/bin/env bash
-# Build the firmware and write ONLY the main_app partition (0x210000).
-#
-# Never touches the bootloader, the partition table or vibe_mode at 0x20000.
-# Put the board in download mode first (hold BOOT, tap RESET).
-#
-# Usage: scripts/flash-app.sh <port> [image-name]
-#   scripts/flash-app.sh /dev/cu.usbmodem113401
+# Explicit ROM recovery of slot zero. Normal A/B updates use push-app.py ota.
+# This does not change otadata: selected slot one may continue booting afterward.
+# Usage: scripts/flash-app.sh --rom-recovery-slot0 <port> [image-name]
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-
-PORT="${1:?usage: scripts/flash-app.sh <port> [image-name]}"
+if [ "${1:-}" != "--rom-recovery-slot0" ]; then
+    echo 'Refusing unconditional slot-zero flash. Use push-app.py ota for A/B updates.' >&2
+    echo 'Manual recovery: flash-app.sh --rom-recovery-slot0 <port> [image-name]' >&2
+    exit 2
+fi
+shift
+PORT="${1:?port required}"
 NAME="${2:-mosaico-s31-fw}"
 ELF=target/riscv32imafc-unknown-none-elf/release/mosaico-s31-fw
 IMAGE="target/${NAME}.bin"
-MAIN_APP=0x210000
-# The last 2 MiB of main_app (0x7E0000..0x9E0000) hold the /data file system
-# (see crates/mosaico-s31/src/drivers/storage.rs); the image must end before.
-IMAGE_MAX=$((0x7E0000 - MAIN_APP))
-
+IMAGE_MAX=$((0x300000))
 cargo fw --offline
-espflash save-image --chip esp32s31 "$ELF" "$IMAGE"
+espflash save-image --chip esp32s31 --flash-size 16mb --flash-mode dio --flash-freq 40mhz "$ELF" "$IMAGE"
+python3 - "$IMAGE" <<'PY'
+import sys
+sys.path.insert(0, 'scripts')
+from ota_image import read_image
+read_image(sys.argv[1], require_ab=True)
+PY
 shasum -a 256 "$IMAGE"
 SIZE=$(wc -c < "$IMAGE" | tr -d ' ')
 if [ "$SIZE" -gt "$IMAGE_MAX" ]; then
-    echo "error: $IMAGE is $SIZE bytes; it would overwrite /data (limit $IMAGE_MAX)" >&2
+    echo "error: image $SIZE exceeds 3 MiB slot ($IMAGE_MAX)" >&2
     exit 1
 fi
-echo "image $SIZE bytes of $IMAGE_MAX ($((SIZE * 100 / IMAGE_MAX))%)"
-
+echo "ROM recovery: slot zero at 0x210000, $SIZE bytes; otadata selection is unchanged."
 esptool --chip esp32s31 --port "$PORT" --baud 115200 \
     --before no-reset --after hard-reset \
-    write-flash "$MAIN_APP" "$IMAGE"
+    write-flash --flash-size 16MB --flash-mode dio --flash-freq 40m 0x210000 "$IMAGE"

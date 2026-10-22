@@ -54,3 +54,5 @@ pub(crate) mod test_support {
 }
 
 pub mod lua_lvgl;
+
+pub mod ota;

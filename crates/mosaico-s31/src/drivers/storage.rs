@@ -3,14 +3,12 @@
 //! - `/system`: the official LittleFS partition (`system`, subtype 0x83),
 //!   mounted read-only. It carries the factory Lua apps, scripts and fonts;
 //!   the factory firmware treats it as a seed, so it is never written.
-//! - `/data`: our own LittleFS in the unused tail of `main_app`
-//!   ([`DATA_SIZE`] bytes ending at the partition end). Pushed apps and the
-//!   `storage` Lua module live here. It is formatted on first boot.
+//! - `/data`: the strict A/B layout's named partition, or the positively
+//!   identified legacy main_app tail. Unknown tables never select a writable region.
 //!
-//! All flash access goes through the installed VFS, whose busy lock
-//! serialises callers. Reads and writes bounce through a static internal-RAM
-//! buffer: littlefs caches can live in PSRAM, which the ROM flash routines
-//! must not touch while the cache is disabled.
+//! VFS and OTA ROM accesses share FlashGuard, including the static internal-RAM
+//! bounce buffer. LittleFS caches and OTA input may live in PSRAM, which the ROM
+//! routines must not touch while the cache is disabled.
 //!
 //! The ROM routines are called through `esp_storage::ll` (each call in a
 //! critical section) rather than `FlashStorage`: on the ESP32-S31 its flash
@@ -26,9 +24,6 @@ use esp_storage::ll;
 use log::{info, warn};
 use mosaico_fs::{global, BlockDevice, Errno, Fs, Geometry, Vfs};
 
-/// Size of `/data`; the firmware image must end below `main_app.end - DATA_SIZE`
-/// (`scripts/flash-app.sh` checks it).
-pub const DATA_SIZE: u32 = 2 * 1024 * 1024;
 const BLOCK: u32 = 4096;
 
 /// The partition table: offset and the most it can hold.
@@ -102,9 +97,24 @@ struct Shared {
     bounce: UnsafeCell<[u32; 128]>,
 }
 
-// SAFETY: only reached from block-device callbacks, which run under the VFS
-// busy lock (one caller at a time), and from `init` before the VFS exists.
+// SAFETY: ROM operations and bounce storage are serialized by FlashGuard across
+// VFS callbacks, OTA and initialization. init_flash runs before tasks exist.
 unsafe impl Sync for Shared {}
+
+// Shared with OTA; every ROM operation and bounce-buffer borrow is serialized.
+static FLASH_BUSY: AtomicBool = AtomicBool::new(false);
+struct FlashGuard;
+impl Drop for FlashGuard {
+    fn drop(&mut self) {
+        FLASH_BUSY.store(false, Ordering::Release);
+    }
+}
+fn flash_guard() -> Result<FlashGuard, Errno> {
+    FLASH_BUSY
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map(|_| FlashGuard)
+        .map_err(|_| Errno::BUSY)
+}
 
 static SHARED: Shared = Shared {
     flash: UnsafeCell::new(None),
@@ -124,7 +134,8 @@ fn shared() -> (&'static mut Nor, &'static mut [u8; 512]) {
 }
 
 /// Read `out.len()` bytes at `addr` (word aligned) through the bounce buffer.
-fn read_bounced(addr: u32, out: &mut [u8]) -> Result<(), Errno> {
+pub fn read_bounced(addr: u32, out: &mut [u8]) -> Result<(), Errno> {
+    let _guard = flash_guard()?;
     let (flash, bounce) = shared();
     let mut a = addr;
     for chunk in out.chunks_mut(bounce.len()) {
@@ -153,20 +164,6 @@ fn header_flash_size(header: &[u8]) -> Option<u32> {
         _ => return None,
     };
     Some(mb * 1024 * 1024)
-}
-
-/// `(label, type, subtype, offset, size)` of each partition table entry.
-fn partitions(table: &[u8]) -> impl Iterator<Item = (&str, u8, u8, u32, u32)> {
-    table
-        .chunks_exact(32)
-        .take_while(|e| e[0] == 0xAA && e[1] == 0x50)
-        .map(|e| {
-            let word = |i: usize| u32::from_le_bytes([e[i], e[i + 1], e[i + 2], e[i + 3]]);
-            let label = &e[12..28];
-            let end = label.iter().position(|&b| b == 0).unwrap_or(label.len());
-            let label = core::str::from_utf8(&label[..end]).unwrap_or("");
-            (label, e[2], e[3], word(4), word(8))
-        })
 }
 
 /// A block-aligned window of the SPI flash.
@@ -200,6 +197,7 @@ impl BlockDevice for FlashRegion {
             return Err(Errno::ROFS);
         }
         let mut addr = self.addr(block, off, data.len())?;
+        let _guard = flash_guard()?;
         let (flash, bounce) = shared();
         for chunk in data.chunks(bounce.len()) {
             let tmp = &mut bounce[..chunk.len()];
@@ -215,8 +213,92 @@ impl BlockDevice for FlashRegion {
             return Err(Errno::ROFS);
         }
         let addr = self.addr(block, 0, 0)?;
-        let (flash, _) = shared();
-        flash.erase_sector(addr)
+        erase_flash(addr)
+    }
+}
+
+pub fn write_flash(addr: u32, data: &[u8]) -> Result<(), Errno> {
+    let _guard = flash_guard()?;
+    let (flash, bounce) = shared();
+    let mut at = addr;
+    for chunk in data.chunks(512) {
+        bounce[..chunk.len()].copy_from_slice(chunk);
+        flash.write(at, &bounce[..chunk.len()])?;
+        at += chunk.len() as u32;
+    }
+    Ok(())
+}
+pub fn erase_flash(addr: u32) -> Result<(), Errno> {
+    let _guard = flash_guard()?;
+    shared().0.erase_sector(addr)
+}
+pub struct OtaFlash;
+impl mosaico_s31::ota::Flash for OtaFlash {
+    fn read(&mut self, a: u32, b: &mut [u8]) -> mosaico_s31::ota::Result<()> {
+        read_bounced(a, b).map_err(|_| mosaico_s31::ota::Error::Flash)
+    }
+    fn write(&mut self, a: u32, b: &[u8]) -> mosaico_s31::ota::Result<()> {
+        write_flash(a, b).map_err(|_| mosaico_s31::ota::Error::Flash)
+    }
+    fn erase(&mut self, a: u32) -> mosaico_s31::ota::Result<()> {
+        erase_flash(a).map_err(|_| mosaico_s31::ota::Error::Flash)
+    }
+}
+static INITIALIZED: AtomicBool = AtomicBool::new(false);
+static SYSTEM_MOUNTED: AtomicBool = AtomicBool::new(false);
+static DATA_MOUNTED: AtomicBool = AtomicBool::new(false);
+pub fn mounted() -> (bool, bool) {
+    (
+        SYSTEM_MOUNTED.load(Ordering::Acquire),
+        DATA_MOUNTED.load(Ordering::Acquire),
+    )
+}
+pub fn layout() -> mosaico_s31::ota::Result<mosaico_s31::ota::layout::Layout> {
+    if !INITIALIZED.load(Ordering::Acquire) {
+        return Err(mosaico_s31::ota::Error::Unavailable);
+    }
+    let mut table = [0; PARTITION_TABLE_LEN];
+    read_bounced(PARTITION_TABLE, &mut table).map_err(|_| mosaico_s31::ota::Error::Flash)?;
+    let capacity = {
+        let _guard = flash_guard().map_err(|_| mosaico_s31::ota::Error::Flash)?;
+        shared().0.size
+    };
+    mosaico_s31::ota::layout::parse(&table, capacity)
+}
+/// Read and verify the A/B table with fixed stack storage, before allocator setup.
+pub fn early_ab() -> mosaico_s31::ota::Result<()> {
+    if !INITIALIZED.load(Ordering::Acquire) {
+        return Err(mosaico_s31::ota::Error::Unavailable);
+    }
+    let mut table = [0; PARTITION_TABLE_LEN];
+    read_bounced(PARTITION_TABLE, &mut table).map_err(|_| mosaico_s31::ota::Error::Flash)?;
+    let capacity = {
+        let _guard = flash_guard().map_err(|_| mosaico_s31::ota::Error::Flash)?;
+        shared().0.size
+    };
+    mosaico_s31::ota::layout::verify_ab_early(&table, capacity)
+}
+/// Initializes ROM flash access without allocation, before PSRAM/panel/filesystems.
+pub fn init_flash() {
+    if INITIALIZED.load(Ordering::Acquire) {
+        return;
+    }
+    unsafe {
+        *SHARED.flash.get() = Some(Nor {
+            size: 0x10000,
+            unlocked: false,
+        });
+    }
+    let mut size = None;
+    for at in [0u32, 0x2000] {
+        let mut h = [0; 32];
+        if read_bounced(at, &mut h).is_ok() {
+            size = size.or(header_flash_size(&h));
+        }
+    }
+    if let Some(size) = size {
+        shared().0.size = size;
+        INITIALIZED.store(true, Ordering::Release);
     }
 }
 
@@ -236,48 +318,21 @@ pub fn ready() -> bool {
 ///
 /// Takes the `FLASH` peripheral so nothing else drives the chip meanwhile.
 pub fn init(_flash: esp_hal::peripherals::FLASH<'static>) {
-    // SAFETY: no block device exists yet. The size is provisional: enough
-    // for the bootloader header and the partition table.
-    unsafe {
-        *SHARED.flash.get() = Some(Nor {
-            size: 0x10000,
-            unlocked: false,
-        })
-    };
-    let mut header_size = None;
-    for at in [0u32, 0x2000] {
-        let mut header = [0u8; 32];
-        if read_bounced(at, &mut header).is_ok() {
-            header_size = header_size.or(header_flash_size(&header));
+    init_flash();
+    let layout = match layout() {
+        Ok(layout) => layout,
+        Err(e) => {
+            warn!("fs: unsafe/unknown partition table: {e}");
+            global::install(Vfs::new());
+            return;
         }
-    }
-    let mut table = [0u8; PARTITION_TABLE_LEN];
-    if let Err(e) = read_bounced(PARTITION_TABLE, &mut table) {
-        warn!("fs: partition table unreadable: {e}");
-    }
-    // Without a header, the end of the last partition bounds the chip.
-    let table_end = partitions(&table)
-        .map(|(_, _, _, off, len)| off.saturating_add(len))
-        .max()
-        .map(|end| end.next_power_of_two());
-    let Some(size) = header_size.or(table_end) else {
-        warn!("fs: flash size unknown; no file systems");
-        global::install(Vfs::new());
-        return;
     };
-    shared().0.size = size;
-    info!("fs: flash {} MiB", size / (1024 * 1024));
-
-    let (mut system, mut main_app) = (None, None);
-    for (label, kind, subtype, off, len) in partitions(&table) {
-        match (label, kind, subtype) {
-            // Data / LittleFS.
-            ("system", 0x01, 0x83) => system = Some((off, len)),
-            ("main_app", 0x00, _) => main_app = Some((off, len)),
-            _ => {}
-        }
-    }
-
+    let system = layout
+        .entries
+        .iter()
+        .find(|p| p.label == "system" && p.kind == 1 && p.subtype == 0x83)
+        .map(|p| (p.offset, p.size));
+    let data = layout.data;
     let mut vfs = Vfs::new();
     if let Some((base, len)) = system {
         let dev = FlashRegion {
@@ -288,6 +343,7 @@ pub fn init(_flash: esp_hal::peripherals::FLASH<'static>) {
         match Fs::mount(Box::new(dev), Geometry::flash(len / BLOCK), true) {
             Ok(fs) => {
                 vfs.mount("system", fs);
+                SYSTEM_MOUNTED.store(true, Ordering::Release);
                 info!("fs: /system ro @{base:#x} {} KiB", len / 1024);
             }
             Err(e) => warn!("fs: /system mount failed: {e}"),
@@ -295,10 +351,9 @@ pub fn init(_flash: esp_hal::peripherals::FLASH<'static>) {
     } else {
         warn!("fs: no system partition");
     }
-    match main_app {
-        Some((off, len)) if len > DATA_SIZE => {
-            let base = off + len - DATA_SIZE;
-            let blocks = DATA_SIZE / BLOCK;
+    match data {
+        Some((base, len)) => {
+            let blocks = len / BLOCK;
             let dev = FlashRegion {
                 base,
                 blocks,
@@ -307,8 +362,9 @@ pub fn init(_flash: esp_hal::peripherals::FLASH<'static>) {
             match Fs::mount_or_format(Box::new(dev), Geometry::flash(blocks)) {
                 Ok((fs, formatted)) => {
                     vfs.mount("data", fs);
+                    DATA_MOUNTED.store(true, Ordering::Release);
                     let how = if formatted { " (formatted)" } else { "" };
-                    info!("fs: /data rw @{base:#x} {} KiB{how}", DATA_SIZE / 1024);
+                    info!("fs: /data rw @{base:#x} {} KiB{how}", len / 1024);
                 }
                 Err(e) => warn!("fs: /data mount failed: {e}"),
             }

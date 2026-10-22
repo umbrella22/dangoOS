@@ -54,16 +54,23 @@ cargo fw --offline                                           # 固件 release �
 
 ## 烧录
 
-只写 `main_app`（`0x210000`）。**不要**改写 bootloader、分区表或 `0x20000` 的 `vibe_mode`。
+旧分区布局的 ROM 刷机只写 `main_app`（`0x210000`）。**不要**改写 bootloader 或
+`0x20000` 的 `vibe_mode`。A/B 迁移及恢复步骤见 [N6_MIGRATION.md](N6_MIGRATION.md)，
+实际分区改写需要完整备份和现场确认。
 
 ```bash
 # 板子进入下载模式（按住 BOOT 点一下 RESET），然后：
-./scripts/flash-app.sh /dev/cu.usbmodemXXXX [镜像名]
+./scripts/flash-app.sh --rom-recovery-slot0 /dev/cu.usbmodemXXXX [镜像名]
 ```
 
-脚本会构建、`espflash save-image`、打印 SHA-256，再用 esptool 写 `0x210000`。
-镜像超过 main_app 里 `/data` 之前的空间（6,094,848 B）时脚本拒绝烧录。
-主程序起不来时引导程序会回滚到出厂的 vibe_mode，重新刷 main_app 即可。
+脚本会构建默认固件、用 16 MiB / DIO / 40 MHz 参数生成镜像，校验完整结构和 A/B
+兼容标记、打印 SHA-256，再用 esptool 写 `0x210000`。上限统一为 3 MiB。
+脚本保留 otadata；在 A/B 布局下写入 slot 0 不保证下次从 slot 0 启动。
+工厂救援与引导程序自动回滚仍待实测，恢复使用已核验的备份。
+
+已迁移且本次启动自检通过的设备使用 `python3 scripts/push-app.py ota <bin>` 正常升级，
+用 `ota-status` 查看两槽状态、版本和自检结果。N1–N5/N7 旧评审镜像只适用于旧布局；
+它们缺少新 data 定位逻辑，不能用于迁移后的固件回退。
 
 ## 串口
 

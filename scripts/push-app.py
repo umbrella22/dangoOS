@@ -8,6 +8,7 @@
     scripts/push-app.py skin-select <id> | skin-rm <id> | skin-ls
     scripts/push-app.py brain-push <script.lua> | brain-reload | brain-default | brain-status
     scripts/push-app.py photo-push <image> [--name subdir/name.jpg] [--run]
+    scripts/push-app.py ota <firmware.bin> | ota-status | ota-abort
 
 <app-dir> holds launcher.json and the files it names; everything except
 dotfiles is sent. The firmware stages the files, swaps them in as
@@ -59,16 +60,24 @@ class Device:
         for line in self.lines(time.monotonic() + timeout):
             if line.startswith("@ok") or line.startswith("@err"):
                 return line
-            if self.echo:
+            if self.echo or line.startswith("@ota-slot "):
                 print(line)
         raise SystemExit("no reply from the device (is the port right, is the firmware new enough?)")
 
     def command(self, text, timeout=20.0, check=True):
-        self.ser.write((PREFIX + text + "\n").encode())
+        self.write_all((PREFIX + text + "\n").encode())
         line = self.reply(timeout)
         if check and not line.startswith("@ok"):
             raise SystemExit(f"{text.split()[0]}: {line}")
         return line
+
+    def write_all(self, data):
+        offset = 0
+        while offset < len(data):
+            written = self.ser.write(data[offset:])
+            if not isinstance(written, int) or not 0 < written <= len(data) - offset:
+                raise OSError("serial write made no progress")
+            offset += written
 
     def follow(self):
         try:
@@ -235,9 +244,59 @@ def push_photo(dev, rel, data, run=False):
         dev.command("run album_app")
 
 
+def read_ota(path):
+    # Explicit sibling loading also supports importlib consumers of this CLI.
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("mosaico_ota_image", Path(__file__).with_name("ota_image.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        return module.read_image(path)
+    except (ValueError, OSError) as error:
+        raise SystemExit(f"OTA image rejected before connection: {error}") from None
+
+
+def push_ota(dev, data, info):
+    dev.ser.write_timeout = 20.0
+    dev.command("hello")
+    begun = False
+    ending = False
+    try:
+        line = dev.command(f"ota-begin {len(data)} {info['sha256']}", timeout=30.0)
+        begun = True
+        match = re.fullmatch(r"@ok ota-begin ([01]) ([01])", line)
+        if not match or match[1] == match[2]:
+            raise SystemExit(f"OTA begin did not confirm a distinct inactive slot: {line}")
+        booted, target = match.groups()
+        for offset in range(0, len(data), 4096):
+            chunk = data[offset:offset + 4096]
+            # No ready reply: acknowledge only after Flash write and readback.
+            dev.write_all((PREFIX + f"ota-chunk {offset} {len(chunk)} {zlib.crc32(chunk):08x}\n").encode())
+            dev.write_all(chunk)
+            line = dev.reply(timeout=30.0)
+            if line != f"@ok ota-chunk {offset + len(chunk)}":
+                raise SystemExit(f"OTA chunk at {offset} failed: {line}")
+        ending = True
+        line = dev.command("ota-end", timeout=120.0)
+        if line != "@ok ota-end":
+            raise SystemExit(f"OTA activation acknowledgement missing: {line}")
+    except (SystemExit, OSError, serial.SerialException) as error:
+        if begun:
+            try:
+                dev.command("ota-abort", timeout=2.0, check=False)
+            except (SystemExit, OSError, serial.SerialException):
+                pass
+        if ending:
+            raise SystemExit(f"OTA completion is unconfirmed: {error}. Reconnect and inspect ota-status; do not assume the new slot booted.") from None
+        raise
+    print(f"OTA activated: slot {booted} -> {target}; {len(data)} B; sha256={info['sha256']}")
+    print("Reboot requested. After reconnection, ota-status must report Valid after the 30-second self-test.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push"])
+    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "ota", "ota-status", "ota-abort"])
     ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id, brain script or photo file")
     ap.add_argument("--name", help="photo path relative to Album photos (photo-push only)")
     ap.add_argument("--select", action="store_true", help="select after skin-push")
@@ -247,7 +306,7 @@ def main():
     ap.add_argument("--verbose", "-v", action="store_true", help="print device log lines while waiting")
     args = ap.parse_args()
 
-    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push")
+    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "ota")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
 
@@ -257,10 +316,25 @@ def main():
         ap.error("invalid exact skin id")
     if args.name is not None and args.action != "photo-push":
         ap.error("--name requires photo-push")
+    if args.action == "ota" and (args.run or args.follow):
+        ap.error("ota reboots the device; use ota-status after reconnection instead of --run/--follow")
     brain_data = read_brain(args.target) if args.action == "brain-push" else None
     photo = read_photo(args.target, args.name) if args.action == "photo-push" else None
+    ota = read_ota(args.target) if args.action == "ota" else None
     dev = Device(args.port or default_port(), args.verbose)
-    if args.action == "photo-push":
+    if args.action == "ota":
+        try:
+            push_ota(dev, *ota)
+        finally:
+            dev.ser.close()
+        return
+    elif args.action in ("ota-status", "ota-abort"):
+        try:
+            print(dev.command(args.action, timeout=30.0))
+        finally:
+            dev.ser.close()
+        return
+    elif args.action == "photo-push":
         push_photo(dev, *photo, run=args.run)
     elif args.action == "brain-push":
         push_brain(dev, brain_data)

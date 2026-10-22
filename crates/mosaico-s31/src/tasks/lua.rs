@@ -42,7 +42,7 @@ unsafe fn psram_alloc(layout: Layout) -> *mut u8 {
 unsafe fn psram_dealloc(ptr: *mut u8, layout: Layout) {
     unsafe { esp_alloc::HEAP.dealloc(ptr, layout) }
 }
-pub(super) static PSRAM: RawAllocator = RawAllocator {
+pub(crate) static PSRAM: RawAllocator = RawAllocator {
     alloc: psram_alloc,
     dealloc: psram_dealloc,
 };

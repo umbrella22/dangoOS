@@ -295,6 +295,14 @@ pub async fn ui_task(mut plane: PlaneUi) {
         last_tick = now;
         let now_ms = latency::now_us() / 1000;
 
+        if crate::ota_runtime::active() {
+            lua_lvgl.release();
+            while INPUT.try_receive().is_ok() {}
+            while SENSOR_EVENTS.try_receive().is_ok() {}
+            Timer::after_millis(5).await;
+            continue;
+        }
+        crate::ota_runtime::selftest();
         // Storage mounts after USB startup; do not mistake this transient
         // pre-mount state for a damaged persisted brain. Resolve selection once
         // after the mount attempt completes. No custom source keeps the same

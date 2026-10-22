@@ -260,7 +260,7 @@ pub async fn lights_task(mut channel: LightChannel) {
             }),
             _ => [Rgb::OFF; LED_COUNT],
         };
-        if !ENABLED.load(Ordering::Relaxed) {
+        if !ENABLED.load(Ordering::Relaxed) || crate::ota_runtime::active() {
             frame.iter_mut().for_each(|led| *led = Default::default());
         }
         let attached = ATTACHED.load(Ordering::Relaxed);

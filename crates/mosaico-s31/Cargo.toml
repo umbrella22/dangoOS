@@ -12,10 +12,14 @@ path = "src/lib.rs"
 
 [features]
 default = []
+# Fault injection only for RTC-armed, unconfirmed A/B candidates.
+ota-test-panic = []
 # Read-only motor/RMT receipts for manual hardware diagnosis; no waveform changes.
 haptic-diagnostics = []
 
 [dependencies]
+sha2 = { version = "0.10", default-features = false }
+md-5 = { version = "0.10", default-features = false }
 log.workspace = true
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 # Host-buildable UI dependencies: the library and the host previews build

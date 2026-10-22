@@ -48,6 +48,7 @@ mod board;
 mod console;
 mod crashlog;
 mod drivers;
+mod ota_runtime;
 mod tasks;
 
 use embassy_executor::Spawner;
@@ -77,6 +78,7 @@ use crate::tasks::{haptic, input, lights, lua, plane, sensors, ui};
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
+    ota_runtime::record_boot_attempt();
     console::install_logger();
     crashlog::report_last_boot();
 
@@ -89,6 +91,8 @@ async fn main(spawner: Spawner) {
     info!("==============================================");
 
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+    drivers::storage::init_flash();
+    ota_runtime::early_boot();
     // LVGL plus the 480x48 internal-RAM draw buffer need more than the R0
     // heartbeat-only heap; this matches the archived UI firmware.
     esp_alloc::heap_allocator!(size: 256 * 1024);

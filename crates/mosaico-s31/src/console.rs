@@ -41,6 +41,7 @@ const CONSOLE_STATUS_PERIOD: Duration = Duration::from_secs(5);
 
 /// One formatted log line owned by the channel.
 struct LogRecord {
+    reboot_fence: bool,
     len: u8,
     bytes: [u8; LOG_LINE_BYTES],
 }
@@ -65,6 +66,7 @@ impl LogLine {
         self.bytes[self.len + 1] = b'\n';
         self.len += 2;
         LogRecord {
+            reboot_fence: false,
             len: self.len as u8,
             bytes: self.bytes,
         }
@@ -85,6 +87,8 @@ impl core::fmt::Write for LogLine {
 static LOG_CHANNEL: Channel<CriticalSectionRawMutex, LogRecord, LOG_CHANNEL_DEPTH> = Channel::new();
 /// The host has the port open.
 static CONNECTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+// Only the OTA reboot acknowledgement carries this fence.
+static REBOOT_ACK_SENT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub fn connected() -> bool {
     CONNECTED.load(Ordering::Relaxed)
@@ -174,9 +178,13 @@ pub async fn pump<'a>(class: &mut Sender<'a, Driver<'a>>) {
         loop {
             let result = match select(LOG_CHANNEL.receive(), Timer::at(next_status)).await {
                 Either::First(record) => {
-                    class
+                    let result = class
                         .write_packet(&record.bytes[..record.len as usize])
-                        .await
+                        .await;
+                    if result.is_ok() && record.reboot_fence {
+                        REBOOT_ACK_SENT.store(true, Ordering::Release);
+                    }
+                    result
                 }
                 Either::Second(()) => {
                     next_status += CONSOLE_STATUS_PERIOD;
@@ -207,9 +215,38 @@ pub async fn pump<'a>(class: &mut Sender<'a, Driver<'a>>) {
 /// Queue one protocol reply. Unlike log records it waits for room: the host
 /// blocks on every reply.
 async fn reply(text: &str) {
+    for text in text.lines() {
+        let mut line = LogLine::new();
+        let _ = line.write_str(text);
+        LOG_CHANNEL.send(line.finish()).await;
+    }
+}
+
+/// Bounded queue+send fence. Endpoint completion is transport delivery, not a
+/// claim that the host process parsed the ACK. Timeout leaves activation intact.
+async fn reboot_reply_sent(text: &str) -> bool {
+    REBOOT_ACK_SENT.store(false, Ordering::Release);
     let mut line = LogLine::new();
     let _ = line.write_str(text);
-    LOG_CHANNEL.send(line.finish()).await;
+    let mut record = line.finish();
+    record.reboot_fence = true;
+    let start = embassy_time::Instant::now();
+    if matches!(
+        select(LOG_CHANNEL.send(record), Timer::after_secs(3)).await,
+        Either::Second(())
+    ) {
+        return false;
+    }
+    loop {
+        match mosaico_s31::ota::reboot_ack(
+            REBOOT_ACK_SENT.load(Ordering::Acquire),
+            start.elapsed().as_millis(),
+        ) {
+            mosaico_s31::ota::RebootAck::Sent => return true,
+            mosaico_s31::ota::RebootAck::TimedOut => return false,
+            mosaico_s31::ota::RebootAck::Waiting => Timer::after_millis(5).await,
+        }
+    }
 }
 
 /// Feed host bytes to the app push protocol and carry out its effects.
@@ -219,6 +256,7 @@ async fn reply(text: &str) {
 pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
     let mut buf = [0u8; 512];
     let mut session = Session::new();
+    let mut ota = crate::ota_runtime::DeviceUpdater::new();
     let mut no_mounts = mosaico_fs::Vfs::new();
     loop {
         class.wait_connection().await;
@@ -248,6 +286,32 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                 };
                 for effect in effects {
                     match effect {
+                        Effect::OtaCancel => {
+                            ota.abort();
+                            session.set_ota_active(false);
+                        }
+                        Effect::Ota(command) => {
+                            let result = ota.execute(command).await;
+                            session.set_ota_active(crate::ota_runtime::active());
+                            match result {
+                                Ok((text, reboot)) => {
+                                    if reboot {
+                                        if reboot_reply_sent(&text).await {
+                                            esp_hal::system::software_reset();
+                                        } else {
+                                            // The candidate is selected, but no successful ACK
+                                            // delivery is established: leave reboot to the operator.
+                                            warn!("ota: reboot ACK delivery timed out; candidate selected, automatic reset withheld");
+                                            ota.abort();
+                                            session.set_ota_active(false);
+                                        }
+                                    } else {
+                                        reply(&text).await;
+                                    }
+                                }
+                                Err(text) => reply(&text).await,
+                            }
+                        }
                         Effect::Manage(op) => {
                             let id = op.identity();
                             let result = apps::manage(op).await;
@@ -291,6 +355,7 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                 }
             }
         }
+        ota.abort();
         // The host went away mid-push: drop the staged files.
         let _ = mosaico_fs::global::with(|vfs| {
             session.reset(vfs);
