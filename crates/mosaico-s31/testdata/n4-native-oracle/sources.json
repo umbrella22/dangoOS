@@ -1,0 +1,14 @@
+{
+  "crates/mosaico-s31/src/behavior/mod.rs": "33bb66834cdab6ebe40e54157e732dd21a0c546ea1e38d972cab96f5428275d1",
+  "crates/mosaico-s31/src/behavior/affect.rs": "772996a6f760faf445a848679f63d5f2abcf7ca4f64c43665977f99770a2cd00",
+  "crates/mosaico-s31/src/behavior/personality.rs": "25ee41f573a437909af241a71ee2eed45688d0fe132878c8debb081feaee4387",
+  "crates/mosaico-s31/src/behavior/tests/affect_events.rs": "fb1aa0df7569acd9f4205a81252146aa5f29d6ab81042d22a0afddd8f72eb9d8",
+  "crates/mosaico-s31/src/behavior/tests/ambient_timeline.rs": "8aa878ab01fb795a3423095a671a070897b2be146ecd0d65c807724c20603cc7",
+  "crates/mosaico-s31/src/behavior/tests/keys_buttons.rs": "08b8fdced777a970180c8b3e5aaa850ad6f89a058f28b8e718d8686a7b0335ef",
+  "crates/mosaico-s31/src/behavior/tests/magnetic_events.rs": "282cc11cef6f4164502757e307966510dcb69a93693b9cf545b7489410e2aafb",
+  "crates/mosaico-s31/src/behavior/tests/module_events.rs": "0787c013ecbc1a955386c8ca5fac33b7d666e85bbb9eea7a55d9c6a384ba79b0",
+  "crates/mosaico-s31/src/behavior/tests/personality.rs": "da17feceac65168c0b304741a06f8c0a70553b9180615cb6e4582a32ceae1b76",
+  "crates/mosaico-s31/src/behavior/tests/shake_timeline.rs": "f09d2c2ef4b98bedc2daea79737e896f79f0e783dadf89f1fa24e5f45fef6ef2",
+  "crates/mosaico-s31/src/behavior/tests/sleep_wake.rs": "25b6e4f9198e4dab227200c1dfb34892e0c4526032151adbc4eddd3bd24a511f",
+  "crates/mosaico-s31/src/behavior/tests/touch_gestures.rs": "e4ee1efc5812840cfc2cc5ef04ec4b5935175e9112cbb660f9bfe5c475ccae9a"
+}

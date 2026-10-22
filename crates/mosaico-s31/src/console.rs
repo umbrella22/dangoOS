@@ -270,6 +270,17 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                         Effect::Run(id) => apps::request(false, Some(apps::Action::Run(id))),
                         Effect::Stop => apps::request(false, Some(apps::Action::Stop)),
                         Effect::SkinsChanged => crate::tasks::skins::request_reload(),
+                        Effect::Brain(action) => {
+                            let verb = action.verb();
+                            let text = match crate::tasks::brain_control::execute(action).await {
+                                Ok(status) => alloc::format!("@ok {verb} {status}"),
+                                Err(e) => alloc::format!(
+                                    "@err {verb}: {}",
+                                    mosaico_s31::hub::brain_store::error_line(&e)
+                                ),
+                            };
+                            reply(text.trim_end()).await;
+                        }
                         Effect::Reboot => {
                             warn!("push: reboot requested");
                             // Let the reply and the log line go out first.

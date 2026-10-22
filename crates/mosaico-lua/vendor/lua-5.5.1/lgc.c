@@ -972,7 +972,7 @@ static void GCTM (lua_State *L) {
   lua_assert(!g->gcemergency);
   setgcovalue(L, &v, udata2finalize(g));
   tm = luaT_gettmbyobj(L, &v, TM_GC);
-  if (!notm(tm)) {  /* is there a finalizer? */
+  if (!g->mosaico_skip_finalizers && !notm(tm)) {  /* restricted VMs never execute script finalizers */
     TStatus status;
     lu_byte oldah = L->allowhook;
     lu_byte oldgcstp  = g->gcstp;
@@ -1532,7 +1532,11 @@ void luaC_freeallobjects (lua_State *L) {
   luaC_changemode(L, KGC_INC);
   separatetobefnz(g, 1);  /* separate all objects with finalizers */
   lua_assert(g->finobj == NULL);
-  callallpendingfinalizers(L);
+  if (g->mosaico_skip_finalizers) {
+    deletelist(L, g->tobefnz, NULL);
+    g->tobefnz = NULL;
+  }
+  else callallpendingfinalizers(L);
   deletelist(L, g->allgc, obj2gco(mainthread(g)));
   lua_assert(g->finobj == NULL);  /* no new finalizers */
   deletelist(L, g->fixedgc, NULL);  /* collect fixed objects */

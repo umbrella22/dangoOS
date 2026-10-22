@@ -143,6 +143,7 @@ fn finite_or(value: f32, fallback: f32) -> f32 {
 /// task is single-threaded, so `Cell` is enough.
 pub struct FoxControl {
     expression: Cell<Expression>,
+    play_pose: Cell<Option<FoxPose>>,
     skin: core::cell::RefCell<Rc<fox::skin::Skin>>,
     visual: Cell<FoxVisual>,
     /// Render on the next tick instead of waiting for the 50 ms cadence.
@@ -173,6 +174,7 @@ impl FoxControl {
     pub fn new(expression: Expression) -> Rc<Self> {
         Rc::new(Self {
             expression: Cell::new(expression),
+            play_pose: Cell::new(None),
             skin: core::cell::RefCell::new(fox::skin::Skin::builtin()),
             visual: Cell::new(FoxVisual::IDLE),
             urgent: Cell::new(true),
@@ -247,6 +249,21 @@ impl FoxControl {
     /// The expression the widget should currently display.
     pub fn expression(&self) -> Expression {
         self.expression.get()
+    }
+
+    /// Timed Lua animation selection; terminal runtime clears it before Sleep.
+    pub fn set_play_pose(&self, pose: Option<FoxPose>) {
+        if self.play_pose.replace(pose) != pose {
+            self.mark_urgent();
+        }
+    }
+    pub fn play_pose(&self) -> Option<FoxPose> {
+        self.play_pose.get()
+    }
+    fn selected_pose(&self) -> FoxPose {
+        self.play_pose
+            .get()
+            .unwrap_or_else(|| FoxPose::from(self.expression()))
     }
 
     /// Apply a new pose (squash, gaze, pulse).
@@ -365,7 +382,7 @@ impl FoxWidget {
     /// Create a widget descriptor bound to `control`. The canvas buffer is
     /// allocated when the descriptor is mounted.
     pub fn new(control: Rc<FoxControl>) -> Self {
-        let pose = FoxPose::from(control.expression());
+        let pose = control.selected_pose();
         Self {
             control,
             renderer: FoxRenderer::new(),
@@ -464,7 +481,7 @@ impl CustomWidget for FoxWidget {
         self.animator
             .set_skin(Rc::clone(&self.control.skin.borrow()));
         let expression = self.control.expression();
-        self.animator.set_pose(FoxPose::from(expression));
+        self.animator.set_pose(self.control.selected_pose());
         self.last_expression = Some(expression);
 
         // Take (or allocate) the pool before creating the native object so an
@@ -552,10 +569,12 @@ impl CustomWidget for FoxWidget {
         let expression = self.control.expression();
         if self.last_expression != Some(expression) {
             self.last_expression = Some(expression);
-            self.animator.set_pose(FoxPose::from(expression));
+            self.animator.set_pose(self.control.selected_pose());
             // A new expression is the response the latency gate measures.
             self.control.mark_urgent();
         }
+
+        self.animator.set_pose(self.control.selected_pose());
 
         // Advance on every tick so animation timing does not depend on the
         // render cadence.
@@ -638,6 +657,41 @@ mod tests {
         let mut ui = lvgl_ui::Ui::new(display, lvgl_ui::Theme::dark()).expect("Ui::new");
         ui.mount(&app).expect("mount");
         ui
+    }
+
+    #[test]
+    fn resident_lua_selects_pose_while_rust_renderer_keeps_animating_and_expires_it() {
+        let _guard = test_support::lock();
+        unsafe { lvgl::deinit() };
+        lvgl::init();
+        let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
+        let control = FoxControl::new(Expression::Idle);
+        let mut runtime = crate::behavior::Runtime::new(0, Rc::clone(&control));
+        runtime.enable_brain("local first=true;return {on_event=function()end,tick=function()fox.set_expression('Happy');if first then fox.play('Charging',500);first=false end end}",0,&mosaico_lua::GLOBAL_ALLOCATOR,None).unwrap();
+        let mut ui = mount(&control, &display);
+        for now in [50, 100, 150, 200] {
+            runtime.tick(now);
+            ui.tick(50).unwrap();
+        }
+        assert_eq!(control.rendered_pose.get(), Some(FoxPose::Charging));
+        assert!(
+            control.rendered_frames() >= 4,
+            "Rust redraws independent animation frames between Lua decisions"
+        );
+        runtime.tick(550);
+        ui.tick(50).unwrap();
+        ui.tick(60).unwrap();
+        assert_eq!(control.rendered_pose.get(), Some(FoxPose::Happy));
+        runtime.begin_shutdown();
+        ui.tick(5).unwrap();
+        ui.tick(60).unwrap();
+        assert_eq!(control.rendered_pose.get(), Some(FoxPose::Sleep));
+        ui.unmount();
+        drop(ui);
+        unsafe {
+            display.delete();
+            lvgl::deinit();
+        }
     }
 
     #[test]

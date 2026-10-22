@@ -340,6 +340,7 @@ typedef struct global_State {
   lu_byte gcstate;  /* state of garbage collector */
   lu_byte gckind;  /* kind of GC running */
   lu_byte gcstopem;  /* stops emergency collections */
+  lu_byte mosaico_skip_finalizers; /* restricted resident VM discard */
   lu_byte gcstp;  /* control whether GC is running */
   lu_byte gcemergency;  /* true if this is an emergency collection */
   GCObject *allgc;  /* list of all collectable objects */

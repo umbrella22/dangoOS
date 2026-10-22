@@ -177,6 +177,10 @@ struct Heap {
 
 pub(crate) struct Ctx {
     pub(crate) data_root: Vec<u8>,
+    bounded: bool,
+    callback_hooks_left: u32,
+    callback_deadline: Option<u64>,
+    abort_guard: *mut c_void,
     pub(crate) host: Box<dyn Host>,
     heap: *const Heap,
     pub(crate) limits: Limits,
@@ -258,6 +262,20 @@ impl Vm {
         Ok(())
     }
 
+    /// Enable uncatchable total callback budgets and discard without Lua
+    /// finalizers. Restricted embeddings must release native resources through
+    /// Host ownership / native exit cleanups; foreground VMs retain lua_close.
+    pub fn set_callback_budget(&mut self, hooks: u32, wall_us: u64) {
+        let ctx = unsafe { &mut *self.ctx };
+        ctx.bounded = true;
+        unsafe { mosaico_lua_restrict_finalizers(self.main) };
+        ctx.callback_hooks_left = hooks.max(1);
+        ctx.callback_deadline = ctx
+            .limits
+            .clock
+            .map(|clock| clock().saturating_add(wall_us));
+    }
+
     /// A fresh state with the standard libraries Mosaico supports: base,
     /// package (preload only), coroutine, debug, math, string, table, utf8.
     pub fn new(
@@ -281,6 +299,10 @@ impl Vm {
             .expect("validated root");
         let ctx = Box::into_raw(Box::new(Ctx {
             data_root: default_root[..=root_len].to_vec(),
+            bounded: false,
+            callback_hooks_left: 0,
+            callback_deadline: None,
+            abort_guard: ptr::null_mut(),
             host,
             heap,
             limits,
@@ -434,7 +456,17 @@ impl Vm {
         }
         let mut nres: c_int = 0;
         let _enter = Enter::new(self.ctx);
-        let status = unsafe { lua_resume(self.thread, ptr::null_mut(), 0, &mut nres) };
+        let status = unsafe {
+            if (*self.ctx).bounded {
+                mosaico_lua_resume_bounded(self.thread, &mut nres)
+            } else {
+                lua_resume(self.thread, ptr::null_mut(), 0, &mut nres)
+            }
+        };
+        if status == -2 {
+            self.state = State::Finished;
+            return Step::Error("callback budget exhausted".into());
+        }
         let ctx = unsafe { &mut *self.ctx };
         match status {
             LUA_YIELD => {
@@ -529,7 +561,11 @@ impl Drop for Vm {
         unsafe {
             // Like cap_lua: modules release hardware (the screen) first.
             mosaico_lua_exit(self.main);
-            lua_close(self.main);
+            if (*self.ctx).bounded {
+                mosaico_lua_discard(self.main);
+            } else {
+                lua_close(self.main);
+            }
             drop(Box::from_raw(self.ctx));
             drop(Box::from_raw(self.heap));
         }
@@ -574,6 +610,16 @@ unsafe extern "C" fn mosaico_lua_on_hook(
     yieldable: c_int,
 ) -> c_int {
     let ctx = &mut *(ctx as *mut Ctx);
+    if ctx.bounded {
+        ctx.callback_hooks_left = ctx.callback_hooks_left.saturating_sub(1);
+        if ctx.callback_hooks_left == 0
+            || ctx
+                .callback_deadline
+                .is_some_and(|deadline| ctx.limits.clock.is_some_and(|clock| clock() >= deadline))
+        {
+            return 4;
+        }
+    }
     ctx.hooks = ctx.hooks.saturating_add(1);
     ctx.since_yield = ctx.since_yield.saturating_add(1);
     let can_yield = l == ctx.thread && yieldable != 0;
@@ -737,4 +783,16 @@ unsafe extern "C" fn mosaico_lua_on_request(
 #[no_mangle]
 unsafe extern "C" fn mosaico_lua_on_stop(ctx: *mut c_void) -> c_int {
     (*(ctx as *const Ctx)).interrupt as c_int
+}
+
+#[no_mangle]
+unsafe extern "C" fn mosaico_lua_swap_abort_guard(
+    ctx: *mut c_void,
+    guard: *mut c_void,
+) -> *mut c_void {
+    core::mem::replace(&mut (*(ctx as *mut Ctx)).abort_guard, guard)
+}
+#[no_mangle]
+unsafe extern "C" fn mosaico_lua_abort_guard(ctx: *mut c_void) -> *mut c_void {
+    (*(ctx as *mut Ctx)).abort_guard
 }

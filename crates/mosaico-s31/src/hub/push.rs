@@ -59,6 +59,16 @@ pub enum Effect {
     Reboot,
     /// Reload the persisted skin selection on the UI task.
     SkinsChanged,
+    /// The UI task validates/commits the resident brain and returns the reply.
+    Brain(super::brain_store::Action),
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum UploadKind {
+    #[default]
+    App,
+    Skin,
+    Brain,
 }
 
 struct Upload {
@@ -80,7 +90,7 @@ pub struct Session {
     #[cfg(test)]
     payload_writes: Vec<usize>,
     staging: Option<String>,
-    skin: bool,
+    kind: UploadKind,
     upload: Option<Upload>,
 }
 
@@ -128,7 +138,7 @@ impl Session {
                         if let Some(cmd) = text.strip_prefix(PREFIX) {
                             let mut deferred = false;
                             self.command(vfs, cmd.trim(), &mut |effect| {
-                                deferred |= matches!(effect, Effect::Manage(_));
+                                deferred |= matches!(effect, Effect::Manage(_) | Effect::Brain(_));
                                 out(effect);
                             });
                             if deferred {
@@ -225,9 +235,38 @@ impl Session {
         }
         let result = match (verb, args.as_slice()) {
             ("hello", []) => Ok(format!("hello mosaico-push {VERSION}")),
-            ("begin", [id]) => self.begin(vfs, id, false),
-            ("skin-begin", [id]) => self.begin(vfs, id, true),
-            ("skin-commit", [id]) if self.skin && self.staging.as_deref() == Some(id) => {
+            ("begin", [id]) => self.begin(vfs, id, UploadKind::App),
+            ("skin-begin", [id]) => self.begin(vfs, id, UploadKind::Skin),
+            ("brain-begin", []) => self
+                .begin(vfs, "resident", UploadKind::Brain)
+                .map(|_| "brain-begin".into()),
+            ("brain-commit", [])
+                if self.kind == UploadKind::Brain
+                    && self.staging.as_deref() == Some("resident") =>
+            {
+                match super::brain_store::read_source(vfs, super::brain_store::STAGED_SOURCE) {
+                    Ok(source) => {
+                        self.staging = None;
+                        let _ = vfs.remove_tree(self.staging_root());
+                        out(Effect::Brain(super::brain_store::Action::Install(source)));
+                        return;
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            (verb @ ("brain-reload" | "brain-default" | "brain-status"), []) => {
+                use super::brain_store::Action;
+                let action = match verb {
+                    "brain-reload" => Action::Reload,
+                    "brain-default" => Action::Default,
+                    _ => Action::Status,
+                };
+                out(Effect::Brain(action));
+                return;
+            }
+            ("skin-commit", [id])
+                if self.kind == UploadKind::Skin && self.staging.as_deref() == Some(id) =>
+            {
                 match super::skins::commit(vfs, id) {
                     Ok(()) => {
                         self.staging = None;
@@ -278,7 +317,7 @@ impl Session {
                     Ok(identity) => {
                         // Invalidate in-memory staging as well as the on-disk
                         // incoming tree, preventing a stale file/commit resurrection.
-                        if !self.skin && self.staging.as_deref() == Some(id) {
+                        if self.kind == UploadKind::App && self.staging.as_deref() == Some(id) {
                             self.staging = None;
                         }
                         let op = if verb == "rm" {
@@ -307,27 +346,27 @@ impl Session {
     }
 
     fn staging_root(&self) -> &'static str {
-        if self.skin {
-            super::skins::STAGING
-        } else {
-            STAGING
+        match self.kind {
+            UploadKind::App => STAGING,
+            UploadKind::Skin => super::skins::STAGING,
+            UploadKind::Brain => super::brain_store::STAGING,
         }
     }
 
-    fn begin(&mut self, vfs: &mut Vfs, id: &str, skin: bool) -> Result<String, String> {
+    fn begin(&mut self, vfs: &mut Vfs, id: &str, kind: UploadKind) -> Result<String, String> {
         if !id_is_valid(id) {
             return Err(format!("bad id {id}"));
         }
-        if !skin {
+        if kind == UploadKind::App {
             super::uninstall::ensure_ready(vfs, id)?;
         }
-        if skin && id == "default" {
+        if kind == UploadKind::Skin && id == "default" {
             return Err("reserved skin id default".into());
         }
         if self.staging.is_some() {
             let _ = vfs.remove_tree(self.staging_root());
         }
-        self.skin = skin;
+        self.kind = kind;
         let dir = format!("{}/{id}", self.staging_root());
         match vfs.remove_tree(self.staging_root()) {
             Ok(()) | Err(Errno::NOENT) => {}
@@ -346,6 +385,13 @@ impl Session {
         }
         let size: u32 = size.parse().map_err(|_| format!("bad size {size}"))?;
         let want = u32::from_str_radix(crc, 16).map_err(|_| format!("bad crc {crc}"))?;
+        if self.kind == UploadKind::Brain
+            && (rel != "source.lua"
+                || size == 0
+                || size as usize > crate::behavior::brain::SOURCE_MAX)
+        {
+            return Err("brain upload requires source.lua of 1..65536 bytes".into());
+        }
         if !rel_is_safe(rel) {
             return Err(format!("bad path {rel}"));
         }
@@ -378,7 +424,7 @@ impl Session {
         run: bool,
         out: &mut dyn FnMut(Effect),
     ) -> Result<String, String> {
-        if self.skin || self.staging.as_deref() != Some(id) {
+        if self.kind != UploadKind::App || self.staging.as_deref() != Some(id) {
             return Err(format!("commit {id}: not staged"));
         }
         super::uninstall::ensure_ready(vfs, id)?;
@@ -538,6 +584,80 @@ mod tests {
     fn crc32_matches_zlib() {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
         assert_eq!(crc32(b""), 0);
+    }
+
+    #[test]
+    fn brain_transfer_is_scoped_and_commit_is_deferred_before_next_command() {
+        use super::super::brain_store::{self, Action};
+        for chunk in [1, 64, 512] {
+            let mut v = vfs();
+            brain_store::persist(&mut v, Some("old source")).unwrap();
+            let mut session = Session::new();
+            let mut stream = b"@mosaico brain-begin\n".to_vec();
+            stream.extend(file_cmd("source.lua", MAIN));
+            let replies = replies(&run(&mut v, &mut session, &stream, chunk));
+            assert_eq!(
+                replies,
+                [
+                    "@ok brain-begin",
+                    "@ok ready source.lua",
+                    "@ok file source.lua"
+                ]
+            );
+            let packet = b"@mosaico brain-commit\n@mosaico brain-status\n";
+            let mut effects = Vec::new();
+            let used = session.feed_until_deferred(&mut v, packet, &mut |e| effects.push(e));
+            assert_eq!(&packet[used..], b"@mosaico brain-status\n");
+            assert_eq!(
+                effects,
+                [Effect::Brain(Action::Install(
+                    String::from_utf8(MAIN.to_vec()).unwrap()
+                ))]
+            );
+            assert_eq!(
+                brain_store::selected(&mut v).unwrap().as_deref(),
+                Some("old source"),
+                "transport never activates a VM or overwrites active source"
+            );
+            assert!(v.stat(brain_store::STAGED_SOURCE).is_err());
+            assert!(run(&mut v, &mut session, b"@mosaico brain-commit\n", chunk)
+                .iter()
+                .all(|e| matches!(e, Effect::Reply(s) if s.starts_with("@err"))));
+        }
+    }
+
+    #[test]
+    fn bad_or_interrupted_brain_upload_cannot_touch_active_source() {
+        use super::super::brain_store;
+        let mut v = vfs();
+        brain_store::persist(&mut v, Some("old source")).unwrap();
+        let mut session = Session::new();
+        let effects = run(&mut v, &mut session, b"@mosaico brain-begin\n@mosaico file other.lua 1 0\n@mosaico file source.lua 0 0\n@mosaico file source.lua 65537 0\n@mosaico file source.lua 3 0\nabc@mosaico brain-commit\n", 64);
+        let text = replies(&effects);
+        assert!(text[1..4].iter().all(|e| e.starts_with("@err")));
+        assert!(text[5].contains("crc"));
+        assert!(text[6].starts_with("@err"));
+        run(
+            &mut v,
+            &mut session,
+            b"@mosaico file source.lua 30 0\npartial",
+            64,
+        );
+        assert_eq!(v.open_files(), 1);
+        session.reset(&mut v);
+        assert_eq!(v.open_files(), 0);
+        assert_eq!(
+            brain_store::selected(&mut v).unwrap().as_deref(),
+            Some("old source")
+        );
+        assert!(v.stat(brain_store::STAGING).is_err());
+        // A later app upload has its own staging root and cannot be committed
+        // through the brain command, even when its app id is "resident".
+        run(&mut v, &mut session, b"@mosaico begin resident\n", 64);
+        assert!(
+            replies(&run(&mut v, &mut session, b"@mosaico brain-commit\n", 64))[0]
+                .starts_with("@err")
+        );
     }
 
     #[test]

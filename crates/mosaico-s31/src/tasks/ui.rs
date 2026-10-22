@@ -239,6 +239,18 @@ pub async fn ui_task(mut plane: PlaneUi) {
     // first tap look ancient or future-dated.
     let boot_ms = latency::now_us() / 1000;
     let mut runtime = Runtime::new(boot_ms, Rc::clone(&control));
+    // The bundled brain needs no filesystem. Start before draining any input
+    // so one-shot module edges and early battery/light state are retained while
+    // USB startup mounts storage in another task.
+    if let Err(error) = runtime.enable_brain(
+        mosaico_s31::behavior::brain::DEFAULT_SOURCE,
+        boot_ms,
+        &super::lua::PSRAM,
+        Some(super::lua::clock_us),
+    ) {
+        warn!("brain: bundled startup failed, native fallback: {error}");
+    }
+    let mut brain_booted = false;
     // Touch is held off through the entrance: a finger resting on the glass
     // during boot must not interrupt the drop.
     runtime.ignore_touch_until(boot_ms + MosaicoApp::touch_hold_off_ms());
@@ -282,6 +294,21 @@ pub async fn ui_task(mut plane: PlaneUi) {
         last_tick = now;
         let now_ms = latency::now_us() / 1000;
 
+        // Storage mounts after USB startup; do not mistake this transient
+        // pre-mount state for a damaged persisted brain. Resolve selection once
+        // after the mount attempt completes. No custom source keeps the same
+        // default VM, including every input it consumed before mounting.
+        if !brain_booted && crate::drivers::storage::ready() {
+            super::brain_control::boot(
+                &mut runtime,
+                now_ms,
+                &super::lua::PSRAM,
+                Some(super::lua::clock_us),
+            );
+            runtime.ignore_touch_until(boot_ms + MosaicoApp::touch_hold_off_ms());
+            brain_booted = true;
+        }
+
         if crate::drivers::storage::ready() && (!skin_loaded || skins::take_reload()) {
             skins::apply(&control);
             skin_loaded = true;
@@ -298,6 +325,16 @@ pub async fn ui_task(mut plane: PlaneUi) {
             sensors_changed |= app.hub_mut().snapshot.observe(&event);
             // Off Home the fox is paused: the apps own the lights and the
             // motor, and only lasting state (battery, modules) reaches her.
+            match event.kind {
+                mosaico_s31::behavior::affect::EventKind::KeyDown => {
+                    lights::native_reflex(now_ms, 260)
+                }
+                mosaico_s31::behavior::affect::EventKind::ModuleInserted(_)
+                | mosaico_s31::behavior::affect::EventKind::ModuleRemoved(_) => {
+                    lights::native_reflex(now_ms, 5000)
+                }
+                _ => {}
+            }
             if app.page() == Page::Home || reaches_fox_off_home(&event.kind) {
                 runtime.on_sensor(event);
             }
@@ -451,6 +488,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
             runtime.begin_shutdown();
         }
+        super::brain_control::poll(&mut runtime, now_ms, buttons::shutdown_requested());
         if app.page() != last_page {
             info!("hub: {:?} -> {:?}", last_page, app.page());
             gestures.reset_pass();
@@ -507,6 +545,18 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
         }
         lights::show(runtime.expression());
+        lights::show_native(runtime.native_expression());
+        lights::brain_frame(runtime.brain_leds(), now_ms);
+        if let Some(command) = runtime.take_brain_command() {
+            match command {
+                mosaico_s31::behavior::affect::SystemCommand::Hub => {
+                    app.go(Page::Launcher);
+                    ui.mark_dirty();
+                }
+                mosaico_s31::behavior::affect::SystemCommand::StartListening
+                | mosaico_s31::behavior::affect::SystemCommand::StopActivity => {}
+            }
+        }
 
         // ---- render into a free slot, then hand the frame to the plane ----
         let rendered_before_tick = control.rendered_frames();

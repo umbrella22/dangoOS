@@ -1,3 +1,4 @@
+#include <stdatomic.h>
 /*
  * Platform layer for the vendored esp-claw Lua modules (display, json,
  * arg_schema) plus the delay and system modules, which are written here
@@ -544,15 +545,18 @@ static void preload(lua_State *L, const char *name, lua_CFunction fn)
 
 void mosaico_platform_preload(lua_State *L)
 {
-    static bool registered;
-    if (!registered) {
-        registered = true;
+    static atomic_int registration;
+    int expected = 0;
+    if (atomic_compare_exchange_strong_explicit(&registration, &expected, 1, memory_order_acq_rel, memory_order_acquire)) {
         lua_module_display_register();
         lua_module_json_register();
         cap_lua_register_module("delay", luaopen_delay);
         cap_lua_register_module("system", luaopen_system);
         cap_lua_register_module("arg_schema", luaopen_arg_schema);
         lua_module_storage_register();
+        atomic_store_explicit(&registration, 2, memory_order_release);
+    } else {
+        while (atomic_load_explicit(&registration, memory_order_acquire) != 2) {}
     }
     luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);
     for (size_t i = 0; i < s_module_count; ++i) preload(L, s_modules[i].name, s_modules[i].open);

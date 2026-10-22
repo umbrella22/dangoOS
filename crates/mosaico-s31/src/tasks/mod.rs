@@ -10,6 +10,7 @@
 //! - [`apps`]: the app registry scan and requests from the USB push protocol.
 
 pub mod apps;
+pub mod brain_control;
 pub mod buttons;
 pub mod haptic;
 pub mod input;

@@ -100,6 +100,9 @@ extern "C" {
     pub fn mosaico_lua_install_hook(l: *mut lua_State, count: c_int);
     pub fn mosaico_lua_traceback(l: *mut lua_State, thread: *mut lua_State) -> c_int;
     pub fn mosaico_lua_set_args(l: *mut lua_State, json: *const c_char, len: usize) -> c_int;
+    pub fn mosaico_lua_resume_bounded(l: *mut lua_State, nres: *mut c_int) -> c_int;
+    pub fn mosaico_lua_restrict_finalizers(l: *mut lua_State);
+    pub fn mosaico_lua_discard(l: *mut lua_State);
     pub fn mosaico_lua_exit(l: *mut lua_State);
 
     // csrc/mosaico_platform.c

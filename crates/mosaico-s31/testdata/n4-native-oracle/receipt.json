@@ -1,0 +1,12 @@
+{
+  "source_commit": "1f8a38c03ace35737271be2823096d415f327f59",
+  "tests_exercised": 88,
+  "engine_instances": 89,
+  "calls": 4161,
+  "trace_sha256": "4b65c3222b60d401415a9fa1a5f8917f0ab2a4fe53256630259d245fb8cc5ec3",
+  "native_tests_exit": 0,
+  "json_sha256": "b98942ba092f89a9055b70d74abe3efab4bf7f42a30a24b45847f73046bdedc4",
+  "tracked_json_sha256": "b98942ba092f89a9055b70d74abe3efab4bf7f42a30a24b45847f73046bdedc4",
+  "tracked_json_bytes": 1157278,
+  "transform": "json.dumps(json.loads(original), ensure_ascii=False, separators=(',',':')) + newline; values unchanged"
+}

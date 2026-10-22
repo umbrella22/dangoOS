@@ -6,6 +6,7 @@
 //! in [`crate::ui::hub_view`]; the device task routes touches through
 //! [`gesture::EdgeGestures`] and applies [`Settings`] to the hardware.
 
+pub mod brain_store;
 pub mod countdown;
 pub mod gesture;
 pub(crate) mod json;

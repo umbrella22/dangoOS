@@ -45,3 +45,6 @@ name = "mosaico-s31-fw"
 path = "src/main.rs"
 test = false
 bench = false
+
+[dev-dependencies]
+serde_json = "1"

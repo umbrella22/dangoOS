@@ -7,7 +7,11 @@ here were made.
 
 - Source: https://www.lua.org/ftp/lua-5.5.1.tar.gz
 - License: MIT (`lua-5.5.1/LICENSE`)
-- Unmodified. `loslib.c` is compiled through `csrc/mosaico_loslib.c`, which
+- Modification: `lstate.h`, `lstate.c`, and `lgc.c` add an opt-in
+  restricted-VM flag: script `__gc` is skipped during collection and close,
+  and discard closes upvalues without running `__close`. The flag defaults
+  to zero, preserving ordinary foreground VM finalizers.
+- `loslib.c` is compiled through `csrc/mosaico_loslib.c`, which
   redirects `time`, `clock`, `system`, `tmpnam` and `exit` to the host with
   macros before including it (`remove`/`rename` go to the file system through
   newlib). `liolib.c` is compiled as is; its `FILE *` calls reach the

@@ -263,7 +263,8 @@ static void close_state (lua_State *L) {
     luaC_freeallobjects(L);  /* just collect its objects */
   else {  /* closing a fully built state */
     resetCI(L);
-    luaD_closeprotected(L, 1, LUA_OK);  /* close all upvalues */
+    if (g->mosaico_skip_finalizers) luaF_closeupval(L, L->stack.p + 1);
+    else luaD_closeprotected(L, 1, LUA_OK);  /* close all upvalues */
     L->top.p = L->stack.p + 1;  /* empty the stack to run finalizers */
     luaC_freeallobjects(L);  /* collect all objects */
     luai_userstateclose(L);
@@ -357,6 +358,7 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud, unsigned seed) {
   g->warnf = NULL;
   g->ud_warn = NULL;
   g->seed = seed;
+  g->mosaico_skip_finalizers = 0;
   g->gcstp = GCSTPGC;  /* no GC while building state */
   g->strt.size = g->strt.nuse = 0;
   g->strt.hash = NULL;

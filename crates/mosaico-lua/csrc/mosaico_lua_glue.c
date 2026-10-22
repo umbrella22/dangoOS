@@ -1,3 +1,5 @@
+#include <setjmp.h>
+#include "lstate.h"
 /*
  * C side of the Rust <-> Lua bridge.
  *
@@ -245,6 +247,28 @@ int mosaico_lua_register(lua_State *L, const char *module, const mosaico_lua_reg
 
 /* ---- Scheduling hook --------------------------------------------------- */
 
+extern void *mosaico_lua_swap_abort_guard(void *ctx, void *guard);
+extern void *mosaico_lua_abort_guard(void *ctx);
+
+/* The setjmp boundary lives entirely in C, outside lua_resume. A hard budget
+ * escape cannot be caught by Lua pcall and never jumps across a Rust frame. */
+int mosaico_lua_resume_bounded(lua_State *L, int *nres) {
+  jmp_buf guard;
+  void *previous = mosaico_lua_swap_abort_guard(ctx_of(L), &guard);
+  int status;
+  if (setjmp(guard) == 0) status = lua_resume(L, NULL, 0, nres);
+  else status = -2;
+  mosaico_lua_swap_abort_guard(ctx_of(L), previous);
+  return status;
+}
+void mosaico_lua_restrict_finalizers(lua_State *L) {
+  G(L)->mosaico_skip_finalizers = 1;
+}
+void mosaico_lua_discard(lua_State *L) {
+  G(L)->mosaico_skip_finalizers = 1;
+  lua_close(L);
+}
+
 static void glue_hook(lua_State *L, lua_Debug *ar) {
   (void)ar;
   switch (mosaico_lua_on_hook(ctx_of(L), L, lua_isyieldable(L))) {
@@ -254,6 +278,12 @@ static void glue_hook(lua_State *L, lua_Debug *ar) {
   case 2:
     luaL_error(L, "interrupted");
     return;
+  case 4: {
+    void *guard = mosaico_lua_abort_guard(ctx_of(L));
+    if (guard) longjmp(*(jmp_buf *)guard, 1);
+    luaL_error(L, "callback budget exhausted");
+    return;
+  }
   case 3:
     luaL_error(L, "script ran too long without yielding");
     return;

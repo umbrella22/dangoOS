@@ -407,3 +407,14 @@ fn compatibility_default_is_a_validated_owned_snapshot() {
     assert_eq!(before.resume(), Step::Done);
     assert_eq!(after.resume(), Step::Done);
 }
+
+#[test]
+fn bounded_vm_coroutine_catchers_cannot_swallow_total_budget() {
+    for source in [
+        "while true do pcall(coroutine.wrap(function()while true do end end)) end",
+        "local co=coroutine.create(function()while true do end end);while true do pcall(coroutine.resume,co) end",
+    ] {
+        let mut vm=fresh();vm.set_callback_budget(100,20_000);
+        assert!(matches!(run(&mut vm,source).0,Step::Error(ref e) if e.contains("callback budget exhausted")));
+    }
+}

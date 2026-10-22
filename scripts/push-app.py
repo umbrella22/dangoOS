@@ -6,6 +6,7 @@
     scripts/push-app.py status | reboot [--follow]
     scripts/push-app.py skin-push <skin-dir> [--select] [--follow]
     scripts/push-app.py skin-select <id> | skin-rm <id> | skin-ls
+    scripts/push-app.py brain-push <script.lua> | brain-reload | brain-default | brain-status
 
 <app-dir> holds launcher.json and the files it names; everything except
 dotfiles is sent. The firmware stages the files, swaps them in as
@@ -34,6 +35,7 @@ PREFIX = "@mosaico "
 SAFE_PART = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,47}$")
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,63}$")
 FILE_MAX = 1024 * 1024
+BRAIN_MAX = 64 * 1024
 
 
 class Device:
@@ -162,10 +164,43 @@ def push_skin(dev, root, select):
     print(f"pushed skin {skin_id}" + (" and selected" if select else ""))
 
 
+def read_brain(path):
+    with open(path, "rb") as f:
+        data = f.read(BRAIN_MAX + 1)
+    if not 0 < len(data) <= BRAIN_MAX:
+        raise SystemExit("brain script must contain 1..65536 bytes")
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise SystemExit("brain script must be UTF-8") from None
+    return data
+
+
+def push_brain(dev, data):
+    dev.command("hello")
+    dev.command("brain-begin")
+    try:
+        dev.command(f"file source.lua {len(data)} {zlib.crc32(data):08x}")
+        dev.ser.write(data)
+        line = dev.reply(timeout=30.0)
+        if not line.startswith("@ok file source.lua"):
+            raise SystemExit(f"brain upload: {line}")
+        # Firmware replies only after candidate init, first tick, durable write,
+        # and the UI-owned VM swap. A syntax/timeout/write error keeps the old VM.
+        line = dev.command("brain-commit", timeout=30.0)
+    except (SystemExit, OSError, serial.SerialException):
+        try:
+            dev.command("abort", check=False, timeout=2.0)
+        except (SystemExit, OSError, serial.SerialException):
+            pass
+        raise
+    print(f"{line}; {len(data)} B crc={zlib.crc32(data):08x}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls"])
-    ap.add_argument("target", nargs="?", help="app directory (push) or app id (run, rm, rmdata)")
+    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status"])
+    ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id, or brain script file")
     ap.add_argument("--select", action="store_true", help="select after skin-push")
     ap.add_argument("--run", action="store_true", help="open the app after pushing")
     ap.add_argument("--follow", action="store_true", help="keep printing the device log")
@@ -173,7 +208,7 @@ def main():
     ap.add_argument("--verbose", "-v", action="store_true", help="print device log lines while waiting")
     args = ap.parse_args()
 
-    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm")
+    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
 
@@ -181,8 +216,13 @@ def main():
         ap.error("--select requires skin-push")
     if args.action in ("skin-select", "skin-rm") and not ID_RE.fullmatch(args.target):
         ap.error("invalid exact skin id")
+    brain_data = read_brain(args.target) if args.action == "brain-push" else None
     dev = Device(args.port or default_port(), args.verbose)
-    if args.action == "skin-push":
+    if args.action == "brain-push":
+        push_brain(dev, brain_data)
+    elif args.action in ("brain-reload", "brain-default", "brain-status"):
+        print(dev.command(args.action, timeout=30.0))
+    elif args.action == "skin-push":
         push_skin(dev, args.target, args.select)
     elif args.action in ("skin-select", "skin-rm"):
         print(dev.command(f"{args.action} {args.target}", timeout=30.0))

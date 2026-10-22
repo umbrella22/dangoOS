@@ -42,12 +42,12 @@ unsafe fn psram_alloc(layout: Layout) -> *mut u8 {
 unsafe fn psram_dealloc(ptr: *mut u8, layout: Layout) {
     unsafe { esp_alloc::HEAP.dealloc(ptr, layout) }
 }
-static PSRAM: RawAllocator = RawAllocator {
+pub(super) static PSRAM: RawAllocator = RawAllocator {
     alloc: psram_alloc,
     dealloc: psram_dealloc,
 };
 
-fn clock_us() -> u64 {
+pub(super) fn clock_us() -> u64 {
     esp_hal::time::Instant::now()
         .duration_since_epoch()
         .as_micros()
