@@ -252,6 +252,7 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                     }
                     Effect::Run(id) => apps::request(false, Some(apps::Action::Run(id))),
                     Effect::Stop => apps::request(false, Some(apps::Action::Stop)),
+                    Effect::SkinsChanged => crate::tasks::skins::request_reload(),
                     Effect::Reboot => {
                         warn!("push: reboot requested");
                         // Let the reply and the log line go out first.

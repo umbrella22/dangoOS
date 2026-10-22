@@ -127,7 +127,7 @@ AI 长按使系统进入终态 Sleep，只有当前 Sleep 帧成功上传并显�
 才将 GPIO57 开漏拉低。306 项主机测试与固件构建通过；电源时序、实测关机电流、
 光学显示和重新开机均为 not-run，见 [N2_BUTTONS_POWER.md](N2_BUTTONS_POWER.md)。
 
-### N3. 狐狸皮肤包（不需要 Lua）
+### N3. 狐狸皮肤包（代码与主机检查完成；真机待测）
 
 - 现在狐狸的图像在 `src/assets/fox.bin`（约 740 KB）和生成的 `src/fox/data.rs`（调色板、姿势、部件偏移）里，编进固件。
 - 改成数据包：`/data/skins/<id>/`，内含 `skin.json`（名字、版本、画布尺寸）+ `fox.bin`
@@ -135,6 +135,12 @@ AI 长按使系统进入终态 Sleep，只有当前 Sleep 帧成功上传并显�
 - 固件只保留一套默认皮肤做兜底；包校验失败时退回默认皮肤并在日志里说明。
 - `assets/fox-dango/tools/fox_pack.py` 增加输出皮肤包的模式；新角色按 [FOX_DRAWING_GUIDE.md](FOX_DRAWING_GUIDE.md) 画。
 - 验收：推送一套换色皮肤，主页立即换装，重启后保留；删掉后回到默认。
+
+已实现版本化包、完整元数据 / RLE 校验、可释放动态资源、缓存失效、持久选择、
+暂存替换与恢复；推送命令见 [N3_SKIN_PACK.md](N3_SKIN_PACK.md)。317 项主机测试、
+真实 packer → parser → renderer 检查和固件构建通过。20 姿态动态默认包与内置渲染
+像素一致；当前 BIN 为 2,659,600 字节。光学切换、实物重启持久化和断电恢复仍为 not-run。
+集成修复 `1b4cf33` 同时补齐 N2 实际 Sleep 姿态回执，过渡旧脸帧不再触发关机计时。
 
 ### N4. Lua 情绪引擎（狐狸的“大脑”）
 

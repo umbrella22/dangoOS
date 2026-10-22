@@ -6,7 +6,9 @@
 
 use super::math::{clamp, cos, exp_neg, inv_sqrt, round, sin, PI, TAU};
 use super::scene::{Layer, Scene, Warp};
+use super::skin::Skin;
 use super::{FoxPose, H, W};
+use alloc::rc::Rc;
 
 fn phase(t: u32, period: u32, offset: u32) -> f32 {
     ((t + offset) % period) as f32 / period as f32
@@ -28,12 +30,12 @@ fn breath(pose: FoxPose) -> (u32, f32) {
 }
 
 /// Blink interval range in ms per pose; `None` for closed-eye poses.
-fn blink_range(pose: FoxPose) -> Option<(u32, u32)> {
+fn blink_range(pose: FoxPose, skin: &Skin) -> Option<(u32, u32)> {
     match pose {
         FoxPose::Panic => Some((1500, 3000)),
         FoxPose::Tired => Some((2000, 4000)),
         FoxPose::Speaking => Some((2500, 5000)),
-        _ if pose.data().blink.is_empty() => None,
+        _ if skin.pose(pose).blink.is_empty() => None,
         FoxPose::Idle | FoxPose::Curious | FoxPose::Listening | FoxPose::Charging => {
             Some((2500, 6000))
         }
@@ -72,6 +74,7 @@ impl FoxInput {
 
 /// Expression player: time, blinks and switch transitions.
 pub struct FoxAnimator {
+    skin: Rc<Skin>,
     pose: FoxPose,
     prev: Option<FoxPose>,
     /// Milliseconds since `pose` was entered.
@@ -86,7 +89,13 @@ pub struct FoxAnimator {
 
 impl FoxAnimator {
     pub fn new(pose: FoxPose) -> Self {
+        Self::with_skin(pose, Skin::builtin())
+    }
+
+    /// Start with one resource before scheduling the first seeded animation.
+    pub fn with_skin(pose: FoxPose, skin: Rc<Skin>) -> Self {
         let mut a = Self {
+            skin,
             pose,
             prev: None,
             t: POP_MS,
@@ -98,6 +107,14 @@ impl FoxAnimator {
         };
         a.schedule();
         a
+    }
+
+    pub fn set_skin(&mut self, skin: Rc<Skin>) {
+        if !Skin::same_resources(&self.skin, &skin) {
+            self.skin = skin;
+            self.prev = None;
+            self.schedule();
+        }
     }
 
     pub fn pose(&self) -> FoxPose {
@@ -113,7 +130,7 @@ impl FoxAnimator {
 
     fn schedule(&mut self) {
         let t = self.t;
-        self.next_blink = match blink_range(self.pose) {
+        self.next_blink = match blink_range(self.pose, &self.skin) {
             Some((lo, hi)) => t + self.rand(lo, hi),
             None => u32::MAX,
         };
@@ -134,7 +151,7 @@ impl FoxAnimator {
     pub fn advance(&mut self, dt_ms: u32) {
         self.t = self.t.saturating_add(dt_ms.min(1000));
         if self.t >= self.next_blink.saturating_add(BLINK_MS) {
-            if let Some((lo, hi)) = blink_range(self.pose) {
+            if let Some((lo, hi)) = blink_range(self.pose, &self.skin) {
                 self.next_blink = self.t + self.rand(lo, hi);
                 // Occasional double blink.
                 if self.rand(0, 5) == 0 {
@@ -160,8 +177,8 @@ impl FoxAnimator {
             Some(prev) if t < SWAP_MS => prev,
             _ => self.pose,
         };
-        let pose = shown.data();
-        let mut s = Scene::still(shown);
+        let pose = self.skin.pose(shown);
+        let mut s = Scene::with_skin(shown, Rc::clone(&self.skin));
 
         let (period, depth) = breath(shown);
         let b = sin(TAU * phase(t, period, 0));
@@ -242,7 +259,7 @@ impl FoxAnimator {
                         (3.0 * (1.0 - ph)).min(1.0)
                     };
                     s.over.push(Layer {
-                        img,
+                        img: *img,
                         dx: (ph * 6.0) as i16,
                         dy: -(ph * 24.0) as i16,
                         scale_q8: 256,
@@ -259,7 +276,7 @@ impl FoxAnimator {
                     let d = (vx * vx + vy * vy).max(1.0);
                     let inv = inv_sqrt(d);
                     let layer = Layer {
-                        img,
+                        img: *img,
                         dx: (vx * inv * 12.0 * ph) as i16,
                         dy: (vy * inv * 12.0 * ph) as i16,
                         scale_q8: 256,

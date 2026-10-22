@@ -17,4 +17,5 @@ pub mod lights;
 pub mod lua;
 pub mod plane;
 pub mod sensors;
+pub mod skins;
 pub mod ui;

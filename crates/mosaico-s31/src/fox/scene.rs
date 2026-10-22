@@ -1,14 +1,17 @@
 //! What one frame shows: the pose, its parts, and the whole-canvas warp.
 //!
 //! [`super::FoxAnimator`] produces a [`Scene`]; [`super::FoxRenderer`] draws
-//! it. Nothing here allocates, so a scene can be built every frame.
+//! it. Animator scenes clone their resource handle without allocating; the
+//! `still` convenience constructor creates a compiled-default resource handle.
 
+use super::skin::Skin;
 use super::{FoxPose, Img, H, W};
+use alloc::rc::Rc;
 
 /// A part placed in a scene.
 #[derive(Clone, Copy, Debug)]
 pub struct Layer {
-    pub img: &'static Img,
+    pub img: Img,
     pub dx: i16,
     pub dy: i16,
     /// Nearest-neighbour scale about the part centre, 1/256 units.
@@ -18,9 +21,9 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn at(img: &'static Img) -> Self {
+    pub fn at(img: &Img) -> Self {
         Self {
-            img,
+            img: *img,
             dx: 0,
             dy: 0,
             scale_q8: 256,
@@ -29,7 +32,7 @@ impl Layer {
     }
 }
 
-const MAX_LAYERS: usize = 24;
+pub const MAX_LAYERS: usize = 24;
 
 /// Fixed-capacity layer list (no allocation per frame).
 #[derive(Clone, Copy)]
@@ -53,7 +56,7 @@ impl Layers {
         }
     }
 
-    pub fn extend(&mut self, imgs: &'static [Img]) {
+    pub fn extend(&mut self, imgs: &[Img]) {
         for img in imgs {
             self.push(Layer::at(img));
         }
@@ -76,6 +79,12 @@ impl Layers {
         for l in self.iter() {
             for v in [
                 l.img.off as u64,
+                l.img.len as u64,
+                l.img.x as u64,
+                l.img.y as u64,
+                l.img.w as u64,
+                l.img.h as u64,
+                l.img.over_bg as u64,
                 l.dx as u64,
                 l.dy as u64,
                 l.scale_q8 as u64,
@@ -123,8 +132,9 @@ impl Warp {
 }
 
 /// Everything needed to draw one frame.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Scene {
+    pub skin: Rc<Skin>,
     pub pose: FoxPose,
     /// Patches and body sprites, stamped before the warp.
     pub under: Layers,
@@ -135,7 +145,11 @@ pub struct Scene {
 
 impl Scene {
     pub fn still(pose: FoxPose) -> Self {
+        Self::with_skin(pose, Skin::builtin())
+    }
+    pub fn with_skin(pose: FoxPose, skin: Rc<Skin>) -> Self {
         Self {
+            skin,
             pose,
             under: Layers::new(),
             warp: Warp::IDENTITY,

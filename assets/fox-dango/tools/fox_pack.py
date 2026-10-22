@@ -8,6 +8,10 @@ fox_parts.py; both outputs are committed, so the firmware build needs no Python.
 RLE: every image row is a sequence of (count 1..=255, index) byte pairs that
 sums to the image width. Index 255 is transparent (sprites only).
 """
+import argparse
+import struct
+import zlib
+import re
 import json
 from pathlib import Path
 
@@ -50,11 +54,28 @@ def rle(a):
 
 
 def main():
+    global DEV
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--device', type=Path, default=DEV, help='device art directory')
+    parser.add_argument('--skin-dir', type=Path, help='write standalone skin package instead of firmware tables')
+    parser.add_argument('--id', help='skin identity, required with --skin-dir')
+    parser.add_argument('--name', default='Fox skin')
+    parser.add_argument('--version', default='1')
+    parser.add_argument('--palette-xor', type=lambda v: int(v, 0), default=0,
+                        help='RGB565 palette XOR for a deterministic recolor package')
+    args = parser.parse_args()
+    if args.skin_dir and (not args.id or not re.fullmatch(r'[A-Za-z0-9_-]{1,63}', args.id) or args.id == 'default'):
+        parser.error('--skin-dir needs an exact valid non-default --id')
+    if not 0 <= args.palette_xor <= 65535 or (args.palette_xor and not args.skin_dir):
+        parser.error('--palette-xor must be uint16 and requires --skin-dir')
+    DEV = args.device
     m = json.load(open(DEV / 'manifest.json'))
     W, H = m['canvas']
     pal = m['palette_rgb565']
     lut = {c: i for i, c in enumerate(pal)}
     blob = bytearray()
+    packed_poses = []
+    images = {}
 
     def image(item, sprite):
         data = rle(indices(item['file'], sprite, lut))
@@ -63,7 +84,9 @@ def main():
         a = Image.open(DEV / item['file'])
         x, y = item.get('x', 0), item.get('y', 0)
         bg = 'true' if item.get('over') == 'bg' else 'false'
-        return f'Img {{ x: {x}, y: {y}, w: {a.width}, h: {a.height}, off: {off}, len: {len(data)}, over_bg: {bg} }}'
+        text = f'Img {{ x: {x}, y: {y}, w: {a.width}, h: {a.height}, off: {off}, len: {len(data)}, over_bg: {bg} }}'
+        images[text] = struct.pack('<hhHHIII', x, y, a.width, a.height, off, len(data), int(bg == 'true'))
+        return text
 
     poses = []
     for key, p in m['poses'].items():
@@ -87,6 +110,36 @@ def main():
         lines.append('        spiral: [' + ', '.join(f'&[{", ".join(spiral[n])}]' for n in (1, 2, 3)) + '],')
         lines.append('    },')
         poses.append('\n'.join(lines))
+        packed_poses.append((base, list(fields.values()) + [spiral[n] for n in (1, 2, 3)]))
+
+    if args.skin_dir:
+        expected = ['idle', 'sleep', 'curious', 'happy', 'puzzled', 'confused', 'surprised',
+                    'panic', 'angry', 'satisfied', 'listening', 'thinking', 'speaking', 'error',
+                    'tired', 'dying', 'annoyed', 'charging', 'peering', 'dazzled']
+        # Manifest pose keys are checked rather than silently mapped by dictionary order.
+        actual = list(m['poses'])
+        if [key.lower() for key in actual] != expected:
+            parser.error('skin requires all 20 poses in canonical order: ' + ','.join(expected))
+        meta = bytearray(struct.pack('<' + 'H' * len(pal), *[c ^ args.palette_xor for c in pal]))
+        for index, (base, groups) in enumerate(packed_poses):
+            meta += struct.pack('<H', index) + images[base]
+            for group in groups:
+                meta += struct.pack('<H', len(group))
+                for img in group:
+                    meta += images[img]
+        body = bytes(meta + blob)
+        binary = struct.pack('<8sIHHHHIIII', b'MSKIN01\0', 1, W, H, len(pal), len(poses),
+                             len(meta), len(blob), zlib.crc32(body), 0) + body
+        if len(binary) > 1024 * 1024:
+            parser.error('skin binary exceeds protocol 1 MiB file limit')
+        args.skin_dir.mkdir(parents=True, exist_ok=True)
+        (args.skin_dir / 'fox.bin').write_bytes(binary)
+        (args.skin_dir / 'skin.json').write_text(json.dumps({
+            'schema_version': 1, 'id': args.id, 'name': args.name, 'version': args.version,
+            'canvas': [W, H], 'binary_bytes': len(binary), 'binary_crc32': zlib.crc32(binary),
+        }, ensure_ascii=False, indent=2) + '\n')
+        print(f'skin {args.id}: {len(poses)} poses, {len(binary)} bytes -> {args.skin_dir}')
+        return
 
     OUT.mkdir(parents=True, exist_ok=True)
     BLOB_OUT.mkdir(parents=True, exist_ok=True)

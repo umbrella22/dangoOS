@@ -79,6 +79,7 @@ use super::{
     lights, lua,
     plane::{self, Frame, PlaneJob, PlaneUi},
     sensors::SENSOR_EVENTS,
+    skins,
 };
 use crate::drivers::geometry::{HEIGHT, WIDTH};
 use crate::drivers::lvgl_port::{self, DisplayPort};
@@ -225,6 +226,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
     // Built-ins until the file systems are mounted (`main::mount_storage`).
     let mut icons = IconCache::new();
     let mut scanned = false;
+    let mut skin_loaded = false;
     app.set_registry(mosaico_s31::hub::registry::Registry::builtin_only(
         &mut icons,
     ));
@@ -277,6 +279,11 @@ pub async fn ui_task(mut plane: PlaneUi) {
             .min(u64::from(MAX_TICK_MS)) as u32;
         last_tick = now;
         let now_ms = latency::now_us() / 1000;
+
+        if crate::drivers::storage::ready() && (!skin_loaded || skins::take_reload()) {
+            skins::apply(&control);
+            skin_loaded = true;
+        }
 
         // ---- sensor events -> affect engine ----
         // Drained before the render so a shake that happened during the last

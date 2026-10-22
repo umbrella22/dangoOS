@@ -23,6 +23,7 @@ mod animate;
 pub(crate) mod math;
 mod render;
 mod scene;
+pub mod skin;
 
 pub use animate::{FoxAnimator, FoxInput};
 pub use data::{H, W};
@@ -48,6 +49,7 @@ pub struct Img {
 }
 
 impl Img {
+    #[cfg(test)]
     fn rle(&self) -> &'static [u8] {
         &data::BLOB[self.off as usize..(self.off + self.len) as usize]
     }
@@ -101,6 +103,29 @@ pub enum FoxPose {
 }
 
 impl FoxPose {
+    /// Stable on-disk pose order for skin format version 1.
+    pub const ALL: [Self; 20] = [
+        Self::Idle,
+        Self::Sleep,
+        Self::Curious,
+        Self::Happy,
+        Self::Puzzled,
+        Self::Confused,
+        Self::Surprised,
+        Self::Panic,
+        Self::Angry,
+        Self::Satisfied,
+        Self::Listening,
+        Self::Thinking,
+        Self::Speaking,
+        Self::Error,
+        Self::Tired,
+        Self::Dying,
+        Self::Annoyed,
+        Self::Charging,
+        Self::Peering,
+        Self::Dazzled,
+    ];
     pub fn data(self) -> &'static Pose {
         &data::POSES[self as usize]
     }

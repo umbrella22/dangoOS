@@ -56,6 +56,8 @@ pub enum Effect {
     Stop,
     /// Reset the chip once the reply is out.
     Reboot,
+    /// Reload the persisted skin selection on the UI task.
+    SkinsChanged,
 }
 
 struct Upload {
@@ -74,6 +76,7 @@ pub struct Session {
     line: Vec<u8>,
     overflow: bool,
     staging: Option<String>,
+    skin: bool,
     upload: Option<Upload>,
 }
 
@@ -122,7 +125,7 @@ impl Session {
             let _ = vfs.close(up.fd);
         }
         if self.staging.take().is_some() {
-            let _ = vfs.remove_tree(STAGING);
+            let _ = vfs.remove_tree(self.staging_root());
         }
         self.line.clear();
         self.overflow = false;
@@ -180,7 +183,28 @@ impl Session {
         let args: Vec<&str> = words.collect();
         let result = match (verb, args.as_slice()) {
             ("hello", []) => Ok(format!("hello mosaico-push {VERSION}")),
-            ("begin", [id]) => self.begin(vfs, id),
+            ("begin", [id]) => self.begin(vfs, id, false),
+            ("skin-begin", [id]) => self.begin(vfs, id, true),
+            ("skin-commit", [id]) if self.skin && self.staging.as_deref() == Some(id) => {
+                match super::skins::commit(vfs, id) {
+                    Ok(()) => {
+                        self.staging = None;
+                        out(Effect::SkinsChanged);
+                        Ok(format!("skin-commit {id}"))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            ("skin-select", [id]) => super::skins::select(vfs, id).map(|()| {
+                out(Effect::SkinsChanged);
+                format!("skin-select {id}")
+            }),
+            ("skin-rm", [id]) => {
+                let result = super::skins::remove(vfs, id);
+                out(Effect::SkinsChanged);
+                result.map(|()| format!("skin-rm {id}"))
+            }
+            ("skin-ls", []) => super::skins::list(vfs),
             ("file", [rel, size, crc]) => match self.file(vfs, rel, size, crc) {
                 // The host sends the payload only after this; the final
                 // reply follows it (see `feed_upload`).
@@ -191,7 +215,7 @@ impl Session {
             ("commit", [id, "run"]) => self.commit(vfs, id, true, out),
             ("abort", []) => {
                 if self.staging.take().is_some() {
-                    let _ = vfs.remove_tree(STAGING);
+                    let _ = vfs.remove_tree(self.staging_root());
                 }
                 Ok("abort".into())
             }
@@ -230,12 +254,27 @@ impl Session {
         }));
     }
 
-    fn begin(&mut self, vfs: &mut Vfs, id: &str) -> Result<String, String> {
+    fn staging_root(&self) -> &'static str {
+        if self.skin {
+            super::skins::STAGING
+        } else {
+            STAGING
+        }
+    }
+
+    fn begin(&mut self, vfs: &mut Vfs, id: &str, skin: bool) -> Result<String, String> {
         if !id_is_valid(id) {
             return Err(format!("bad id {id}"));
         }
-        let dir = format!("{STAGING}/{id}");
-        match vfs.remove_tree(STAGING) {
+        if skin && id == "default" {
+            return Err("reserved skin id default".into());
+        }
+        if self.staging.is_some() {
+            let _ = vfs.remove_tree(self.staging_root());
+        }
+        self.skin = skin;
+        let dir = format!("{}/{id}", self.staging_root());
+        match vfs.remove_tree(self.staging_root()) {
             Ok(()) | Err(Errno::NOENT) => {}
             Err(e) => return Err(format!("clear staging: {e}")),
         }
@@ -255,7 +294,7 @@ impl Session {
         if size > FILE_MAX {
             return Err(format!("{rel} is larger than {FILE_MAX} bytes"));
         }
-        let path = format!("{STAGING}/{id}/{rel}");
+        let path = format!("{}/{id}/{rel}", self.staging_root());
         if let Some((dir, _)) = path.rsplit_once('/') {
             vfs.create_dir_all(dir).map_err(|e| format!("{dir}: {e}"))?;
         }
@@ -281,7 +320,7 @@ impl Session {
         run: bool,
         out: &mut dyn FnMut(Effect),
     ) -> Result<String, String> {
-        if self.staging.as_deref() != Some(id) {
+        if self.skin || self.staging.as_deref() != Some(id) {
             return Err(format!("commit {id}: not staged"));
         }
         let staged = format!("{STAGING}/{id}");
@@ -298,7 +337,7 @@ impl Session {
         }
         vfs.rename(&staged, &target)
             .map_err(|e| format!("rename: {e}"))?;
-        let _ = vfs.remove_tree(STAGING);
+        let _ = vfs.remove_tree(self.staging_root());
         self.staging = None;
         out(Effect::Reload {
             run: run.then(|| id.to_string()),

@@ -143,6 +143,7 @@ fn finite_or(value: f32, fallback: f32) -> f32 {
 /// task is single-threaded, so `Cell` is enough.
 pub struct FoxControl {
     expression: Cell<Expression>,
+    skin: core::cell::RefCell<Rc<fox::skin::Skin>>,
     visual: Cell<FoxVisual>,
     /// Render on the next tick instead of waiting for the 50 ms cadence.
     urgent: Cell<bool>,
@@ -172,6 +173,7 @@ impl FoxControl {
     pub fn new(expression: Expression) -> Rc<Self> {
         Rc::new(Self {
             expression: Cell::new(expression),
+            skin: core::cell::RefCell::new(fox::skin::Skin::builtin()),
             visual: Cell::new(FoxVisual::IDLE),
             urgent: Cell::new(true),
             creates: Cell::new(0),
@@ -228,6 +230,12 @@ impl FoxControl {
     /// Frames the renderer produced that the upload never took.
     pub fn dropped_frames(&self) -> u32 {
         self.pool.get().map_or(0, CanvasPool::dropped_frames)
+    }
+
+    /// Publish a fully validated skin at one UI-owned switch point.
+    pub fn set_skin(&self, skin: Rc<fox::skin::Skin>) {
+        *self.skin.borrow_mut() = skin;
+        self.mark_urgent();
     }
 
     /// Show a new expression. The mounted widget switches pose on the next
@@ -453,6 +461,8 @@ impl CustomWidget for FoxWidget {
             return Err(UiError::InvalidProperty);
         }
 
+        self.animator
+            .set_skin(Rc::clone(&self.control.skin.borrow()));
         let expression = self.control.expression();
         self.animator.set_pose(FoxPose::from(expression));
         self.last_expression = Some(expression);
@@ -537,6 +547,8 @@ impl CustomWidget for FoxWidget {
             return Err(UiError::InvalidProperty);
         };
 
+        self.animator
+            .set_skin(Rc::clone(&self.control.skin.borrow()));
         let expression = self.control.expression();
         if self.last_expression != Some(expression) {
             self.last_expression = Some(expression);

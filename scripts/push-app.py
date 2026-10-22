@@ -4,6 +4,8 @@
     scripts/push-app.py push <app-dir> [--run] [--follow]
     scripts/push-app.py run <id> | stop | reload | ls | rm <id> [--follow]
     scripts/push-app.py status | reboot [--follow]
+    scripts/push-app.py skin-push <skin-dir> [--select] [--follow]
+    scripts/push-app.py skin-select <id> | skin-rm <id> | skin-ls
 
 <app-dir> holds launcher.json and the files it names; everything except
 dotfiles is sent. The firmware stages the files, swaps them in as
@@ -129,22 +131,64 @@ def push(dev, root, run):
     print(f"pushed {app_id}: {len(files)} files, {total} B in {time.monotonic() - started:.1f} s")
 
 
+def push_skin(dev, root, select):
+    with open(os.path.join(root, "skin.json"), "rb") as f:
+        manifest = json.load(f)
+    skin_id = manifest.get("id")
+    if not isinstance(skin_id, str) or not ID_RE.fullmatch(skin_id) or skin_id == "default":
+        sys.exit(f"bad skin id {skin_id!r}")
+    files = app_files(root)
+    if {rel for rel, _ in files} != {"skin.json", "fox.bin"}:
+        sys.exit("skin directory must contain exactly skin.json and fox.bin")
+    dev.command("hello")
+    dev.command(f"skin-begin {skin_id}")
+    try:
+        for rel, path in files:
+            with open(path, "rb") as f:
+                data = f.read()
+            dev.command(f"file {rel} {len(data)} {zlib.crc32(data):08x}")
+            if data:
+                dev.ser.write(data)
+                line = dev.reply(timeout=30.0)
+                if not line.startswith("@ok"):
+                    raise SystemExit(f"{rel}: {line}")
+            print(f"  {rel} ({len(data)} B)")
+        dev.command(f"skin-commit {skin_id}", timeout=30.0)
+    except SystemExit:
+        dev.command("abort", check=False)
+        raise
+    if select:
+        dev.command(f"skin-select {skin_id}", timeout=30.0)
+    print(f"pushed skin {skin_id}" + (" and selected" if select else ""))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "status", "reboot"])
+    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls"])
     ap.add_argument("target", nargs="?", help="app directory (push) or app id (run, rm)")
+    ap.add_argument("--select", action="store_true", help="select after skin-push")
     ap.add_argument("--run", action="store_true", help="open the app after pushing")
     ap.add_argument("--follow", action="store_true", help="keep printing the device log")
     ap.add_argument("--port", help="console port (default: the first /dev/cu.usbmodem*)")
     ap.add_argument("--verbose", "-v", action="store_true", help="print device log lines while waiting")
     args = ap.parse_args()
 
-    needs_target = args.action in ("push", "run", "rm")
+    needs_target = args.action in ("push", "run", "rm", "skin-push", "skin-select", "skin-rm")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
 
+    if args.select and args.action != "skin-push":
+        ap.error("--select requires skin-push")
+    if args.action in ("skin-select", "skin-rm") and not ID_RE.fullmatch(args.target):
+        ap.error("invalid exact skin id")
     dev = Device(args.port or default_port(), args.verbose)
-    if args.action == "push":
+    if args.action == "skin-push":
+        push_skin(dev, args.target, args.select)
+    elif args.action in ("skin-select", "skin-rm"):
+        print(dev.command(f"{args.action} {args.target}", timeout=30.0))
+    elif args.action == "skin-ls":
+        print(dev.command("skin-ls"))
+    elif args.action == "push":
         push(dev, args.target, args.run)
     elif args.action == "ls":
         print(dev.command("ls")[len("@ok ls"):].strip() or "(no apps in /data/apps)")

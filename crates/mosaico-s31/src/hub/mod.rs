@@ -8,9 +8,10 @@
 
 pub mod countdown;
 pub mod gesture;
-mod json;
+pub(crate) mod json;
 pub mod push;
 pub mod registry;
+pub mod skins;
 pub mod snapshot;
 pub mod transition;
 

@@ -8,20 +8,22 @@
 //! 3. The "over" layers (Zzz, sweat, sparks) are stamped on top at their
 //!    warped position, with a Bayer stipple instead of alpha for fades.
 
+use super::skin::Skin;
+use alloc::rc::Rc;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use super::math::round;
 use super::scene::{Layer, Scene, Warp};
-use super::{data, Img, H, PIXELS, TRANSPARENT, W};
+use super::{Img, H, PIXELS, TRANSPARENT, W};
 
 /// 4x4 ordered-dither thresholds for [`Layer::fade`].
 const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 
 /// Decode `img` into a `stride`-wide index buffer at (`x0`, `y0`), clipped,
 /// skipping transparent runs.
-fn stamp(buf: &mut [u8], stride: usize, rows: usize, img: &Img, x0: i32, y0: i32) {
-    let rle = img.rle();
+fn stamp(buf: &mut [u8], stride: usize, rows: usize, img: &Img, skin: &Skin, x0: i32, y0: i32) {
+    let rle = &skin.blob()[img.off as usize..img.off as usize + img.len as usize];
     let w = img.w as i32;
     let mut i = 0;
     for row in 0..img.h as i32 {
@@ -49,6 +51,7 @@ pub struct FoxRenderer {
     idx: Vec<u8>,
     scratch: Vec<u8>,
     signature: u64,
+    skin: Option<Rc<Skin>>,
     /// Frames that reused the composed index buffer.
     pub reused: u32,
 }
@@ -59,6 +62,7 @@ impl FoxRenderer {
             idx: vec![0; PIXELS],
             scratch: Vec::new(),
             signature: 0,
+            skin: None,
             reused: 0,
         }
     }
@@ -67,26 +71,32 @@ impl FoxRenderer {
         let sig = scene
             .under
             .signature(0xcbf2_9ce4_8422_2325 ^ scene.pose as u64);
-        if sig == self.signature {
+        let same_skin = self
+            .skin
+            .as_ref()
+            .is_some_and(|s| Skin::same_resources(s, &scene.skin));
+        if same_skin && sig == self.signature {
             self.reused = self.reused.wrapping_add(1);
             return;
         }
         self.signature = sig;
-        let pose = scene.pose.data();
-        stamp(&mut self.idx, W, H, &pose.base, 0, 0);
+        self.skin = Some(Rc::clone(&scene.skin));
+        let pose = scene.skin.pose(scene.pose);
+        stamp(&mut self.idx, W, H, &pose.base, &scene.skin, 0, 0);
         for l in scene.under.iter() {
-            self.layer_into_idx(l);
+            self.layer_into_idx(l, &scene.skin);
         }
     }
 
-    fn layer_into_idx(&mut self, l: &Layer) {
-        let img = l.img;
+    fn layer_into_idx(&mut self, l: &Layer, skin: &Skin) {
+        let img = &l.img;
         if l.scale_q8 == 256 && l.fade >= 16 {
             stamp(
                 &mut self.idx,
                 W,
                 H,
                 img,
+                skin,
                 img.x as i32 + l.dx as i32,
                 img.y as i32 + l.dy as i32,
             );
@@ -95,7 +105,7 @@ impl FoxRenderer {
         let (w, h) = (img.w as usize, img.h as usize);
         self.scratch.clear();
         self.scratch.resize(w * h, TRANSPARENT);
-        stamp(&mut self.scratch, w, h, img, 0, 0);
+        stamp(&mut self.scratch, w, h, img, skin, 0, 0);
         let s = l.scale_q8.max(16) as i32;
         let nw = (w as i32 * s + 128) >> 8;
         let nh = (h as i32 * s + 128) >> 8;
@@ -128,7 +138,7 @@ impl FoxRenderer {
     pub fn render(&mut self, scene: &Scene, out: &mut [u16]) {
         assert!(out.len() >= PIXELS, "fox canvas too short");
         self.compose(scene);
-        let pal = &data::PALETTE;
+        let pal = scene.skin.palette();
         let lookup = |v: u8| -> u16 {
             if (v as usize) < pal.len() {
                 pal[v as usize]
@@ -169,13 +179,21 @@ impl FoxRenderer {
         }
 
         for l in scene.over.iter() {
-            let img = l.img;
+            let img = &l.img;
             let (fx, fy) = warp.forward(img.x as f32 + l.dx as f32, img.y as f32 + l.dy as f32);
             let (x0, y0) = (round(fx), round(fy));
             self.scratch.clear();
             self.scratch
                 .resize(img.w as usize * img.h as usize, TRANSPARENT);
-            stamp(&mut self.scratch, img.w as usize, img.h as usize, img, 0, 0);
+            stamp(
+                &mut self.scratch,
+                img.w as usize,
+                img.h as usize,
+                img,
+                &scene.skin,
+                0,
+                0,
+            );
             for sy in 0..img.h as i32 {
                 let y = y0 + sy;
                 if y < 0 || y >= H as i32 {
