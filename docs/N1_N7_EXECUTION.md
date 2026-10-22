@@ -41,8 +41,8 @@
 | 阶段 | 审查分支 | base → head | 代码与主机状态 | 真机状态 |
 | --- | --- | --- | --- | --- |
 | N1 | `codex/n1-lua-hardware` | `80e362e` → `0f86227` | 完成；298 项主机测试、11 项采集工具测试；默认 / 诊断构建通过 | 部分通过；马达实物失败，见 [N1 清单](N1_TEST_CHECKLIST.md) |
-| N2 | `codex/n2-buttons-power`（完成时创建） | 待记录 | 实现中 | not-run |
-| N3 | `codex/n3-skin-pack`（完成时创建） | 待记录 | 待实现 | not-run |
+| N2 | `codex/n2-buttons-power` | `973eb77` → `9b5ee37` | 完成；306 项主机测试、预览 / release / ROM 检查通过；[收据](N2_BUTTONS_POWER.md#2026-10-23-acceptance-receipt) | not-run |
+| N3 | `codex/n3-skin-pack`（完成时创建） | 待记录 | 实现中 | not-run |
 | N7 | `codex/n7-app-uninstall`（完成时创建） | 待记录 | 待实现 | not-run |
 | N4 | `codex/n4-lua-brain`（完成时创建） | 待记录 | 待实现 | not-run |
 | N5 | `codex/n5-album`（完成时创建） | 待记录 | 待实现 | not-run |
