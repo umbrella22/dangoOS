@@ -17,6 +17,9 @@ use crate::behavior::personality::PointerSample;
 /// Touches that start at or below this row belong to the bottom band. The fox
 /// canvas ends at row 424, so the band is below the fox on the home page.
 pub const BOTTOM_BAND_Y: i32 = 420;
+/// The bottom band on full-screen pages (Lua apps), whose content reaches the
+/// bottom edge: 2048 is played with swipes that often start below row 420.
+pub const FULL_SCREEN_BOTTOM_BAND_Y: i32 = 452;
 /// Touches that start at or left of this column belong to the left band.
 pub const LEFT_BAND_X: i32 = 28;
 /// Travel along the gesture axis before it fires, px.
@@ -67,6 +70,7 @@ enum Contact {
 #[derive(Debug)]
 pub struct EdgeGestures {
     contact: Contact,
+    bottom_band_y: i32,
 }
 
 impl Default for EdgeGestures {
@@ -79,7 +83,18 @@ impl EdgeGestures {
     pub const fn new() -> Self {
         Self {
             contact: Contact::None,
+            bottom_band_y: BOTTOM_BAND_Y,
         }
+    }
+
+    /// Choose the bottom band for the page: [`FULL_SCREEN_BOTTOM_BAND_Y`] when
+    /// the page draws to the bottom edge, [`BOTTOM_BAND_Y`] otherwise.
+    pub fn set_full_screen(&mut self, full_screen: bool) {
+        self.bottom_band_y = if full_screen {
+            FULL_SCREEN_BOTTOM_BAND_Y
+        } else {
+            BOTTOM_BAND_Y
+        };
     }
 
     /// Whether the shell currently holds a touch.
@@ -97,7 +112,7 @@ impl EdgeGestures {
                     // ignores releases it never saw pressed.
                     return Route::Pass;
                 }
-                let edge = if sample.y >= BOTTOM_BAND_Y {
+                let edge = if sample.y >= self.bottom_band_y {
                     Some(Edge::Bottom)
                 } else if sample.x <= LEFT_BAND_X {
                     Some(Edge::Left)
@@ -344,6 +359,27 @@ mod tests {
         );
         assert_eq!(first[1], Route::Gesture(SystemGesture::Up));
         assert_eq!(second[1], Route::Gesture(SystemGesture::Back));
+    }
+
+    #[test]
+    fn full_screen_pages_have_a_thinner_bottom_band() {
+        let mut g = EdgeGestures::new();
+        g.set_full_screen(true);
+        let swipe = [
+            s(0, 240, 430, true),
+            s(50, 240, 300, true),
+            s(60, 240, 300, false),
+        ];
+        let routes = run(&mut g, &swipe);
+        assert!(routes.iter().all(|r| *r == Route::Pass), "{routes:?}");
+        let edge = [
+            s(100, 240, 470, true),
+            s(150, 240, 340, true),
+            s(160, 240, 340, false),
+        ];
+        assert!(run(&mut g, &edge).contains(&Route::Gesture(SystemGesture::Up)));
+        g.set_full_screen(false);
+        assert!(run(&mut g, &swipe).contains(&Route::Gesture(SystemGesture::Up)));
     }
 
     #[test]

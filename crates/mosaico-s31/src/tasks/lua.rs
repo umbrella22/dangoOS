@@ -1,17 +1,38 @@
-//! Lua 5.5 runtime task (RFC 0006 section 5, stage L0).
+//! Lua app runner (RFC 0006 section 5, stage L1).
 //!
-//! L0 proves the interpreter on the device: a few seconds after boot it runs
-//! a built-in self-test script, sliced into short steps so the UI keeps its
-//! frame rate, and logs the output, the time it took and the Lua heap use.
-//! Later stages turn this task into the app runner (display, delay, system,
-//! json, storage, imu).
+//! Runs one bundled Lua app at a time, started and stopped by the UI task
+//! when its page opens and closes ([`start`], [`stop`]). The script runs in
+//! short time slices so the UI keeps its frame rate (see
+//! `docs/plans/lua-runtime-plan.md` section 4).
+//!
+//! # Screen
+//!
+//! `display.open()` gives the script the 480x480 screen. `present()` hands
+//! over the dirty rectangles of the script's framebuffer ([`Host::display_blit`]
+//! records them) and suspends the script with `Request::Present`. The UI task
+//! copies those rectangles into the LVGL port's shadow ([`take_frame`]), uploads
+//! them through the panel plane like any LVGL damage, and signals back; only
+//! then does the script run again, so its framebuffer is never read while it
+//! draws. Edge swipes still go to the shell; other touches reach
+//! `screen:touch()` through [`set_pointer`].
 
-use alloc::{boxed::Box, string::String};
+use alloc::{boxed::Box, string::String, vec::Vec};
 use core::alloc::{GlobalAlloc, Layout};
+use core::cell::RefCell;
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
 
-use embassy_time::{Duration, Instant, Timer};
+use critical_section::Mutex;
+use embassy_futures::select::{select, Either};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_time::{Instant, Timer};
 use log::{info, warn};
-use mosaico_lua::{Host, Limits, RawAllocator, Request, Step, Vm};
+use mosaico_lua::{
+    caps, esp_err, Blit, DisplayInfo, HeapInfo, Host, Limits, RawAllocator, Request, Step,
+    TouchPoint, Vm,
+};
+use mosaico_s31::hub::LuaApp;
+
+use crate::drivers::geometry::{HEIGHT, WIDTH};
 
 /// Lua heap on PSRAM.
 unsafe fn psram_alloc(layout: Layout) -> *mut u8 {
@@ -47,11 +68,172 @@ pub const LIMITS: Limits = Limits {
 /// driven tasks (sensors) are not starved by back-to-back slices.
 const BUSY_BUDGET_US: u64 = 16_000;
 
-struct LogHost;
+// ---- UI <-> Lua task -------------------------------------------------------
 
-impl Host for LogHost {
+/// One dirty rectangle of the script's framebuffer (exclusive bounds).
+#[derive(Clone, Copy)]
+pub struct LuaBlit {
+    pub x0: u16,
+    pub y0: u16,
+    pub x1: u16,
+    pub y1: u16,
+    /// First pixel of the rectangle; rows are `stride` bytes apart. Valid
+    /// until the frame is released with [`frame_done`].
+    pub pixels: *const u8,
+    pub stride: usize,
+}
+
+// SAFETY: the pointers refer to the script's framebuffer, which is neither
+// written nor freed while the script waits for `FRAME_DONE`.
+unsafe impl Send for LuaBlit {}
+
+static START: Signal<CriticalSectionRawMutex, LuaApp> = Signal::new();
+static STOP: AtomicBool = AtomicBool::new(false);
+static FRAME: Mutex<RefCell<Option<Vec<LuaBlit>>>> = Mutex::new(RefCell::new(None));
+static FRAME_DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// 0 idle, 1 running, 2 ended on its own (the UI leaves the page).
+static STATE: AtomicU8 = AtomicU8::new(0);
+static SCREEN_OPEN: AtomicBool = AtomicBool::new(false);
+static POINTER_X: AtomicI32 = AtomicI32::new(0);
+static POINTER_Y: AtomicI32 = AtomicI32::new(0);
+static POINTER_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Run `app` (the UI opened its page). Stops a running app first.
+pub fn start(app: LuaApp) {
+    STOP.store(false, Ordering::Release);
+    START.signal(app);
+}
+
+/// Stop the running app (its page closed). The script cannot catch this.
+pub fn stop() {
+    STOP.store(true, Ordering::Release);
+    START.reset();
+    // A frame nobody will show must not keep the script waiting.
+    release_frame();
+}
+
+/// True once after the app ended by itself (finished or failed).
+pub fn take_ended() -> bool {
+    STATE
+        .compare_exchange(2, 0, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+/// True while the script holds the screen: LVGL must not draw over it.
+pub fn screen_open() -> bool {
+    SCREEN_OPEN.load(Ordering::Acquire)
+}
+
+/// Touch for `screen:touch()` (panel coordinates).
+pub fn set_pointer(x: i32, y: i32, pressed: bool) {
+    POINTER_X.store(x, Ordering::Relaxed);
+    POINTER_Y.store(y, Ordering::Relaxed);
+    POINTER_DOWN.store(pressed, Ordering::Release);
+}
+
+/// The frame the script presented, if one is waiting. The caller copies the
+/// rectangles, then must call [`frame_done`].
+pub fn take_frame() -> Option<Vec<LuaBlit>> {
+    critical_section::with(|cs| FRAME.borrow_ref_mut(cs).take())
+}
+
+/// The presented frame was copied; the script may draw again.
+pub fn frame_done() {
+    FRAME_DONE.signal(());
+}
+
+fn release_frame() {
+    if critical_section::with(|cs| FRAME.borrow_ref_mut(cs).take()).is_some() {
+        FRAME_DONE.signal(());
+    }
+}
+
+// ---- host ------------------------------------------------------------------
+
+struct DeviceHost {
+    app: LuaApp,
+    screen: bool,
+    blits: Vec<LuaBlit>,
+}
+
+impl Host for DeviceHost {
     fn print(&mut self, line: &[u8]) {
-        info!("lua> {}", String::from_utf8_lossy(line));
+        info!("lua[{}]> {}", self.app.id(), String::from_utf8_lossy(line));
+    }
+
+    fn log(&mut self, line: &[u8]) {
+        warn!("lua[{}]: {}", self.app.id(), String::from_utf8_lossy(line));
+    }
+
+    fn display_open(&mut self) -> Result<DisplayInfo, i32> {
+        if self.screen {
+            return Err(esp_err::INVALID_STATE);
+        }
+        self.screen = true;
+        SCREEN_OPEN.store(true, Ordering::Release);
+        Ok(self.display_info().unwrap())
+    }
+
+    fn display_info(&self) -> Option<DisplayInfo> {
+        self.screen.then_some(DisplayInfo {
+            width: WIDTH as u16,
+            height: HEIGHT as u16,
+            touch_available: true,
+        })
+    }
+
+    fn display_close(&mut self) {
+        self.screen = false;
+        self.blits.clear();
+        SCREEN_OPEN.store(false, Ordering::Release);
+    }
+
+    fn display_blit(&mut self, blit: &Blit) -> Result<(), i32> {
+        self.blits.push(LuaBlit {
+            x0: blit.x0,
+            y0: blit.y0,
+            x1: blit.x1,
+            y1: blit.y1,
+            pixels: blit.pixels.as_ptr(),
+            stride: blit.stride,
+        });
+        Ok(())
+    }
+
+    fn touch(&mut self, out: &mut [TouchPoint]) -> Result<usize, i32> {
+        if !POINTER_DOWN.load(Ordering::Acquire) {
+            return Ok(0);
+        }
+        out[0] = TouchPoint {
+            id: 0,
+            x: POINTER_X.load(Ordering::Relaxed),
+            y: POINTER_Y.load(Ordering::Relaxed),
+        };
+        Ok(1)
+    }
+
+    fn heap_info(&mut self, caps_mask: u32) -> HeapInfo {
+        let stats = esp_alloc::HEAP.stats();
+        let mut info = HeapInfo::default();
+        for region in stats.region_stats.iter().flatten() {
+            let external = region
+                .capabilities
+                .contains(esp_alloc::MemoryCapability::External);
+            let wanted = match caps_mask {
+                c if c & caps::SPIRAM != 0 => external,
+                c if c & caps::INTERNAL != 0 => !external,
+                _ => true,
+            };
+            if wanted {
+                info.total_size += region.size as u32;
+                info.free_size += region.free as u32;
+                info.allocated_size += region.used as u32;
+                info.largest_free_block = info.largest_free_block.max(region.free as u32);
+                info.total_blocks += 1;
+            }
+        }
+        info.minimum_free_size = info.free_size;
+        info
     }
 }
 
@@ -63,69 +245,61 @@ fn log_sink(text: &[u8]) {
     }
 }
 
-const SELF_TEST: &str = r#"
-print("hi from " .. _VERSION .. " on ESP-Mosaico")
-local function lap(name, t) print(string.format("  %-8s %4d ms", name, os_clock_ms() - t)) return os_clock_ms() end
-local t = os_clock_ms()
-local function fib(n) if n < 2 then return n end return fib(n - 1) + fib(n - 2) end
-local fib20 = fib(20)
-t = lap("fib(20)", t)
-local words = {}
-for i = 1, 2000 do words[#words + 1] = string.format("%d:%.3f", i, math.sqrt(i)) end
-t = lap("format", t)
-table.sort(words)
-t = lap("sort", t)
-local acc = 0
-for i = 1, 100000 do acc = acc + (i % 7) * 0.5 end
-t = lap("loop", t)
-local parts = {}
-for i = 1, 5000 do parts[i] = { x = i, y = -i } end
-parts = nil
-collectgarbage()
-t = lap("alloc+gc", t)
-print(string.format("fib(20)=%d words=%d first=%s pi=%.10f int=%d float=%s acc=%g",
-  fib20, #words, words[1], math.pi, math.maxinteger, tostring(2^53), acc))
-print(string.format("utf8 %s len=%d, 0xff // 7 = %d", utf8.char(0x72d0, 0x72f8),
-  utf8.len("\u{72d0}\u{72f8}"), 0xff // 7))
-local ok, err = pcall(error, "caught")
-print("pcall:", ok, err)
-"#;
-
-fn now_ms(call: &mut mosaico_lua::Call) -> Result<mosaico_lua::Ret, mosaico_lua::Error> {
-    call.push_integer(Instant::now().as_millis() as i64);
-    Ok(mosaico_lua::Ret::Values(1))
-}
-
 #[embassy_executor::task]
 pub async fn lua_task() {
     mosaico_lua::set_log_sink(log_sink);
-    // Let the splash and the first frames go out first.
-    Timer::after(Duration::from_secs(4)).await;
+    let mut next = None;
+    loop {
+        let app = match next.take() {
+            Some(app) => app,
+            None => START.wait().await,
+        };
+        next = run(app).await;
+    }
+}
 
+/// Run one app until it ends or is stopped. Returns the app to start next
+/// when a start request arrived meanwhile.
+async fn run(app: LuaApp) -> Option<LuaApp> {
+    STATE.store(1, Ordering::Release);
     let free_before = esp_alloc::HEAP.free();
     let seed = Instant::now().as_ticks() as u32;
-    let mut vm = match Vm::new(Box::new(LogHost), LIMITS, &PSRAM, seed) {
+    let host = DeviceHost {
+        app,
+        screen: false,
+        blits: Vec::new(),
+    };
+    let mut vm = match Vm::new(Box::new(host), LIMITS, &PSRAM, seed) {
         Ok(vm) => vm,
         Err(e) => {
-            warn!("lua: state creation failed: {e}");
-            return;
+            warn!("lua[{}]: state creation failed: {e}", app.id());
+            STATE.store(2, Ordering::Release);
+            return None;
         }
     };
-    let state_bytes = vm.memory_used();
-    if let Err(e) = vm.register("_G", &[("os_clock_ms", now_ms)]) {
-        warn!("lua: register failed: {e}");
-        return;
+    if let Err(e) = vm.set_args_json(app.args_json()) {
+        warn!("lua[{}]: args: {e}", app.id());
     }
-    if let Err(e) = vm.load("selftest.lua", SELF_TEST.as_bytes()) {
-        warn!("lua: {e}");
-        return;
+    if let Err(e) = vm.load(app.chunk_name(), app.source().as_bytes()) {
+        warn!("lua[{}]: {e}", app.id());
+        drop(vm);
+        STATE.store(2, Ordering::Release);
+        return None;
     }
+    info!("lua[{}]: started", app.id());
 
     let started = Instant::now();
     let mut slices = 0u32;
+    let mut frames = 0u32;
     let mut longest_us = 0u64;
     let mut busy_us = 0u64;
+    let mut stopping = false;
+    let mut next = None;
     let outcome = loop {
+        if !stopping && (STOP.load(Ordering::Acquire) || START.signaled()) {
+            stopping = true;
+            vm.interrupt();
+        }
         let slice_start = Instant::now();
         let step = vm.resume();
         let slice_us = slice_start.elapsed().as_micros();
@@ -135,7 +309,24 @@ pub async fn lua_task() {
         match step {
             Step::Request(Request::Sleep { ms }) => {
                 busy_us = 0;
-                Timer::after_millis(ms as u64).await;
+                // Wake early for a stop so leaving the page is immediate.
+                let _ = select(Timer::after_millis(ms as u64), wait_stop()).await;
+            }
+            Step::Request(Request::Present) => {
+                busy_us = 0;
+                frames += 1;
+                let blits = core::mem::take(&mut vm.host_mut::<DeviceHost>().unwrap().blits);
+                if stopping || blits.is_empty() {
+                    continue;
+                }
+                FRAME_DONE.reset();
+                critical_section::with(|cs| *FRAME.borrow_ref_mut(cs) = Some(blits));
+                // Waits through a page slide too: a dropped frame would leave
+                // parts of the launcher on screen (scripts present only what
+                // changed). `stop` releases the wait.
+                if let Either::Second(()) = select(FRAME_DONE.wait(), wait_stop()).await {
+                    release_frame();
+                }
             }
             Step::Slice | Step::Request(_) if busy_us >= BUSY_BUDGET_US => {
                 busy_us = 0;
@@ -145,20 +336,34 @@ pub async fn lua_task() {
             other => break other,
         }
     };
-    let elapsed = started.elapsed().as_millis();
-    match outcome {
-        Step::Done => info!(
-            "lua: L0 self-test ok in {elapsed} ms, {slices} slices (longest {longest_us} us), \
-             state {state_bytes} B, peak {} B, now {} B",
-            vm.memory_peak(),
-            vm.memory_used()
-        ),
-        Step::Error(e) => warn!("lua: self-test failed: {e}"),
-        other => warn!("lua: self-test ended with {other:?}"),
+    if START.signaled() {
+        next = Some(START.wait().await);
     }
+    let elapsed = started.elapsed().as_millis();
+    let peak = vm.memory_peak();
+    match &outcome {
+        Step::Done => info!("lua[{}]: finished", app.id()),
+        Step::Interrupted => info!("lua[{}]: stopped", app.id()),
+        Step::Error(e) => warn!("lua[{}]: {e}", app.id()),
+        other => warn!("lua[{}]: ended with {other:?}", app.id()),
+    }
+    release_frame();
     drop(vm);
+    SCREEN_OPEN.store(false, Ordering::Release);
     info!(
-        "lua: heap free before {free_before} B, after close {} B",
+        "lua[{}]: {elapsed} ms, {frames} frames, {slices} slices (longest {longest_us} us), \
+         peak {peak} B, heap free {free_before} -> {} B",
+        app.id(),
         esp_alloc::HEAP.free()
     );
+    // Ended by itself: the UI leaves the page. Stopped: the UI already left.
+    let ended = !stopping && !matches!(outcome, Step::Interrupted);
+    STATE.store(if ended { 2 } else { 0 }, Ordering::Release);
+    next
+}
+
+async fn wait_stop() {
+    while !STOP.load(Ordering::Acquire) && !START.signaled() {
+        Timer::after_millis(10).await;
+    }
 }

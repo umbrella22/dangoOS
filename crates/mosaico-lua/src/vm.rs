@@ -18,6 +18,7 @@ use core::{
 
 use crate::call::{Call, Error, Function, Ret};
 use crate::ffi::*;
+use crate::platform::{self, esp_err, Blit, DisplayInfo, Enter, HeapInfo, TouchPoint};
 
 /// Resource limits for one script.
 #[derive(Clone, Copy, Debug)]
@@ -74,10 +75,56 @@ pub static GLOBAL_ALLOCATOR: RawAllocator = RawAllocator {
     dealloc: global_dealloc,
 };
 
-/// What the embedding provides to a script.
+/// What the embedding provides to a script. Everything but `print` is
+/// optional; the defaults behave like a board without that hardware.
 pub trait Host: Any {
     /// One line from Lua's `print` (no trailing newline).
     fn print(&mut self, line: &[u8]);
+
+    /// A log line from a C module (`E (display_core) present failed: ...`).
+    fn log(&mut self, line: &[u8]) {
+        log_line(line);
+    }
+
+    /// Wall clock for `os.time`/`system.time`; `None` counts from boot.
+    fn unix_time_us(&self) -> Option<i64> {
+        None
+    }
+
+    /// `display.open()`: take the screen for this script, or an ESP error
+    /// code (`esp_err::INVALID_STATE` when another owner holds it).
+    fn display_open(&mut self) -> Result<DisplayInfo, i32> {
+        Err(esp_err::NOT_SUPPORTED)
+    }
+
+    /// Geometry while the screen is open.
+    fn display_info(&self) -> Option<DisplayInfo> {
+        None
+    }
+
+    /// The script's screen was closed (explicitly, by GC or at exit).
+    fn display_close(&mut self) {}
+
+    /// Pixels of one dirty rectangle from `display:present()`. The script
+    /// is suspended with [`Request::Present`] right after the last
+    /// rectangle of a frame, and its framebuffer stays untouched until it is
+    /// resumed, so the host may keep reading `blit.pixels` until then.
+    fn display_blit(&mut self, blit: &Blit) -> Result<(), i32> {
+        let _ = blit;
+        Err(esp_err::NOT_SUPPORTED)
+    }
+
+    /// Current touch points; the count written to `out`.
+    fn touch(&mut self, out: &mut [TouchPoint]) -> Result<usize, i32> {
+        let _ = out;
+        Err(esp_err::NOT_SUPPORTED)
+    }
+
+    /// `system.heap.get_info(caps)`.
+    fn heap_info(&mut self, caps: u32) -> HeapInfo {
+        let _ = caps;
+        HeapInfo::default()
+    }
 }
 
 /// Why a script stopped running for now.
@@ -121,7 +168,7 @@ struct Heap {
 pub(crate) struct Ctx {
     pub(crate) host: Box<dyn Host>,
     heap: *const Heap,
-    limits: Limits,
+    pub(crate) limits: Limits,
     thread: *mut lua_State,
     hooks: u32,
     since_yield: u32,
@@ -195,6 +242,7 @@ impl Vm {
         allocator: &'static RawAllocator,
         seed: u32,
     ) -> Result<Vm, String> {
+        platform::set_allocator(allocator);
         let heap = Box::into_raw(Box::new(Heap {
             allocator,
             used: Cell::new(0),
@@ -231,6 +279,7 @@ impl Vm {
                 state: State::Fresh,
             };
             mosaico_lua_set_ctx(main, ctx.cast());
+            let _enter = Enter::new(ctx);
             if mosaico_lua_open(main) != LUA_OK {
                 return Err(vm.pop_message(main));
             }
@@ -262,6 +311,7 @@ impl Vm {
             })
             .collect();
         let module = cstring(module);
+        let _enter = Enter::new(self.ctx);
         let status = unsafe {
             mosaico_lua_register(self.main, module.as_ptr().cast(), regs.as_ptr(), regs.len())
         };
@@ -282,6 +332,7 @@ impl Vm {
         chunk.push(b'@');
         chunk.extend_from_slice(name.as_bytes());
         chunk.push(0);
+        let _enter = Enter::new(self.ctx);
         let status = unsafe {
             luaL_loadbufferx(
                 self.thread,
@@ -314,6 +365,7 @@ impl Vm {
             ctx.last_yield = ctx.slice_start;
         }
         let mut nres: c_int = 0;
+        let _enter = Enter::new(self.ctx);
         let status = unsafe { lua_resume(self.thread, ptr::null_mut(), 0, &mut nres) };
         let ctx = unsafe { &mut *self.ctx };
         match status {
@@ -372,6 +424,18 @@ impl Vm {
         unsafe { (*self.heap).peak.get() }
     }
 
+    /// Sets the `args` global from a JSON object, as esp-claw does for
+    /// `launcher.json` args. Invalid JSON leaves `args` an empty table.
+    pub fn set_args_json(&mut self, json: &str) -> Result<(), String> {
+        let _enter = Enter::new(self.ctx);
+        let status = unsafe { mosaico_lua_set_args(self.main, json.as_ptr().cast(), json.len()) };
+        if status == LUA_OK {
+            Ok(())
+        } else {
+            Err(unsafe { self.pop_message(self.main) })
+        }
+    }
+
     pub fn host_mut<T: Host>(&mut self) -> Option<&mut T> {
         let host: &mut dyn Any = unsafe { &mut *(*self.ctx).host };
         host.downcast_mut()
@@ -393,7 +457,10 @@ impl Vm {
 
 impl Drop for Vm {
     fn drop(&mut self) {
+        let _enter = Enter::new(self.ctx);
         unsafe {
+            // Like cap_lua: modules release hardware (the screen) first.
+            mosaico_lua_exit(self.main);
             lua_close(self.main);
             drop(Box::from_raw(self.ctx));
             drop(Box::from_raw(self.heap));
@@ -527,11 +594,41 @@ pub fn set_log_sink(sink: fn(&[u8])) {
     LOG_SINK.store(sink as *mut (), Ordering::Relaxed);
 }
 
-#[no_mangle]
-unsafe extern "C" fn mosaico_lua_log(s: *const c_char, len: usize) {
+pub(crate) fn log_line(line: &[u8]) {
     let sink = LOG_SINK.load(Ordering::Relaxed);
     if !sink.is_null() {
-        let sink: fn(&[u8]) = core::mem::transmute::<*mut (), fn(&[u8])>(sink);
-        sink(core::slice::from_raw_parts(s.cast(), len));
+        let sink: fn(&[u8]) = unsafe { core::mem::transmute::<*mut (), fn(&[u8])>(sink) };
+        sink(line);
     }
+}
+
+#[no_mangle]
+unsafe extern "C" fn mosaico_lua_log(s: *const c_char, len: usize) {
+    log_line(core::slice::from_raw_parts(s.cast(), len));
+}
+
+/// A C module asks to suspend the script (1 sleep, 2 present).
+#[no_mangle]
+unsafe extern "C" fn mosaico_lua_on_request(
+    ctx: *mut c_void,
+    l: *mut lua_State,
+    yieldable: c_int,
+    kind: c_int,
+    arg: u32,
+) -> c_int {
+    let ctx = &mut *(ctx as *mut Ctx);
+    if l != ctx.thread || yieldable == 0 {
+        return 0;
+    }
+    ctx.request = Some(match kind {
+        1 => Request::Sleep { ms: arg },
+        2 => Request::Present,
+        other => Request::Host(other as u32),
+    });
+    1
+}
+
+#[no_mangle]
+unsafe extern "C" fn mosaico_lua_on_stop(ctx: *mut c_void) -> c_int {
+    (*(ctx as *const Ctx)).interrupt as c_int
 }

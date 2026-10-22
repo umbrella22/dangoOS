@@ -35,16 +35,25 @@ pub fn reaches_fox_off_home(kind: &crate::behavior::affect::EventKind) -> bool {
     )
 }
 
-/// The native apps, in launcher order.
+/// The apps, in launcher order: the native ones, then the built-in Lua apps
+/// (esp-claw-skills-lab scripts run unchanged by `mosaico-lua`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppId {
     Settings,
     Sensors,
     Timer,
+    Snake,
+    Game2048,
 }
 
 impl AppId {
-    pub const ALL: [AppId; 3] = [AppId::Settings, AppId::Sensors, AppId::Timer];
+    pub const ALL: [AppId; 5] = [
+        AppId::Settings,
+        AppId::Sensors,
+        AppId::Timer,
+        AppId::Snake,
+        AppId::Game2048,
+    ];
 
     /// Name under the launcher icon and in the page title.
     pub const fn title(self) -> &'static str {
@@ -52,6 +61,8 @@ impl AppId {
             AppId::Settings => "设置",
             AppId::Sensors => "传感器",
             AppId::Timer => "计时器",
+            AppId::Snake => "贪吃蛇",
+            AppId::Game2048 => "2048",
         }
     }
 
@@ -61,6 +72,62 @@ impl AppId {
             AppId::Settings => "app-settings",
             AppId::Sensors => "app-sensors",
             AppId::Timer => "app-timer",
+            AppId::Snake => "app-snake",
+            AppId::Game2048 => "app-2048",
+        }
+    }
+
+    /// The bundled Lua app, for apps that are scripts.
+    pub fn lua(self) -> Option<LuaApp> {
+        match self {
+            AppId::Snake => Some(LuaApp::Snake),
+            AppId::Game2048 => Some(LuaApp::Game2048),
+            _ => None,
+        }
+    }
+}
+
+/// A Lua app bundled in the firmware: its `launcher.json` id and entry
+/// script, copied unchanged from esp-claw-skills-lab (MIT).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LuaApp {
+    Snake,
+    Game2048,
+}
+
+impl LuaApp {
+    /// `launcher.json` `id`.
+    pub const fn id(self) -> &'static str {
+        match self {
+            LuaApp::Snake => "snake",
+            LuaApp::Game2048 => "game_2048",
+        }
+    }
+
+    /// Chunk name of the entry script (shown in Lua error messages).
+    pub const fn chunk_name(self) -> &'static str {
+        match self {
+            LuaApp::Snake => "draw_snake.lua",
+            LuaApp::Game2048 => "game_2048.lua",
+        }
+    }
+
+    /// `launcher.json` `args`, as JSON.
+    pub const fn args_json(self) -> &'static str {
+        match self {
+            LuaApp::Snake => "{}",
+            LuaApp::Game2048 => r#"{"run_time_ms": 0}"#,
+        }
+    }
+
+    pub const fn source(self) -> &'static str {
+        match self {
+            LuaApp::Snake => {
+                include_str!("../../../mosaico-lua/vendor/skills-lab/snake/scripts/draw_snake.lua")
+            }
+            LuaApp::Game2048 => include_str!(
+                "../../../mosaico-lua/vendor/skills-lab/game_2048/scripts/game_2048.lua"
+            ),
         }
     }
 }
@@ -234,5 +301,29 @@ mod tests {
         assert!(!Page::Home.is_lvgl());
         assert!(Page::Launcher.is_lvgl());
         assert!(Page::App(AppId::Sensors).is_lvgl());
+    }
+
+    #[test]
+    fn lua_apps_match_their_launcher_json() {
+        for app in [LuaApp::Snake, LuaApp::Game2048] {
+            let dir = match app {
+                LuaApp::Snake => "snake",
+                LuaApp::Game2048 => "game_2048",
+            };
+            let path = std::format!(
+                "{}/../mosaico-lua/vendor/skills-lab/{dir}/launcher.json",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let json = std::fs::read_to_string(path).unwrap();
+            assert!(
+                json.contains(&std::format!("\"id\": \"{}\"", app.id())),
+                "{json}"
+            );
+            let entry = std::format!("scripts/{}", app.chunk_name());
+            assert!(json.contains(&entry), "{json}");
+            assert!(!app.source().is_empty());
+        }
+        assert_eq!(AppId::Snake.lua(), Some(LuaApp::Snake));
+        assert_eq!(AppId::Timer.lua(), None);
     }
 }

@@ -11,8 +11,8 @@ use std::path::PathBuf;
 const LUA_DIR: &str = "vendor/lua-5.5.1";
 
 /// Lua core and the libraries we open. Not built: lua.c/luac.c (programs),
-/// liolib.c/loslib.c (file system, process, clock; replaced by host modules),
-/// linit.c (the glue opens the libraries itself).
+/// liolib.c (file system; arrives with storage), linit.c (the glue opens the
+/// libraries itself). loslib.c is built through csrc/mosaico_loslib.c.
 const LUA_SOURCES: &[&str] = &[
     "lapi.c",
     "lcode.c",
@@ -70,7 +70,71 @@ fn main() {
         build.file(lua.join(file));
     }
     build.file(root.join("csrc/mosaico_lua_glue.c"));
+    build.file(root.join("csrc/mosaico_loslib.c"));
     build.compile("mosaico_lua");
+
+    // esp-claw modules (Apache-2.0) and cJSON (MIT), built against the
+    // ESP-IDF shims in csrc/esp_shim. Separate library: no Lua user header
+    // tweaks are needed and the module sources stay unchanged.
+    let claw = root.join("vendor/esp-claw");
+    let mut modules = cc::Build::new();
+    modules
+        .include(&lua)
+        .include(root.join("csrc"))
+        .include(root.join("csrc/esp_shim"))
+        .include(claw.join("lua_module_display"))
+        .include(claw.join("lua_module_json"))
+        .include(claw.join("esp_painter"))
+        .include(root.join("vendor/cjson"))
+        .flag(format!("-include{}", user_h.display()))
+        .flag_if_supported("-std=gnu11")
+        .opt_level(2)
+        .warnings(false);
+    if target_os == "none" {
+        modules
+            .flag("-ffunction-sections")
+            .flag("-fdata-sections")
+            .flag("-fno-builtin-printf");
+    }
+    for file in [
+        "lua_module_display/display_bitmap.c",
+        "lua_module_display/display_color.c",
+        "lua_module_display/display_core.c",
+        "lua_module_display/display_dirty.c",
+        "lua_module_display/display_raster.c",
+        "lua_module_display/display_text.c",
+        "lua_module_display/lua_module_display.c",
+        "lua_module_json/lua_module_json.c",
+        "esp_painter/basic_font_12.c",
+        "esp_painter/basic_font_16.c",
+        "esp_painter/basic_font_20.c",
+        "esp_painter/basic_font_24.c",
+        "esp_painter/basic_font_28.c",
+        "esp_painter/basic_font_32.c",
+        "esp_painter/basic_font_36.c",
+        "esp_painter/basic_font_40.c",
+        "esp_painter/basic_font_44.c",
+        "esp_painter/basic_font_48.c",
+    ] {
+        modules.file(claw.join(file));
+    }
+    modules.file(root.join("vendor/cjson/cJSON.c"));
+    modules.file(root.join("csrc/mosaico_platform.c"));
+    // arg_schema.lua is compiled into the image as a C string.
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let src = std::fs::read(claw.join("lua_module_system/arg_schema.lua")).unwrap();
+    let mut c = String::from("#include <stddef.h>\nconst char mosaico_arg_schema_lua[] = {");
+    for b in &src {
+        c.push_str(&format!("{b},"));
+    }
+    c.push_str(&format!(
+        "0}};\nconst size_t mosaico_arg_schema_lua_len = {};\n",
+        src.len()
+    ));
+    let gen = out.join("mosaico_embedded.c");
+    std::fs::write(&gen, c).unwrap();
+    modules.file(gen);
+    modules.compile("mosaico_lua_modules");
 
     if target_os == "none" {
         // newlib from the riscv32-esp-elf toolchain, matching -march/-mabi.

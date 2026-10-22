@@ -161,7 +161,7 @@ struct Tile {
     color: Color,
 }
 
-const TILES: [Tile; 3] = [
+const TILES: [Tile; 5] = [
     Tile {
         app: AppId::Settings,
         icon: symbol::SETTINGS,
@@ -177,11 +177,24 @@ const TILES: [Tile; 3] = [
         icon: symbol::BELL,
         color: ACCENT,
     },
+    Tile {
+        app: AppId::Snake,
+        icon: symbol::LOOP,
+        color: Color::rgb(0x2E, 0x9E, 0x5B),
+    },
+    Tile {
+        app: AppId::Game2048,
+        icon: symbol::SHUFFLE,
+        color: Color::rgb(0xC8, 0x8A, 0x2E),
+    },
 ];
 
-/// The app grid.
+/// Launcher tiles per row.
+const TILES_PER_ROW: usize = 3;
+
+/// The app grid: rows of three tiles.
 pub fn launcher() -> Node<AppMsg> {
-    let tiles = TILES.iter().map(|tile| {
+    let tile = |tile: &Tile| {
         Node::column()
             .key(Key::Named(tile.app.key()))
             .scrollable(false)
@@ -191,7 +204,7 @@ pub fn launcher() -> Node<AppMsg> {
                 Style::neutral()
                     .width(Size::Px(120))
                     .height(Size::Content)
-                    .gap(12)
+                    .gap(8)
                     .flex_align(FlexAlign::Start, FlexAlign::Center),
             )
             .child(
@@ -204,9 +217,9 @@ pub fn launcher() -> Node<AppMsg> {
                     .style(
                         Style::neutral()
                             .bg(tile.color)
-                            .radius(32)
-                            .width(Size::Px(108))
-                            .height(Size::Px(108)),
+                            .radius(28)
+                            .width(Size::Px(96))
+                            .height(Size::Px(96)),
                     )
                     .child(
                         text(tile.icon, font_icon(), TEXT)
@@ -215,7 +228,23 @@ pub fn launcher() -> Node<AppMsg> {
                     ),
             )
             .child(text(tile.app.title(), font_24(), TEXT).key(Key::Named("name")))
-    });
+    };
+    const ROW_KEYS: [&str; 2] = ["row-0", "row-1"];
+    let rows = TILES
+        .chunks(TILES_PER_ROW)
+        .zip(ROW_KEYS)
+        .map(|(chunk, key)| {
+            Node::row()
+                .key(Key::Named(key))
+                .scrollable(false)
+                .style(
+                    Style::neutral()
+                        .width(Size::Content)
+                        .height(Size::Content)
+                        .gap(16),
+                )
+                .children(chunk.iter().map(tile))
+        });
 
     Node::obj()
         .key(Key::Named("launcher"))
@@ -232,18 +261,19 @@ pub fn launcher() -> Node<AppMsg> {
                 .style(Style::default().align(Align::TopMid).offset(0, 30)),
         )
         .child(
-            Node::row()
+            Node::column()
                 .key(Key::Named("tiles"))
                 .scrollable(false)
                 .style(
                     Style::neutral()
                         .width(Size::Content)
                         .height(Size::Content)
-                        .gap(16)
+                        .gap(20)
+                        .flex_align(FlexAlign::Start, FlexAlign::Center)
                         .align(Align::Center)
-                        .offset(0, -10),
+                        .offset(0, 0),
                 )
-                .children(tiles),
+                .children(rows),
         )
         .child(
             text("上滑回到狐狸 · 左缘右滑返回", font_20(), WEAK)
@@ -251,6 +281,31 @@ pub fn launcher() -> Node<AppMsg> {
                 .style(Style::default().align(Align::BottomMid).offset(0, -44)),
         )
         .child(home_indicator())
+}
+
+/// A Lua app's page. The script draws the whole screen once it opens the
+/// display (the UI task then stops rendering LVGL here); until then this
+/// shows the name and a hint.
+pub fn lua_app(app: AppId) -> Node<AppMsg> {
+    Node::obj()
+        .key(Key::Named(app.key()))
+        .scrollable(false)
+        .style(
+            Style::neutral()
+                .bg(Color::rgb(0, 0, 0))
+                .width(Size::Percent(100))
+                .height(Size::Percent(100)),
+        )
+        .child(
+            text(app.title(), font_30(), TITLE)
+                .key(Key::Named("title"))
+                .style(Style::default().align(Align::Center).offset(0, -20)),
+        )
+        .child(
+            text("正在启动…", font_20(), WEAK)
+                .key(Key::Named("status"))
+                .style(Style::default().align(Align::Center).offset(0, 24)),
+        )
 }
 
 // ---------------------------------------------------------------- settings
@@ -638,5 +693,6 @@ pub fn app(hub: &Hub, app: AppId) -> Node<AppMsg> {
         AppId::Settings => settings(&hub.settings, hub.about.uptime_s, hub.about.free_kib),
         AppId::Sensors => sensors(&hub.snapshot),
         AppId::Timer => timer(hub),
+        AppId::Snake | AppId::Game2048 => lua_app(app),
     }
 }

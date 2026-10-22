@@ -267,6 +267,70 @@ impl DisplayPort {
     }
 }
 
+impl DisplayPort {
+    /// Copy a rectangle of RGB565 pixels into the shadow and add it to the
+    /// damage, as LVGL's flush does. Used by Lua apps, which draw into their
+    /// own framebuffer. Refuses (returns `false`) while the plane reads the
+    /// shadow. Bounds are exclusive and must lie inside the screen.
+    ///
+    /// # Safety
+    ///
+    /// `pixels` must point at `y1 - y0` rows of `(x1 - x0) * 2` readable
+    /// bytes, `stride` bytes apart.
+    pub unsafe fn write_rect(
+        &mut self,
+        (x0, y0, x1, y1): (u16, u16, u16, u16),
+        pixels: *const u8,
+        stride: usize,
+    ) -> bool {
+        if self.is_busy() {
+            return false;
+        }
+        let (x0, y0) = (x0 as usize, y0 as usize);
+        let (x1, y1) = ((x1 as usize).min(WIDTH), (y1 as usize).min(HEIGHT));
+        if x0 >= x1 || y0 >= y1 || pixels.is_null() {
+            return true;
+        }
+        let shadow = SHADOW.load(Ordering::Acquire);
+        for row in 0..y1 - y0 {
+            // SAFETY: the source row is readable per the caller's contract;
+            // the destination row lies inside the `WIDTH * HEIGHT` shadow,
+            // which the plane does not read (not busy). Byte copy: the
+            // source has no alignment guarantee.
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    pixels.add(row * stride),
+                    shadow.add((y0 + row) * WIDTH + x0).cast::<u8>(),
+                    (x1 - x0) * 2,
+                );
+            }
+        }
+        add_damage(DirtyRect {
+            x0: x0 as u16,
+            y0: y0 as u16,
+            x1: (x1 - 1) as u16,
+            y1: (y1 - 1) as u16,
+        });
+        true
+    }
+}
+
+/// Grow the pending damage by `rect` (inclusive bounds).
+fn add_damage(rect: DirtyRect) {
+    critical_section::with(|cs| {
+        let cell = DAMAGE.borrow(cs);
+        cell.set(Some(match cell.get() {
+            Some(old) => DirtyRect {
+                x0: old.x0.min(rect.x0),
+                y0: old.y0.min(rect.y0),
+                x1: old.x1.max(rect.x1),
+                y1: old.y1.max(rect.y1),
+            },
+            None => rect,
+        }));
+    });
+}
+
 impl Drop for DisplayPort {
     fn drop(&mut self) {
         // Remove C's callbacks before releasing the allocations.
@@ -320,18 +384,7 @@ unsafe extern "C" fn flush(
                 x1: x2 as u16,
                 y1: y2 as u16,
             };
-            critical_section::with(|cs| {
-                let cell = DAMAGE.borrow(cs);
-                cell.set(Some(match cell.get() {
-                    Some(old) => DirtyRect {
-                        x0: old.x0.min(rect.x0),
-                        y0: old.y0.min(rect.y0),
-                        x1: old.x1.max(rect.x1),
-                        y1: old.y1.max(rect.y1),
-                    },
-                    None => rect,
-                }));
-            });
+            add_damage(rect);
         }
     }
     unsafe { sys::lv_display_flush_ready(display) };

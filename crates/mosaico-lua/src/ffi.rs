@@ -96,4 +96,6 @@ extern "C" {
     pub fn mosaico_lua_new_thread(l: *mut lua_State) -> *mut lua_State;
     pub fn mosaico_lua_install_hook(l: *mut lua_State, count: c_int);
     pub fn mosaico_lua_traceback(l: *mut lua_State, thread: *mut lua_State) -> c_int;
+    pub fn mosaico_lua_set_args(l: *mut lua_State, json: *const c_char, len: usize) -> c_int;
+    pub fn mosaico_lua_exit(l: *mut lua_State);
 }

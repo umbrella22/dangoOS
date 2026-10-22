@@ -12,6 +12,7 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
+#include "mosaico_platform.h"
 
 /* ---- Implemented in Rust (crates/mosaico-lua/src/vm.rs) ---------------- */
 
@@ -22,12 +23,21 @@ void mosaico_lua_on_print(void *ctx, const char *s, size_t len);
 int mosaico_lua_call_rust(void *ctx, lua_State *L, void *fn);
 const char *mosaico_lua_error_text(void *ctx, size_t *len, int *arg);
 void mosaico_lua_log(const char *s, size_t len);
+/* 1 when the request was recorded and the caller must yield now. */
+int mosaico_lua_on_request(void *ctx, lua_State *L, int yieldable, int kind, unsigned arg);
+int mosaico_lua_on_stop(void *ctx);
 
 #define CALL_ERROR (-1)
 #define CALL_YIELD (-2)
 #define CALL_ARG_ERROR (-3)
 
 static void *ctx_of(lua_State *L) { return *(void **)lua_getextraspace(L); }
+
+/* Used by mosaico_platform.c (delay, display:present). */
+int mosaico_lua_request(lua_State *L, int kind, unsigned arg) {
+  return mosaico_lua_on_request(ctx_of(L), L, lua_isyieldable(L), kind, arg);
+}
+int mosaico_lua_stop_requested(lua_State *L) { return mosaico_lua_on_stop(ctx_of(L)); }
 
 void mosaico_lua_set_ctx(lua_State *L, void *ctx) {
   *(void **)lua_getextraspace(L) = ctx;
@@ -97,7 +107,24 @@ static const luaL_Reg libs[] = {
     {LUA_COLIBNAME, luaopen_coroutine}, {LUA_DBLIBNAME, luaopen_debug},
     {LUA_MATHLIBNAME, luaopen_math},    {LUA_STRLIBNAME, luaopen_string},
     {LUA_TABLIBNAME, luaopen_table},    {LUA_UTF8LIBNAME, luaopen_utf8},
-    {NULL, NULL}};
+    {LUA_OSLIBNAME, luaopen_os},        {NULL, NULL}};
+
+/* Same as esp-claw cap_lua_restrict_debug: scripts get traceback and
+   getinfo only (sethook etc. would break the scheduler). */
+static void restrict_debug(lua_State *L) {
+  lua_getglobal(L, "debug");
+  lua_newtable(L);
+  lua_getfield(L, -2, "traceback");
+  lua_setfield(L, -2, "traceback");
+  lua_getfield(L, -2, "getinfo");
+  lua_setfield(L, -2, "getinfo");
+  lua_pushvalue(L, -1);
+  lua_setglobal(L, "debug");
+  lua_getfield(L, LUA_REGISTRYINDEX, LUA_LOADED_TABLE);
+  lua_pushvalue(L, -2);
+  lua_setfield(L, -2, "debug");
+  lua_pop(L, 3);
+}
 
 static int open_impl(lua_State *L) {
   for (const luaL_Reg *lib = libs; lib->func; lib++) {
@@ -120,6 +147,16 @@ static int open_impl(lua_State *L) {
   lua_setglobal(L, "dofile");
   lua_pushnil(L);
   lua_setglobal(L, "loadfile");
+  /* os.exit would end the firmware. */
+  lua_getglobal(L, LUA_OSLIBNAME);
+  lua_pushnil(L);
+  lua_setfield(L, -2, "exit");
+  lua_pop(L, 1);
+  restrict_debug(L);
+  mosaico_platform_preload(L);
+  /* esp-claw always defines `args` (a table; filled by Vm::set_args). */
+  lua_newtable(L);
+  lua_setglobal(L, "args");
   return 0;
 }
 
@@ -245,4 +282,35 @@ lua_State *mosaico_lua_new_thread(lua_State *L) {
   lua_pushlightuserdata(L, &thread);
   if (lua_pcall(L, 1, 0, 0) != LUA_OK) return NULL;
   return thread;
+}
+
+/* ---- args and exit ------------------------------------------------------ */
+
+static int set_args_impl(lua_State *L) {
+  /* args = require("json").decode(text) when that yields a table */
+  lua_getglobal(L, "require");
+  lua_pushliteral(L, "json");
+  lua_call(L, 1, 1);
+  lua_getfield(L, -1, "decode");
+  lua_pushvalue(L, 1);
+  if (lua_pcall(L, 1, 1, 0) == LUA_OK && lua_istable(L, -1)) {
+    lua_setglobal(L, "args");
+  }
+  return 0;
+}
+
+int mosaico_lua_set_args(lua_State *L, const char *json, size_t len) {
+  lua_pushcfunction(L, set_args_impl);
+  lua_pushlstring(L, json, len);
+  return lua_pcall(L, 1, 0, 0);
+}
+
+static int exit_impl(lua_State *L) {
+  mosaico_platform_exit_cleanups(L);
+  return 0;
+}
+
+void mosaico_lua_exit(lua_State *L) {
+  lua_pushcfunction(L, exit_impl);
+  if (lua_pcall(L, 0, 0, 0) != LUA_OK) lua_pop(L, 1);
 }

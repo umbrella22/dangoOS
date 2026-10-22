@@ -416,15 +416,17 @@ mod tests {
         let mut app = MosaicoApp::new(Rc::clone(&control), Rc::clone(&splash));
         ui.mount(&app).expect("mount");
 
-        // Tile centres: three 120 px columns, 16 px apart, centred; the icon
-        // square is the upper part, the name the lower part.
+        // Tile centres: rows of three 120 px columns, 16 px apart, centred;
+        // the 96 px icon square is the upper part, the name the lower part.
         let tiles = [
-            (104, AppId::Settings),
-            (240, AppId::Sensors),
-            (376, AppId::Timer),
+            (104, 140, AppId::Settings),
+            (240, 140, AppId::Sensors),
+            (376, 140, AppId::Timer),
+            (172, 298, AppId::Snake),
+            (308, 298, AppId::Game2048),
         ];
-        for (x, id) in tiles {
-            for y in [208, 286] {
+        for (x, icon_y, id) in tiles {
+            for y in [icon_y, icon_y + 72] {
                 app.go(Page::Launcher);
                 ui.mark_dirty();
                 run(&mut ui, &mut app, 60);

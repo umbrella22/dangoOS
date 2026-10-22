@@ -57,13 +57,19 @@ Lua 用 `longjmp` 抛错。`longjmp` 越过 Rust 栈帧是未定义行为，所�
   让定时器驱动的传感器任务能按时醒来；否则 `yield_now()`。
 - 模块函数可以返回 `Ret::Yield(Request)` 挂起脚本：
   - `delay.delay_ms(n)` → `Request::Sleep{ms}`，任务 `Timer::after` 后再 resume。
-  - `canvas:present()` → `Request::Present`，任务把帧交给 plane，送完再 resume。
+  - `canvas:present()` → 官方 C 代码算完脏矩形后经 `lua_yieldk` 发 `Request::Present`；
+    Lua 任务把矩形（指针 + 行距）交给 UI 任务，UI 在 plane 空闲时拷进 LVGL 的 shadow、
+    按合并后的脏区上传，然后通知 Lua 任务 resume。页面滑动期间也等着不丢帧
+    （脚本只重画变化的部分，丢一帧会留下启动器残影）。
 - 不能挂起的位置（脚本自己的 `coroutine` 里、`table.sort` 比较函数这类 C 调用内部）：
-  `delay` 不等待直接返回；钩子不让出。如果距上次让出超过 `max_blocked_us`（2 秒；
+  `delay` 按官方 `vTaskDelay` 的语义忙等到时间过去，`present` 不等 UI 直接返回；钩子不让出。如果距上次让出超过 `max_blocked_us`（2 秒；
   无时钟时为 `max_blocked_hooks` 2 万次）仍没让出过，就报错 `script ran too long without yielding` 终止脚本。
 - 退出：系统手势（左边右滑）调用 `Vm::interrupt()`。下一次钩子在可让出时让出，`resume`
   返回 `Step::Interrupted`，随后整个状态 `lua_close`。脚本里的 `pcall` 拦不住这种退出；
-  只有在不可让出位置才退化为抛 `interrupted` 错误。
+  只有在不可让出位置才退化为抛 `interrupted` 错误。官方在 `delay` 里抛可捕获的
+  `stop requested`，这里不抛，统一由钩子中断，脚本的 `pcall` 不会吞掉退出。
+- 关状态前按注册的逆序调用各模块的清理函数（`cap_lua_register_cleanup`，放在 `pcall` 里），
+  display 借此释放帧缓冲并通知 UI 恢复 LVGL。
 
 官方 `cap_lua_runtime.c` 用 FreeRTOS 任务 + `vTaskDelay` 阻塞；这里改成协程让出，
 脚本看到的行为相同（`delay_ms` 返回时时间已经过去）。
@@ -102,18 +108,28 @@ Lua 用 `longjmp` 抛错。`longjmp` 越过 Rust 栈帧是未定义行为，所�
 ## 7. 标准库与模块对照
 
 开的标准库：`base`、`package`（只保留 `package.preload` 和应用目录搜索器）、`coroutine`、
-`debug`、`math`、`string`、`table`、`utf8`。不开 `io`、`os`（官方开了，但应用里只用到
-`os.time` ×7、`os.clock` ×5、`io.open` ×6，L1/L2 用宿主模块补这几个函数）。`dofile`/`loadfile` 移除。
+`debug`、`math`、`string`、`table`、`utf8`、`os`。`dofile`/`loadfile` 移除。
+
+- `os`：官方 `loslib.c` 原样编译（`csrc/mosaico_loslib.c` 用宏把 `time`/`clock` 接到宿主时钟，
+  `remove`/`rename`/`system`/`tmpnam` 返回失败），`os.exit` 置 nil。
+- `debug`：只留 `traceback`、`getinfo`，与官方 `cap_lua_restrict_debug` 相同。
+- `io`：不开（应用里 `io.open` ×6，L2 随 `storage` 补）。
+- 全局 `args`：启动参数 JSON 经 `json.decode` 得到的表，没有参数时为空表。
+
+L1 的官方模块都是 vendored C 源码原样编译（来源见 `crates/mosaico-lua/vendor/NOTICE.md`），
+ESP-IDF 头文件在 `csrc/esp_shim/` 里打桩，`csrc/mosaico_platform.c` 把 `display_service`、
+堆、计时等接到 Rust 宿主（`mosaico_host_*`）。`delay`、`system` 两个模块官方实现依赖 FreeRTOS，
+在 `mosaico_platform.c` 里按官方接口重写。
 
 官方模块按 skills-lab 26 个应用的实际调用次数排优先级：
 
 | 模块 | 应用里用到的接口（次数） | 阶段 | 实现 |
 | --- | --- | --- | --- |
-| `display` | `open` 24、`color` 73、`load_font` 11；`canvas:` `text` 122、`line` 114、`fill_rect` 97、`fill_circle` 82、`fill_round_rect` 72、`info` 67、`fill_triangle` 43、`arc` 37、`begin` 30、`present` 29、`close` 27、`measure_text` 23、`touch` 22、`save` 17、`stroke_circle` 12、`stroke_rect` 10、`stroke_round_rect` 9、`restore` 4、`translate` 2、`clip` 2、`stats` 2、`blit` 1 | L1 | Rust 光栅器画进 480×480 RGB565 PSRAM 帧，`present` 经 plane 整帧送屏；内置 ASCII 字体 8–64 号；颜色 `0xAARRGGBB` / `"#rrggbb[aa]"` / 表三种写法；`<close>` 由 `__close` 元方法实现 |
-| `delay` | `delay_ms` 32 | L1 | 协程让出；`delay_us` 忙等（≤ 1 s）；`periodic` |
-| `system` | `millis` 74、`date` 8、`time` 1 | L1 | `millis/uptime` 用 `embassy_time`；没有 RTC/网络对时，`time/date` 返回开机后的伪时间并在文档注明 |
-| `json` | `decode` 7、`encode` 6 | L1 | Rust 实现，行为对照官方 `lua_module_json.c` |
-| `arg_schema` | `int` 19、`bool` 6、`parse` 3 | L1 | 官方 `lua_module_system/lib/arg_schema.lua`（Apache-2.0）原样放进 `package.preload` |
+| `display` | `open` 24、`color` 73、`load_font` 11；`canvas:` `text` 122、`line` 114、`fill_rect` 97、`fill_circle` 82、`fill_round_rect` 72、`info` 67、`fill_triangle` 43、`arc` 37、`begin` 30、`present` 29、`close` 27、`measure_text` 23、`touch` 22、`save` 17、`stroke_circle` 12、`stroke_rect` 10、`stroke_round_rect` 9、`restore` 4、`translate` 2、`clip` 2、`stats` 2、`blit` 1 | L1 | 官方 `lua_module_display`（C）原样编译，帧缓冲在 PSRAM；内置 12–48 px 十种字号全编进固件，按 `font_size` 取同高字体（官方只编一种再缩放，非原尺寸发虚；字宽都是 h/2，排版不变）；`present` 见第 4 节；图片解码（`lua_image`）打桩返回不支持 |
+| `delay` | `delay_ms` 32 | L1 | `delay_ms` 协程让出；`delay_us` 忙等；`periodic` 按 `xTaskDelayUntil` 语义 |
+| `system` | `millis` 74、`date` 8、`time` 1 | L1 | `millis/uptime` 用开机时钟；没有 RTC/网络对时，`time/date` 从开机时刻按 1970-01-01 起算；`ip` 返回 nil；`heap.get_info` 读 esp-alloc 统计 |
+| `json` | `decode` 7、`encode` 6 | L1 | 官方 `lua_module_json.c` + cJSON 1.7.18 |
+| `arg_schema` | `int` 19、`bool` 6、`parse` 3 | L1 | 官方 `lua_module_system/arg_schema.lua`（Apache-2.0）原样放进 `package.preload` |
 | `storage` | `join_path` 22、`read_file` 13、`get_root_dir` 12、`exists` 12、`write_file` 6、`mkdir` 6 | L2 | 应用目录 + 每应用可写区，放在 flash 数据分区 |
 | `imu` | `new` 5 | L2 | 读传感器任务已有的 BMI270 数据 |
 | `audio`、`lvgl` | 9 个应用 | 不做 | RFC 0006 已排除；这些应用在网格里显示为不可用 |
@@ -123,8 +139,22 @@ Lua 用 `longjmp` 抛错。`longjmp` 越过 Rust 栈帧是未定义行为，所�
 | 阶段 | 验收 | 状态 |
 | --- | --- | --- |
 | L0 | 主机测试 17 项（时间切片、print 格式、标准库、模块函数、参数错误、让出、中断、`pcall` 拦不住中断、不可让出循环被终止、内存上限）；真机开机自检打印 `hi from Lua 5.5`，记录耗时、切片数、最长切片、内存 | 主机通过；真机见第 9 节 |
-| L1 | 官方 `display_contract.lua` 在主机光栅器上通过；`snake`、`game_2048` 原样运行；运行时狐狸主页之外的 UI 不掉帧 | 待做 |
+| L1 | 官方 `display_contract.lua` 在主机光栅器上通过；`snake`、`game_2048` 原样运行；运行时狐狸主页之外的 UI 不掉帧 | 主机通过（`mosaico-lua` 24 项：contract 全过 delta=0、像素、释放、delay、system/os/json/arg_schema、snake、2048 各自跑到结束）；真机通过，见第 10 节 |
 | L2 | `launcher.json` 解析，应用出现在网格；USB 串口推送 + 热重载 | 待做 |
+
+### 启动器与 Lua 页面
+
+启动器网格每行 3 个，第一行 Settings / Sensors / Timer，第二行 Snake / 2048
+（`hub::AppId::Snake`/`Game2048`，脚本用 `include_str!` 编进固件，L2 改为从存储读取）。
+
+1. 点开 Lua 应用 → 页面滑入（LVGL 先画“正在启动…”），同时 `lua::start` 启动脚本。
+2. 脚本 `display.open` 后 UI 不再跑 LVGL，改为拷贝脚本提交的帧；非系统手势的触摸送给
+   脚本（`canvas:touch`）。
+3. 系统手势照常：左边右滑回启动器，底边上滑回主页。Lua 页面画满全屏，底边手势区从
+   下方 60 px 收窄到 28 px（`FULL_SCREEN_BOTTOM_BAND_Y`），否则 2048 从底部往上滑会被当成回主页。
+   离开时 `lua::stop` 中断脚本，状态关闭、帧缓冲释放。
+4. 脚本自己结束或报错 → 自动回启动器，错误写日志。
+5. 灯效、插拔模块的反应照常，与其他应用页相同。
 
 ## 9. L0 实测
 
@@ -143,3 +173,22 @@ data +284 B，bss +472 B。
 - 第三版总耗时变长是有意的：每 16 ms 让出 1 ms，其余时间给 UI 和传感器；UI 保持 18–19 fps。
 - 剩下的 43.8 ms 是单个 C 调用（`collectgarbage("collect")` 全量回收 50 万字节级的 PSRAM 堆），
   钩子进不去。应用里不会频繁手动全量 GC；增量 GC 的单步由 Lua 自己控制，不受影响。
+
+## 10. L1 实测
+
+固件 text 2,497,894 B（L0 为 2,343,256 B，+154,638 B，其中十种字号约 66 KB）。
+
+真机（S3 + 32 MiB PSRAM），启动器里反复进出 Snake / 2048，左边右滑和底边上滑退出：
+
+| 应用 | 运行 | 帧数 | 切片数 | 最长切片 | 内存峰值 |
+| --- | --- | --- | --- | --- | --- |
+| game_2048 | 42.2 s | 41 | 2341 | 14.7 ms | 155,518 B |
+| game_2048 | 16.3 s | 17 | 893 | 12.6 ms | 151,022 B |
+| snake | 9.9 s | 57 | 230 | 10.8 ms | 116,724 B |
+| snake | 3.5 s | 20 | 84 | 10.1 ms | 93,830 B |
+
+- 所有切片中最长 20.8 ms（2048 启动时）。plane 统计在 18–19 fps，`drop=0`。
+- 传感器最大延迟 127 ms（L0 为 236 ms）。
+- 退出后堆空闲回到进入前的水平（多次进出都是 15,578,4xx B），没有泄漏。
+- 第一次上机发现两处问题，已修：2048 从底部往上滑被当成回主页（底边手势区收窄，见第 8 节），
+  以及非 24 px 的字发虚（内置字号全编进去，见第 7 节）。

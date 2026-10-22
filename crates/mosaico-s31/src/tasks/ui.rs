@@ -42,6 +42,12 @@
 //! switching haptics on buzzes once. A finished countdown buzzes and opens
 //! the timer page.
 //!
+//! Lua apps (Snake, 2048) are pages too: opening one starts the script in
+//! the Lua task, leaving it stops the script. Once the script opens the
+//! display, LVGL stops rendering that page and the script's presented
+//! rectangles are copied into the shadow instead ([`lua::take_frame`]);
+//! touches that are not edge swipes go to the script.
+//!
 //! Launcher <-> app switches slide ([`mosaico_s31::hub::transition`]): the
 //! old page is copied into the port's snapshot, the new page is rendered
 //! once, and for 280 ms the plane uploads bands of both. LVGL and touch are
@@ -69,7 +75,7 @@ use mosaico_s31::ui::{theme, AppMsg, MosaicoApp, Screen, SHOW_SPLASH};
 use super::{
     haptic,
     input::{INPUT, INPUT_CAPACITY},
-    lights,
+    lights, lua,
     plane::{self, Frame, PlaneJob, PlaneUi},
     sensors::SENSOR_EVENTS,
 };
@@ -121,6 +127,11 @@ fn light_owner(page: Page) -> lights::Owner {
         Page::App(AppId::Settings) => lights::Owner::Preview,
         _ => lights::Owner::Dark,
     }
+}
+
+/// Pages whose content a Lua script draws.
+fn is_lua_page(page: Page) -> bool {
+    matches!(page, Page::App(id) if id.lua().is_some())
 }
 
 /// Number of one-second UI stats intervals processed since boot.
@@ -263,7 +274,11 @@ pub async fn ui_task(mut plane: PlaneUi) {
                         runtime.on_interaction(sample.at_ms);
                     }
                     press_state = event.pressed;
-                    lvgl_port::set_pointer(sample.x, sample.y, sample.pressed);
+                    if is_lua_page(app.page()) {
+                        lua::set_pointer(sample.x, sample.y, sample.pressed);
+                    } else {
+                        lvgl_port::set_pointer(sample.x, sample.y, sample.pressed);
+                    }
                 }
             }
         }
@@ -315,10 +330,25 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
             last_screen = app.screen();
         }
+        // A Lua app that ended by itself (finished or failed) leaves its page.
+        if lua::take_ended() && is_lua_page(app.page()) {
+            app.go(Page::Launcher);
+            ui.mark_dirty();
+        }
         if app.page() != last_page {
             info!("hub: {:?} -> {:?}", last_page, app.page());
             gestures.reset_pass();
+            gestures.set_full_screen(is_lua_page(app.page()));
             lvgl_port::set_pointer(0, 0, false);
+            if is_lua_page(last_page) {
+                lua::stop();
+                lua::set_pointer(0, 0, false);
+            }
+            if let Page::App(id) = app.page() {
+                if let Some(script) = id.lua() {
+                    lua::start(script);
+                }
+            }
             if app.page() == Page::Home {
                 // The entrance replays; a finger still on the glass from the
                 // swipe must not interrupt it.
@@ -382,6 +412,31 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
         } else if slide != Slide::Idle {
             slide = step_slide(slide, &mut port, &mut plane, now_ms);
+        } else if is_lua_page(app.page()) && lua::screen_open() {
+            // The script owns the screen: copy its presented frame into the
+            // shadow and upload the damage; LVGL stays paused.
+            if !port.is_busy() {
+                if let Some(blits) = lua::take_frame() {
+                    for b in &blits {
+                        // SAFETY: the script's framebuffer stays untouched
+                        // until `frame_done` below (it waits for it).
+                        unsafe {
+                            port.write_rect((b.x0, b.y0, b.x1, b.y1), b.pixels, b.stride);
+                        }
+                    }
+                    lua::frame_done();
+                }
+                if let Some((screen, damage)) = port.take_frame() {
+                    plane.submit(PlaneJob {
+                        canvas: Frame::Screen(screen),
+                        size: (WIDTH as u16, HEIGHT as u16),
+                        at: Some((0, 0)),
+                        damage: Some(damage),
+                        clear_outside: false,
+                        touch_at_us: None,
+                    });
+                }
+            }
         } else if !port.is_busy() {
             ui.timer_handler();
             // Callbacks fired by the timer handler only queue messages.
