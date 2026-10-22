@@ -48,7 +48,7 @@ impl Error {
 
 pub struct Call<'a> {
     l: *mut lua_State,
-    ctx: &'a mut Ctx,
+    pub(crate) ctx: &'a mut Ctx,
     can_yield: bool,
 }
 

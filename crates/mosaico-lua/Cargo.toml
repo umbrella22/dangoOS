@@ -10,6 +10,7 @@ links = "mosaico_lua"
 build = "build.rs"
 
 [dependencies]
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
 mosaico-fs = { path = "../mosaico-fs" }
 
 [target.'cfg(target_os = "none")'.dependencies]

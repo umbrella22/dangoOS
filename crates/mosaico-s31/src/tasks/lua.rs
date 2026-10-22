@@ -154,6 +154,23 @@ fn release_frame() {
     }
 }
 
+// LVGL requests cross to the sole native UI owner. Stop releases waiters and
+// marks cleanup before any later app can acquire the service.
+static LVGL_REQUEST: Mutex<RefCell<Option<mosaico_lua::ui::UiCommand>>> =
+    Mutex::new(RefCell::new(None));
+static LVGL_REPLY: Signal<CriticalSectionRawMutex, Result<mosaico_lua::ui::UiReply, String>> =
+    Signal::new();
+static LVGL_RELEASE: AtomicBool = AtomicBool::new(false);
+pub fn take_lvgl_command() -> Option<mosaico_lua::ui::UiCommand> {
+    critical_section::with(|cs| LVGL_REQUEST.borrow_ref_mut(cs).take())
+}
+pub fn complete_lvgl(reply: Result<mosaico_lua::ui::UiReply, String>) {
+    LVGL_REPLY.signal(reply);
+}
+pub fn take_lvgl_release() -> bool {
+    LVGL_RELEASE.swap(false, Ordering::AcqRel)
+}
+
 // ---- host ------------------------------------------------------------------
 
 struct DeviceHost {
@@ -165,6 +182,8 @@ struct DeviceHost {
 impl Drop for DeviceHost {
     fn drop(&mut self) {
         super::lights::lua_release();
+        LVGL_RELEASE.store(true, Ordering::Release);
+        critical_section::with(|cs| LVGL_REQUEST.borrow_ref_mut(cs).take());
     }
 }
 
@@ -400,10 +419,28 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
         busy_us += slice_us;
         slices += 1;
         match step {
+            Step::Request(Request::Host(mosaico_lua::ui::REQUEST)) => {
+                if let Some(command) = vm.take_ui_command() {
+                    LVGL_REPLY.reset();
+                    critical_section::with(|cs| *LVGL_REQUEST.borrow_ref_mut(cs) = Some(command));
+                    match select(LVGL_REPLY.wait(), poll_workers_until_stop(&mut vm)).await {
+                        Either::First(reply) => vm.complete_ui(reply),
+                        Either::Second(()) => {
+                            critical_section::with(|cs| LVGL_REQUEST.borrow_ref_mut(cs).take());
+                            vm.interrupt();
+                            vm.complete_ui(Err("stopped".into()));
+                        }
+                    }
+                }
+            }
             Step::Request(Request::Sleep { ms }) => {
                 busy_us = 0;
                 // Wake early for a stop so leaving the page is immediate.
-                let _ = select(Timer::after_millis(ms as u64), wait_stop()).await;
+                let _ = select(
+                    Timer::after_millis(ms as u64),
+                    poll_workers_until_stop(&mut vm),
+                )
+                .await;
             }
             Step::Request(Request::Present) => {
                 busy_us = 0;
@@ -417,7 +454,9 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
                 // Waits through a page slide too: a dropped frame would leave
                 // parts of the launcher on screen (scripts present only what
                 // changed). `stop` releases the wait.
-                if let Either::Second(()) = select(FRAME_DONE.wait(), wait_stop()).await {
+                if let Either::Second(()) =
+                    select(FRAME_DONE.wait(), poll_workers_until_stop(&mut vm)).await
+                {
                     release_frame();
                 }
             }
@@ -455,9 +494,10 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
     next
 }
 
-async fn wait_stop() {
+async fn poll_workers_until_stop(vm: &mut mosaico_lua::Vm) {
     while !STOP.load(Ordering::Acquire) && !START.signaled() {
-        Timer::after_millis(10).await;
+        vm.poll_workers();
+        Timer::after_millis(1).await;
     }
 }
 

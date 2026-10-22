@@ -1,0 +1,101 @@
+{
+  "purpose": "Independent image fixtures made before N5 implementation; JPEG oracle is Pillow decoded RGB, PNG RGBA pixels exact. Alpha compositing policy must be documented by implementation, not inferred here.",
+  "dimensions": {
+    "orientation.jpg": [
+      96,
+      64
+    ],
+    "grayscale.jpeg": [
+      32,
+      24
+    ],
+    "pixels.png": [
+      3,
+      2
+    ],
+    "alpha.png": [
+      3,
+      2
+    ]
+  },
+  "png_rgb": [
+    [
+      255,
+      0,
+      0
+    ],
+    [
+      0,
+      255,
+      0
+    ],
+    [
+      0,
+      0,
+      255
+    ],
+    [
+      255,
+      255,
+      255
+    ],
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      255,
+      255,
+      0
+    ]
+  ],
+  "png_rgba": [
+    [
+      255,
+      0,
+      0,
+      255
+    ],
+    [
+      0,
+      255,
+      0,
+      128
+    ],
+    [
+      0,
+      0,
+      255,
+      0
+    ],
+    [
+      255,
+      255,
+      255,
+      64
+    ],
+    [
+      0,
+      0,
+      0,
+      255
+    ],
+    [
+      255,
+      255,
+      0,
+      192
+    ]
+  ],
+  "sha256": {
+    "alpha.png": "2528b8a98e167b545a649fa2cfa7946739f002a3f1d9c95c9b683d8b22ed7d3e",
+    "corrupt.jpg": "d5a2a05d2df18b9cba5b83ee1b9703b7b0e9223d1b85b49ece2217e09ddccff6",
+    "grayscale.jpeg": "2a5af0a4d4b8a5d99cfbcc0c418fb521f22d42842f39e6c31f21caf234cac656",
+    "orientation-pillow.png": "2bbc34434435a7a8f4c9a1c26e74f028b5b3b6b008089588e0a3472eef6750a3",
+    "orientation.jpg": "c320b9684b12326a79ccf1348290e03c15ba82c7c6f5cb229ff1a5d1a72e0adb",
+    "pixels.png": "07df39cf39005e9c6c8cef33028970ca80f199769920c0b36c5c5572f4bcdfda",
+    "truncated.jpg": "fc27a964149206be3a6d5373d0b9aa8685214478b9089231b3f8117614bc1d8a",
+    "truncated.png": "3a7fa3c452c519bb1209bbce7f27c80e2fab33c128ca3a0e818779fd42e5a8c6"
+  }
+}

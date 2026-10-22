@@ -40,10 +40,11 @@ static int out_func(JDEC *jd, void *bitmap, JRECT *rect)
 
 /* Decodes `data` into `out` (width * height * 3 bytes, RGB888). With
  * `out == NULL` only reads the size. Returns 0 or the TJpgDec error code. */
-int mosaico_jpeg_decode(const uint8_t *data, size_t len, uint16_t *width, uint16_t *height,
-                        uint8_t *out, size_t out_len)
+extern void *mosaico_image_realloc(void*,size_t);
+static int decode(const uint8_t *data, size_t len, uint16_t *width, uint16_t *height,
+                        uint8_t *out, size_t out_len,int tracked)
 {
-    void *pool = malloc(POOL_SIZE);
+    void *pool = tracked ? mosaico_image_realloc(NULL,POOL_SIZE) : malloc(POOL_SIZE);
     if (!pool) return JDR_MEM1;
     source_t s = {.data = data, .len = len};
     JDEC jd;
@@ -61,6 +62,9 @@ int mosaico_jpeg_decode(const uint8_t *data, size_t len, uint16_t *width, uint16
             }
         }
     }
-    free(pool);
+    if(tracked)mosaico_image_realloc(pool,0);else free(pool);
     return (int)r;
 }
+
+int mosaico_jpeg_decode(const uint8_t*d,size_t n,uint16_t*w,uint16_t*h,uint8_t*out,size_t cap){return decode(d,n,w,h,out,cap,0);}
+int mosaico_jpeg_decode_tracked(const uint8_t*d,size_t n,uint16_t*w,uint16_t*h,uint8_t*out,size_t cap){return decode(d,n,w,h,out,cap,1);}

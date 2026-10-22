@@ -251,6 +251,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
         warn!("brain: bundled startup failed, native fallback: {error}");
     }
     let mut brain_booted = false;
+    let mut lua_lvgl = mosaico_s31::lua_lvgl::LuaLvglService::new(WIDTH as u16, HEIGHT as u16);
     // Touch is held off through the entrance: a finger resting on the glass
     // during boot must not interrupt the drop.
     runtime.ignore_touch_until(boot_ms + MosaicoApp::touch_hold_off_ms());
@@ -386,7 +387,11 @@ pub async fn ui_task(mut plane: PlaneUi) {
                     }
                     press_state = event.pressed;
                     if is_lua_page(app.page()) {
-                        lua::set_pointer(sample.x, sample.y, sample.pressed);
+                        if lua_lvgl.active() {
+                            lvgl_port::set_pointer(sample.x, sample.y, sample.pressed);
+                        } else {
+                            lua::set_pointer(sample.x, sample.y, sample.pressed);
+                        }
                     } else {
                         lvgl_port::set_pointer(sample.x, sample.y, sample.pressed);
                     }
@@ -534,6 +539,15 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
             haptic::set_enabled(current.haptics);
             settings = current;
+        }
+
+        if lua::take_lvgl_release() || !is_lua_page(app.page()) || buttons::shutdown_requested() {
+            lua_lvgl.release();
+        }
+        if slide == Slide::Idle {
+            if let Some(command) = lua::take_lvgl_command() {
+                lua::complete_lvgl(lua_lvgl.execute(command));
+            }
         }
 
         // ---- merged expression and haptics ----

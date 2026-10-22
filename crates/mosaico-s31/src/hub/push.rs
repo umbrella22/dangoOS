@@ -36,6 +36,8 @@ pub const PREFIX: &str = "@mosaico ";
 pub const VERSION: u32 = 1;
 const DATA_APPS: &str = "/data/apps";
 const STAGING: &str = "/data/apps/.incoming";
+const PHOTO_STAGING: &str = "/data/appdata/album_app/.incoming";
+const PHOTO_ROOT: &str = "/data/appdata/album_app/photos";
 /// Longest command line; longer ones are discarded whole.
 const LINE_MAX: usize = 256;
 /// Largest single file.
@@ -69,6 +71,7 @@ enum UploadKind {
     App,
     Skin,
     Brain,
+    Photo,
 }
 
 struct Upload {
@@ -92,6 +95,7 @@ pub struct Session {
     staging: Option<String>,
     kind: UploadKind,
     upload: Option<Upload>,
+    completed_photo: Option<String>,
 }
 
 impl Session {
@@ -162,6 +166,7 @@ impl Session {
 
     /// The host went away: drop a half-written file and the staging area.
     pub fn reset(&mut self, vfs: &mut Vfs) {
+        self.completed_photo = None;
         if let Some(up) = self.upload.take() {
             let _ = vfs.close(up.fd);
         }
@@ -208,6 +213,10 @@ impl Session {
             let up = self.upload.take().expect("upload");
             let closed = vfs.close(up.fd);
             let crc = !up.crc;
+            if self.kind == UploadKind::Photo {
+                self.completed_photo = (up.failed.is_none() && closed.is_ok() && crc == up.want)
+                    .then(|| up.rel.clone());
+            }
             let reply = match (up.failed, closed) {
                 (Some(e), _) | (None, Err(e)) => format!("@err file {}: {e}", up.rel),
                 _ if crc != up.want => {
@@ -228,7 +237,17 @@ impl Session {
         let verb = words.next().unwrap_or("");
         let args: Vec<&str> = words.collect();
         if self.management_busy
-            && matches!(verb, "run" | "begin" | "file" | "commit" | "rm" | "rmdata")
+            && matches!(
+                verb,
+                "run"
+                    | "begin"
+                    | "file"
+                    | "commit"
+                    | "rm"
+                    | "rmdata"
+                    | "photo-begin"
+                    | "photo-commit"
+            )
         {
             out(Effect::Reply("@err app management busy".into()));
             return;
@@ -237,6 +256,10 @@ impl Session {
             ("hello", []) => Ok(format!("hello mosaico-push {VERSION}")),
             ("begin", [id]) => self.begin(vfs, id, UploadKind::App),
             ("skin-begin", [id]) => self.begin(vfs, id, UploadKind::Skin),
+            ("photo-begin", []) => self
+                .begin(vfs, "photo", UploadKind::Photo)
+                .map(|_| "photo-begin".into()),
+            ("photo-commit", [rel]) => self.commit_photo(vfs, rel),
             ("brain-begin", []) => self
                 .begin(vfs, "resident", UploadKind::Brain)
                 .map(|_| "brain-begin".into()),
@@ -295,6 +318,7 @@ impl Session {
             ("commit", [id]) => self.commit(vfs, id, false, out),
             ("commit", [id, "run"]) => self.commit(vfs, id, true, out),
             ("abort", []) => {
+                self.completed_photo = None;
                 if self.staging.take().is_some() {
                     let _ = vfs.remove_tree(self.staging_root());
                 }
@@ -317,8 +341,11 @@ impl Session {
                     Ok(identity) => {
                         // Invalidate in-memory staging as well as the on-disk
                         // incoming tree, preventing a stale file/commit resurrection.
-                        if self.kind == UploadKind::App && self.staging.as_deref() == Some(id) {
+                        if (self.kind == UploadKind::App && self.staging.as_deref() == Some(id))
+                            || (self.kind == UploadKind::Photo && *id == "album_app")
+                        {
                             self.staging = None;
+                            self.completed_photo = None;
                         }
                         let op = if verb == "rm" {
                             super::uninstall::Operation::Remove(identity)
@@ -350,15 +377,20 @@ impl Session {
             UploadKind::App => STAGING,
             UploadKind::Skin => super::skins::STAGING,
             UploadKind::Brain => super::brain_store::STAGING,
+            UploadKind::Photo => PHOTO_STAGING,
         }
     }
 
     fn begin(&mut self, vfs: &mut Vfs, id: &str, kind: UploadKind) -> Result<String, String> {
+        self.completed_photo = None;
         if !id_is_valid(id) {
             return Err(format!("bad id {id}"));
         }
         if kind == UploadKind::App {
             super::uninstall::ensure_ready(vfs, id)?;
+        }
+        if kind == UploadKind::Photo {
+            super::uninstall::ensure_ready(vfs, "album_app")?;
         }
         if kind == UploadKind::Skin && id == "default" {
             return Err("reserved skin id default".into());
@@ -379,12 +411,16 @@ impl Session {
     }
 
     fn file(&mut self, vfs: &mut Vfs, rel: &str, size: &str, crc: &str) -> Result<(), String> {
+        self.completed_photo = None;
         let id = self.staging.as_deref().ok_or("file before begin")?;
         if vfs.stat(&format!("{}/{id}", self.staging_root())).is_err() {
             return Err("staging invalidated".into());
         }
         let size: u32 = size.parse().map_err(|_| format!("bad size {size}"))?;
         let want = u32::from_str_radix(crc, 16).map_err(|_| format!("bad crc {crc}"))?;
+        if self.kind == UploadKind::Photo && (!photo_path_is_safe(rel) || size == 0) {
+            return Err("photo upload requires a nonempty JPG/JPEG/PNG/BIN file".into());
+        }
         if self.kind == UploadKind::Brain
             && (rel != "source.lua"
                 || size == 0
@@ -415,6 +451,39 @@ impl Session {
             failed: None,
         });
         Ok(())
+    }
+
+    fn commit_photo(&mut self, vfs: &mut Vfs, rel: &str) -> Result<String, String> {
+        if self.kind != UploadKind::Photo || self.staging.as_deref() != Some("photo") {
+            return Err("photo-commit: not staged".into());
+        }
+        if !photo_path_is_safe(rel) {
+            return Err("invalid photo path".into());
+        }
+        // A stale file is insufficient evidence: failed-transfer cleanup can
+        // itself fail. Only this session's successfully synced CRC may publish.
+        if self.completed_photo.as_deref() != Some(rel) {
+            return Err("photo is missing or transfer failed".into());
+        }
+        super::uninstall::ensure_ready(vfs, "album_app")?;
+        let source = format!("{PHOTO_STAGING}/photo/{rel}");
+        match vfs.stat(&source) {
+            Ok(meta) if meta.kind == Kind::File && meta.size > 0 => {}
+            _ => return Err("photo is missing or transfer failed".into()),
+        }
+        let target = format!("{PHOTO_ROOT}/{rel}");
+        let parent = target.rsplit_once('/').expect("photo parent").0;
+        vfs.create_dir_all(parent)
+            .map_err(|e| format!("photo directory: {e}"))?;
+        // Successful file close synced its contents. Same-filesystem rename
+        // publishes the complete image atomically and preserves the old image
+        // on failure. Clearing album data also removes this staging tree.
+        vfs.rename(&source, &target)
+            .map_err(|e| format!("photo commit: {e}"))?;
+        self.staging = None;
+        self.completed_photo = None;
+        let _ = vfs.remove_tree(PHOTO_STAGING);
+        Ok(format!("photo-commit {rel}"))
     }
 
     fn commit(
@@ -463,6 +532,15 @@ pub fn rel_is_safe(rel: &str) -> bool {
                 && !p.starts_with('.')
                 && p.bytes()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+        })
+}
+
+fn photo_path_is_safe(rel: &str) -> bool {
+    rel_is_safe(rel)
+        && rel.rsplit_once('.').is_some_and(|(_, ext)| {
+            ["jpg", "jpeg", "png", "bin"]
+                .iter()
+                .any(|known| ext.eq_ignore_ascii_case(known))
         })
 }
 
@@ -584,6 +662,139 @@ mod tests {
     fn crc32_matches_zlib() {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
         assert_eq!(crc32(b""), 0);
+    }
+
+    #[test]
+    fn photo_delivery_atomically_replaces_only_the_selected_album_file() {
+        for chunk in [1, 7, 64, 1024] {
+            let mut v = vfs();
+            v.create_dir_all(PHOTO_ROOT).unwrap();
+            v.write_file(&format!("{PHOTO_ROOT}/first.jpg"), b"old")
+                .unwrap();
+            v.write_file(&format!("{PHOTO_ROOT}/keep.bin"), b"keep")
+                .unwrap();
+            v.write_file("/data/legacy.jpg", b"legacy").unwrap();
+            let mut s = Session::new();
+            let mut input = b"@mosaico photo-begin\n".to_vec();
+            input.extend(file_cmd("first.jpg", b"replacement\0pixels"));
+            let r = replies(&run(&mut v, &mut s, &input, chunk));
+            assert_eq!(r.last().unwrap(), "@ok file first.jpg");
+            assert_eq!(
+                v.read_file(&format!("{PHOTO_ROOT}/first.jpg")).unwrap(),
+                b"old"
+            );
+            let r = replies(&run(
+                &mut v,
+                &mut s,
+                b"@mosaico photo-commit first.jpg\n",
+                chunk,
+            ));
+            assert_eq!(r, ["@ok photo-commit first.jpg"]);
+            assert_eq!(
+                v.read_file(&format!("{PHOTO_ROOT}/first.jpg")).unwrap(),
+                b"replacement\0pixels"
+            );
+            assert_eq!(
+                v.read_file(&format!("{PHOTO_ROOT}/keep.bin")).unwrap(),
+                b"keep"
+            );
+            assert_eq!(v.read_file("/data/legacy.jpg").unwrap(), b"legacy");
+            assert!(v.stat(PHOTO_STAGING).is_err());
+            let r = replies(&run(
+                &mut v,
+                &mut s,
+                b"@mosaico photo-commit first.jpg\n",
+                chunk,
+            ));
+            assert!(r[0].contains("not staged"));
+        }
+    }
+
+    #[test]
+    fn failed_photo_crc_disconnect_and_album_clear_cannot_publish_partial_data() {
+        let mut v = vfs();
+        v.create_dir_all(PHOTO_ROOT).unwrap();
+        v.write_file(&format!("{PHOTO_ROOT}/first.jpg"), b"old")
+            .unwrap();
+        let mut s = Session::new();
+        let r = replies(&run(&mut v, &mut s, b"@mosaico photo-begin\n@mosaico file first.jpg 3 00000000\nnew@mosaico photo-commit first.jpg\n", 7));
+        assert!(r.iter().any(|r| r.contains("crc")));
+        assert!(r.last().unwrap().contains("transfer failed"));
+        // Model a failed unlink leaving bytes behind after a CRC error. A
+        // later commit must still require a successful transfer receipt.
+        v.write_file(&format!("{PHOTO_STAGING}/photo/first.jpg"), b"bad")
+            .unwrap();
+        let r = replies(&run(
+            &mut v,
+            &mut s,
+            b"@mosaico photo-commit first.jpg\n",
+            64,
+        ));
+        assert!(r[0].contains("transfer failed"));
+        assert_eq!(
+            v.read_file(&format!("{PHOTO_ROOT}/first.jpg")).unwrap(),
+            b"old"
+        );
+        run(
+            &mut v,
+            &mut s,
+            b"@mosaico photo-begin\n@mosaico file first.jpg 20 00000000\npartial",
+            7,
+        );
+        s.reset(&mut v);
+        assert!(v.stat(PHOTO_STAGING).is_err());
+        assert_eq!(
+            v.read_file(&format!("{PHOTO_ROOT}/first.jpg")).unwrap(),
+            b"old"
+        );
+        let mut input = b"@mosaico photo-begin\n".to_vec();
+        input.extend(file_cmd("dated/new.JPEG", b"complete"));
+        run(&mut v, &mut s, &input, 64);
+        // N7 clear-data removes appdata, including the live transfer's staging.
+        v.remove_tree("/data/appdata/album_app").unwrap();
+        let r = replies(&run(
+            &mut v,
+            &mut s,
+            b"@mosaico photo-commit dated/new.JPEG\n",
+            64,
+        ));
+        assert!(r[0].contains("transfer failed"));
+        assert!(v.stat("/data/appdata/album_app").is_err());
+    }
+
+    #[test]
+    fn photo_paths_kind_and_management_barrier_are_enforced() {
+        let mut v = vfs();
+        let mut s = Session::new();
+        run(&mut v, &mut s, b"@mosaico photo-begin\n", 64);
+        for path in ["../escape.jpg", "/data/other.jpg", "x.lua", "hidden/.x.jpg"] {
+            let r = replies(&run(
+                &mut v,
+                &mut s,
+                format!("@mosaico file {path} 1 00000000\n").as_bytes(),
+                64,
+            ));
+            assert!(r[0].starts_with("@err"), "{r:?}");
+        }
+        let r = replies(&run(
+            &mut v,
+            &mut s,
+            b"@mosaico commit photo\n@mosaico brain-commit\n",
+            64,
+        ));
+        assert!(r.iter().all(|r| r.starts_with("@err")));
+        s.set_management_busy(true);
+        let r = replies(&run(
+            &mut v,
+            &mut s,
+            b"@mosaico photo-begin\n@mosaico photo-commit x.jpg\n",
+            64,
+        ));
+        assert_eq!(r, ["@err app management busy", "@err app management busy"]);
+        s.set_management_busy(false);
+        v.create_dir_all("/data/apps/.clear/album_app").unwrap();
+        let r = replies(&run(&mut v, &mut s, b"@mosaico photo-begin\n", 64));
+        assert!(r[0].contains("pending recovery"));
     }
 
     #[test]

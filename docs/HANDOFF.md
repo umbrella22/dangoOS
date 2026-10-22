@@ -160,12 +160,14 @@ AI 长按使系统进入终态 Sleep，只有当前 Sleep 帧成功上传并显�
 及 release / ROM 检查通过。BIN 2,770,528 字节；未烧录。接口、启动时序、
 资源限制、USB 命令与指纹见 [N4_LUA_BRAIN.md](N4_LUA_BRAIN.md)。
 
-### N5. 让 album_app 跑起来
+### N5. 原版 album_app（代码与主机检查完成；真机待测）
 
-- 缺 `lvgl`、`image`、`thread`。LVGL 已经在固件里（`lvgl-ui`、`drivers/lvgl_port.rs`），主要是 Lua 绑定。
-- `image`：JPEG 已有 TJpgDec（软件）；esp-hal 不支持 S31 的硬件 JPEG。PNG 需要再 vendor 一个解码器（记得跑 ROM 符号检查）。
-- `thread`：官方语义是后台 worker；可以用第二个 VM + 消息队列实现，不共享 Lua 状态。
-- 验收：album_app 原样运行，浏览 `/data` 里的图片。
+已实现 JPEG/PNG 帧、JPEG 编码、UI task 原生 LVGL 服务及独立 worker VM。
+原版相册字节不变，读取 `/data/appdata/album_app/photos` 中的 JPG / JPEG / BIN；
+`photo-push` 提供 CRC 校验后的原子投递。PNG 与 worker 另有独立用例。
+347 项主机测试、25 项工具测试、11 个真实 LVGL 场景、48 次往返、像素对照与 worker
+资源释放验收通过。BIN 2987056 字节，3 MiB 槽剩 158672 字节；未烧录。
+接口、资源与兼容边界、收据见 [LUA-N5-RUNTIME.md](LUA-N5-RUNTIME.md)。
 
 ### N6. A/B 分区与 OTA（方案已定，未动手）
 

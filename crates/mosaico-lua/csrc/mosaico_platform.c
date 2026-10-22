@@ -179,18 +179,6 @@ esp_err_t display_service_session_get_touch_snapshot(display_service_session_han
 
 /* ---- image (not available yet) ---------------------------------------- */
 
-esp_err_t lua_image_require_format(lua_State *L, int index, lua_image_format_t format, lua_image_view_t *view)
-{
-    (void)L; (void)index; (void)format;
-    if (view) memset(view, 0, sizeof(*view));
-    return ESP_ERR_NOT_SUPPORTED;
-}
-
-void lua_image_release_view(lua_image_view_t *view)
-{
-    (void)view;
-}
-
 /* ---- cap_lua ---------------------------------------------------------- */
 
 #define MAX_MODULES 16
@@ -560,6 +548,11 @@ void mosaico_platform_preload(lua_State *L)
     }
     luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);
     for (size_t i = 0; i < s_module_count; ++i) preload(L, s_modules[i].name, s_modules[i].open);
+    preload(L,"image",luaopen_image);
+    extern int luaopen_lvgl(lua_State*);
+    preload(L,"lvgl",luaopen_lvgl);
+    extern int luaopen_thread(lua_State*);
+    preload(L,"thread",luaopen_thread);
     mosaico_hardware_preload(L);
     lua_pop(L, 1);
 }

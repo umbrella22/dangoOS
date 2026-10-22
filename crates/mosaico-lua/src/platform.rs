@@ -93,10 +93,10 @@ pub mod caps {
 
 // ---- current context -------------------------------------------------------
 
-#[cfg(not(test))]
+#[cfg(target_os = "none")]
 static CURRENT: AtomicPtr<Ctx> = AtomicPtr::new(ptr::null_mut());
 
-#[cfg(test)]
+#[cfg(not(target_os = "none"))]
 std::thread_local! {
     static CURRENT: core::cell::Cell<*mut Ctx> = const { core::cell::Cell::new(ptr::null_mut()) };
 }
@@ -117,20 +117,20 @@ impl Drop for Enter {
 }
 
 fn swap_current(ctx: *mut Ctx) -> *mut Ctx {
-    #[cfg(not(test))]
+    #[cfg(target_os = "none")]
     {
         CURRENT.swap(ctx, Ordering::AcqRel)
     }
-    #[cfg(test)]
+    #[cfg(not(target_os = "none"))]
     {
         CURRENT.with(|c| c.replace(ctx))
     }
 }
 
-fn current() -> Option<&'static mut Ctx> {
-    #[cfg(not(test))]
+pub(crate) fn current() -> Option<&'static mut Ctx> {
+    #[cfg(target_os = "none")]
     let p = CURRENT.load(Ordering::Acquire);
-    #[cfg(test)]
+    #[cfg(not(target_os = "none"))]
     let p = CURRENT.with(|c| c.get());
     unsafe { p.as_mut() }
 }
@@ -287,6 +287,9 @@ unsafe extern "C" fn mosaico_host_display_open(out: *mut CDisplayInfo) -> c_int 
     let Some(ctx) = current() else {
         return esp_err::INVALID_STATE;
     };
+    if !ctx.ui_allowed || ctx.ui_owned {
+        return esp_err::INVALID_STATE;
+    }
     match ctx.host.display_open() {
         Ok(info) => {
             write_info(out, info);

@@ -361,3 +361,14 @@ void mosaico_lua_exit(lua_State *L) {
   lua_pushcfunction(L, exit_impl);
   if (lua_pcall(L, 0, 0, 0) != LUA_OK) lua_pop(L, 1);
 }
+
+/* Workers have no native resource handles. This is called before their first
+ * instruction; bounded close may then skip arbitrary script finalizers safely. */
+int mosaico_lua_worker_restrict(lua_State *L) {
+  static const char source[] =
+    "local original=require; local allowed={_G=true,coroutine=true,table=true,string=true,math=true,utf8=true,json=true,delay=true,thread=true,_thread=true};"
+    "require=function(name) if not allowed[name] then error('module unavailable in worker: '..tostring(name),2) end return original(name) end;"
+    "package=nil;debug=nil;io=nil;os=nil;loadfile=nil;dofile=nil;_lvgl=nil;";
+  if(luaL_loadbufferx(L,source,sizeof(source)-1,"=worker-capabilities","t")!=LUA_OK)return LUA_ERRRUN;
+  return lua_pcall(L,0,0,0);
+}

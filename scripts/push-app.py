@@ -7,6 +7,7 @@
     scripts/push-app.py skin-push <skin-dir> [--select] [--follow]
     scripts/push-app.py skin-select <id> | skin-rm <id> | skin-ls
     scripts/push-app.py brain-push <script.lua> | brain-reload | brain-default | brain-status
+    scripts/push-app.py photo-push <image> [--name subdir/name.jpg] [--run]
 
 <app-dir> holds launcher.json and the files it names; everything except
 dotfiles is sent. The firmware stages the files, swaps them in as
@@ -197,10 +198,48 @@ def push_brain(dev, data):
     print(f"{line}; {len(data)} B crc={zlib.crc32(data):08x}")
 
 
+def read_photo(path, name=None):
+    rel = name if name is not None else os.path.basename(path)
+    parts = rel.split("/")
+    if len(parts) > 6 or not all(SAFE_PART.fullmatch(p) for p in parts):
+        raise SystemExit("photo name must use [A-Za-z0-9._-], at most 6 levels")
+    if os.path.splitext(rel)[1].lower() not in (".jpg", ".jpeg", ".png", ".bin"):
+        raise SystemExit("photo must be JPG, JPEG, PNG or LVGL BIN")
+    with open(path, "rb") as f:
+        data = f.read(FILE_MAX + 1)
+    if not 0 < len(data) <= FILE_MAX:
+        raise SystemExit(f"photo must contain 1..{FILE_MAX} bytes")
+    return rel, data
+
+
+def push_photo(dev, rel, data, run=False):
+    dev.command("hello")
+    dev.command("photo-begin")
+    try:
+        dev.command(f"file {rel} {len(data)} {zlib.crc32(data):08x}")
+        dev.ser.write(data)
+        line = dev.reply(timeout=30.0)
+        if line != f"@ok file {rel}":
+            raise SystemExit(f"photo upload: {line}")
+        line = dev.command(f"photo-commit {rel}", timeout=30.0)
+        if line != f"@ok photo-commit {rel}":
+            raise SystemExit(f"photo commit: {line}")
+    except (SystemExit, OSError, serial.SerialException):
+        try:
+            dev.command("abort", check=False, timeout=2.0)
+        except (SystemExit, OSError, serial.SerialException):
+            pass
+        raise
+    print(f"{line}; {len(data)} B -> /data/appdata/album_app/photos/{rel}")
+    if run:
+        dev.command("run album_app")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status"])
-    ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id, or brain script file")
+    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push"])
+    ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id, brain script or photo file")
+    ap.add_argument("--name", help="photo path relative to Album photos (photo-push only)")
     ap.add_argument("--select", action="store_true", help="select after skin-push")
     ap.add_argument("--run", action="store_true", help="open the app after pushing")
     ap.add_argument("--follow", action="store_true", help="keep printing the device log")
@@ -208,7 +247,7 @@ def main():
     ap.add_argument("--verbose", "-v", action="store_true", help="print device log lines while waiting")
     args = ap.parse_args()
 
-    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push")
+    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
 
@@ -216,9 +255,14 @@ def main():
         ap.error("--select requires skin-push")
     if args.action in ("skin-select", "skin-rm") and not ID_RE.fullmatch(args.target):
         ap.error("invalid exact skin id")
+    if args.name is not None and args.action != "photo-push":
+        ap.error("--name requires photo-push")
     brain_data = read_brain(args.target) if args.action == "brain-push" else None
+    photo = read_photo(args.target, args.name) if args.action == "photo-push" else None
     dev = Device(args.port or default_port(), args.verbose)
-    if args.action == "brain-push":
+    if args.action == "photo-push":
+        push_photo(dev, *photo, run=args.run)
+    elif args.action == "brain-push":
         push_brain(dev, brain_data)
     elif args.action in ("brain-reload", "brain-default", "brain-status"):
         print(dev.command(args.action, timeout=30.0))

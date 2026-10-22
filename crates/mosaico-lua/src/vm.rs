@@ -177,7 +177,16 @@ struct Heap {
 
 pub(crate) struct Ctx {
     pub(crate) data_root: Vec<u8>,
+    pub(crate) ui_allowed: bool,
+    pub(crate) ui_owned: bool,
+    pub(crate) ui_waiting: Option<String>,
+    pub(crate) ui_command: Option<crate::ui::UiCommand>,
+    pub(crate) ui_reply: Option<Result<crate::ui::UiReply, String>>,
     bounded: bool,
+    pub(crate) worker_command: Option<crate::workers::Command>,
+    pub(crate) worker_reply: Option<crate::workers::Reply>,
+    pub(crate) worker_waiting: bool,
+    worker_mode: bool,
     callback_hooks_left: u32,
     callback_deadline: Option<u64>,
     abort_guard: *mut c_void,
@@ -202,12 +211,20 @@ enum State {
     Finished,
 }
 
+impl Ctx {
+    pub(crate) fn bounded_worker_api(&self) -> bool {
+        self.bounded && !self.worker_mode
+    }
+}
+
 pub struct Vm {
     main: *mut lua_State,
     thread: *mut lua_State,
-    ctx: *mut Ctx,
+    pub(crate) ctx: *mut Ctx,
     heap: *mut Heap,
     state: State,
+    pub(crate) workers: Option<Box<crate::workers::Group>>,
+    pub(crate) worker_child: bool,
 }
 
 const ALIGN: usize = 8;
@@ -298,8 +315,17 @@ impl Vm {
             .position(|&b| b == 0)
             .expect("validated root");
         let ctx = Box::into_raw(Box::new(Ctx {
+            ui_allowed: true,
+            ui_owned: false,
+            ui_waiting: None,
+            ui_command: None,
+            ui_reply: None,
             data_root: default_root[..=root_len].to_vec(),
             bounded: false,
+            worker_command: None,
+            worker_reply: None,
+            worker_waiting: false,
+            worker_mode: false,
             callback_hooks_left: 0,
             callback_deadline: None,
             abort_guard: ptr::null_mut(),
@@ -329,6 +355,8 @@ impl Vm {
                 ctx,
                 heap,
                 state: State::Fresh,
+                workers: None,
+                worker_child: false,
             };
             mosaico_lua_set_ctx(main, ctx.cast());
             let _enter = Enter::new(ctx);
@@ -343,6 +371,8 @@ impl Vm {
             (*ctx).thread = thread;
             let interval = limits.hook_interval.clamp(1, i32::MAX as u32) as c_int;
             mosaico_lua_install_hook(thread, interval);
+            crate::ui::register(&mut vm)?;
+            crate::workers::register(&mut vm)?;
             Ok(vm)
         }
     }
@@ -442,6 +472,47 @@ impl Vm {
 
     /// Runs the script until its slice ends, it waits, finishes or fails.
     pub fn resume(&mut self) -> Step {
+        self.poll_workers();
+        if unsafe { (*self.ctx).worker_waiting } {
+            return Step::Slice;
+        }
+        let step = self.resume_without_workers();
+        if step == Step::Request(Request::Host(crate::workers::REQUEST)) && !self.worker_child {
+            self.handle_worker_command();
+            return Step::Slice;
+        }
+        if matches!(step, Step::Done | Step::Interrupted | Step::Error(_)) {
+            self.workers = None;
+        }
+        step
+    }
+    pub(crate) fn restrict_worker(&mut self) -> Result<(), String> {
+        unsafe extern "C" {
+            fn mosaico_lua_worker_restrict(l: *mut lua_State) -> c_int;
+        }
+        let _enter = Enter::new(self.ctx);
+        if unsafe { mosaico_lua_worker_restrict(self.main) } != LUA_OK {
+            return Err(unsafe { self.pop_message(self.main) });
+        }
+        unsafe {
+            (*self.ctx).worker_mode = true;
+        }
+        self.worker_child = true;
+        self.disable_ui();
+        self.set_callback_budget(1000, 500_000);
+        Ok(())
+    }
+    pub(crate) fn worker_settings(&self) -> (Limits, &'static RawAllocator, String) {
+        unsafe {
+            let ctx = &*self.ctx;
+            (
+                ctx.limits,
+                (*self.heap).allocator,
+                String::from_utf8_lossy(&ctx.data_root[..ctx.data_root.len() - 1]).into_owned(),
+            )
+        }
+    }
+    pub(crate) fn resume_without_workers(&mut self) -> Step {
         if self.state != State::Loaded {
             return Step::Done;
         }
@@ -507,6 +578,10 @@ impl Vm {
     /// [`Step::Interrupted`]. `pcall` in the script cannot catch this when
     /// the script can be yielded (the coroutine is abandoned instead).
     pub fn interrupt(&mut self) {
+        self.workers = None;
+        unsafe {
+            (*self.ctx).worker_waiting = false;
+        }
         unsafe { (*self.ctx).interrupt = true };
     }
 
@@ -795,4 +870,43 @@ unsafe extern "C" fn mosaico_lua_swap_abort_guard(
 #[no_mangle]
 unsafe extern "C" fn mosaico_lua_abort_guard(ctx: *mut c_void) -> *mut c_void {
     (*(ctx as *mut Ctx)).abort_guard
+}
+
+// Image/PNG buffers share the current VM allocation ledger. The allocation
+// header preserves ownership for realloc/free even when another VM is current.
+#[repr(C, align(8))]
+struct ImageAllocation {
+    heap: *const Heap,
+    bytes: usize,
+}
+#[no_mangle]
+unsafe extern "C" fn mosaico_image_realloc(data: *mut c_void, size: usize) -> *mut c_void {
+    let header = core::mem::size_of::<ImageAllocation>();
+    let (heap, old, base) = if data.is_null() {
+        let Some(ctx) = crate::platform::current() else {
+            return ptr::null_mut();
+        };
+        (ctx.heap, 0, ptr::null_mut())
+    } else {
+        let base = data.cast::<u8>().sub(header).cast::<ImageAllocation>();
+        ((*base).heap, (*base).bytes, base.cast())
+    };
+    let Some(total) = size.checked_add(header) else {
+        return ptr::null_mut();
+    };
+    let result = lua_alloc(
+        heap.cast_mut().cast(),
+        base,
+        old,
+        if size == 0 { 0 } else { total },
+    );
+    if result.is_null() {
+        return result;
+    }
+    if result != base {
+        result
+            .cast::<ImageAllocation>()
+            .write(ImageAllocation { heap, bytes: total });
+    }
+    result.cast::<u8>().add(header).cast()
 }

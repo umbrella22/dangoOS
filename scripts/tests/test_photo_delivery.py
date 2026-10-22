@@ -1,0 +1,67 @@
+"""Photo delivery uses the actual CLI against a bounded fake USB reply stream."""
+import contextlib
+import io
+from pathlib import Path
+import sys
+import tempfile
+import types
+import unittest
+from unittest.mock import patch
+import zlib
+from test_n1_device_session import FakeSerial, session
+
+
+class PhotoDeliveryTest(unittest.TestCase):
+    def setUp(self):
+        self.serial = patch.dict(sys.modules, serial=types.SimpleNamespace(Serial=FakeSerial, SerialException=OSError))
+        self.serial.start()
+        self.addCleanup(self.serial.stop)
+        FakeSerial.instances = []
+        FakeSerial.replies = []
+        self.api = session.load_api()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "photo.jpg"
+        self.data = b"\xff\xd8binary\0pixels\xff\xd9"
+        self.path.write_bytes(self.data)
+
+    def run_cli(self, *args):
+        with patch.object(sys, "argv", ["push-app.py", *args, "--port", "fake"]):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.api.main()
+        return out.getvalue()
+
+    def test_bytes_nested_name_commit_and_optional_album_run(self):
+        name = "2026/photo.JPEG"
+        FakeSerial.replies = [b"@ok hello mosaico-push 1\n", b"@ok photo-begin\n", f"@ok ready {name}\n".encode(), f"@ok file {name}\n".encode(), f"@ok photo-commit {name}\n".encode(), b"@ok run album_app\n"]
+        result = self.run_cli("photo-push", str(self.path), "--name", name, "--run")
+        self.assertIn("/data/appdata/album_app/photos/2026/photo.JPEG", result)
+        self.assertEqual(FakeSerial.instances[0].writes, [b"@mosaico hello\n", b"@mosaico photo-begin\n", f"@mosaico file {name} {len(self.data)} {zlib.crc32(self.data):08x}\n".encode(), self.data, f"@mosaico photo-commit {name}\n".encode(), b"@mosaico run album_app\n"])
+
+    def test_bad_local_file_or_path_rejected_before_connection(self):
+        for name in ["../outside.jpg", "/other.jpg", ".hidden.jpg", "x.lua", "a b.jpg", "a\n.jpg", "a/" * 6 + "x.jpg"]:
+            with self.assertRaises(SystemExit):
+                self.run_cli("photo-push", str(self.path), "--name", name)
+        for data in [b"", b"x" * (1024 * 1024 + 1)]:
+            self.path.write_bytes(data)
+            with self.assertRaises(SystemExit):
+                self.run_cli("photo-push", str(self.path))
+        self.assertFalse(FakeSerial.instances)
+
+    def test_failed_crc_aborts_without_commit_or_launch(self):
+        FakeSerial.replies = [b"@ok hello\n", b"@ok photo-begin\n", b"@ok ready photo.jpg\n", b"@err file photo.jpg: crc mismatch\n", b"@ok abort\n"]
+        with self.assertRaisesRegex(SystemExit, "crc mismatch"):
+            self.run_cli("photo-push", str(self.path), "--run")
+        writes = FakeSerial.instances[0].writes
+        self.assertEqual(writes[-1], b"@mosaico abort\n")
+        self.assertFalse(any(b"photo-commit" in w or b"run album_app" in w for w in writes))
+
+    def test_failed_rename_is_not_reported_as_completed_or_launched(self):
+        FakeSerial.replies = [b"@ok hello\n", b"@ok photo-begin\n", b"@ok ready photo.jpg\n", b"@ok file photo.jpg\n", b"@err photo commit: no space\n", b"@ok abort\n"]
+        with self.assertRaisesRegex(SystemExit, "no space"):
+            self.run_cli("photo-push", str(self.path), "--run")
+        self.assertNotIn(b"@mosaico run album_app\n", FakeSerial.instances[0].writes)
+
+
+if __name__ == "__main__":
+    unittest.main()

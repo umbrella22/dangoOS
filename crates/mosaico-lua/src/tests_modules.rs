@@ -2,7 +2,12 @@
 //! contract, delay/system/os/json/arg_schema, and the Snake and 2048 apps
 //! from esp-claw-skills-lab running unchanged.
 
-use alloc::{boxed::Box, string::String, vec, vec::Vec};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use core::cell::Cell;
 use std::sync::Mutex;
 
@@ -576,4 +581,142 @@ fn hardware_probe_draws_unavailable_hardware_without_output_side_effects() {
     assert!(s.frame.contains(&0x07e0), "opaque green text was drawn");
     assert!(s.frame.contains(&0xffff), "opaque white title was drawn");
     assert!(!s.open, "example closes display");
+}
+
+#[test]
+fn image_png_jpeg_frames_resize_release_and_caps() {
+    let mut vm = vm();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/n5-images");
+    let source = alloc::format!(
+        r#"
+        local image=require('image')
+        local dir='{}/'
+        local frame <close> = image.load_file(dir..'pixels.png')
+        local info=frame:info();assert(info.width==3 and info.height==2 and info.pixel_format=='RGB3')
+        assert(frame:data()==string.char(255,0,0,0,255,0,0,0,255,255,255,255,0,0,0,255,255,0))
+        local tiny <close> = image.resize(frame,{{width=3,height=2,filter='nearest'}})
+        assert(tiny:data()==string.char(0,248,224,7,31,0,255,255,0,0,224,255))
+        frame:release();assert(not frame:info().valid)
+        assert(not pcall(frame.data,frame));assert(#tiny:data()==12)
+        local alpha <close> = image.load_file(dir..'alpha.png')
+        assert(alpha:data()==string.char(255,0,0,0,128,0,0,0,0,64,64,64,0,0,0,192,192,0))
+        for _,name in ipairs({{'orientation.jpg','grayscale.jpeg'}}) do
+            local jpg <close> = image.load_file(dir..name)
+            assert(jpg:info().pixel_format=='JPEG')
+            local small <close> = image.resize(jpg,{{width=8,height=8,filter='bilinear'}})
+            assert(small:info().pixel_format=='RGBP' and #small:data()==128)
+            local gray <close> = image.convert(small,image.GRAY8)
+            assert(#gray:data()==64)
+            local encoded <close> = image.convert(small,image.JPEG)
+            assert(encoded:info().pixel_format=='JPEG' and encoded:data():sub(1,2)==string.char(255,216))
+            local roundtrip <close> = image.convert(encoded,image.RGB888)
+            assert(#roundtrip:data()==8*8*3)
+            assert(not pcall(image.convert,small,4294967296))
+            assert(not pcall(image.resize,small,{{width=8,height=8,format=4294967296}}))
+            assert(not pcall(image.save_file,dir..'unsupported.png',encoded))
+        end
+        for _,name in ipairs({{'truncated.png','truncated.jpg','corrupt.jpg'}}) do
+            assert(not pcall(function()
+                local bad <close> = image.load_file(dir..name)
+                local decoded <close> = image.resize(bad,{{width=8,height=8}})
+            end))
+        end
+        assert(not pcall(image.resize,tiny,{{width=65535,height=65535}}))
+        collectgarbage('collect')
+    "#,
+        dir.display()
+    );
+    assert_eq!(run_src(&mut vm, &source).step, Step::Done);
+    assert!(vm.memory_used() < limits().memory_bytes);
+}
+
+#[test]
+fn independent_workers_upstream_thread_contract() {
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/n5-thread");
+    for case in [
+        "api",
+        "run_args",
+        "full_flow",
+        "job_named_replace",
+        "job_exclusive",
+        "queue_semantics",
+        "semaphore_counting",
+        "lock_contention",
+        "stop_queue",
+        "stop_lock",
+        "invalid_args_opts",
+        "sync_errors",
+        "stability_cycles",
+        "concurrency",
+    ] {
+        let mut vm = vm();
+        vm.set_args_json(
+            &serde_json::json!({"base":base.to_str().unwrap(),"case":case}).to_string(),
+        )
+        .unwrap();
+        vm.load_file(base.join("harness.lua").to_str().unwrap(), &[])
+            .unwrap();
+        let mut done = false;
+        for _ in 0..200_000 {
+            match vm.resume() {
+                Step::Slice => {}
+                Step::Request(Request::Sleep { ms }) => {
+                    for _ in 0..ms {
+                        advance_ms(1);
+                        vm.poll_workers();
+                    }
+                }
+                Step::Done => {
+                    done = true;
+                    break;
+                }
+                e => panic!(
+                    "thread case {case}: {e:?}; logs {:?}",
+                    screen(&mut vm).lines
+                ),
+            }
+        }
+        assert!(done, "case {case} did not finish");
+        assert!(
+            screen(&mut vm)
+                .lines
+                .iter()
+                .any(|s| s == &alloc::format!("case {case} ok")),
+            "missing completion for {case}"
+        );
+    }
+}
+
+#[test]
+fn workers_are_isolated_bounded_and_parent_interrupt_releases_group() {
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/n5-thread");
+    let path = base.join("hostile_worker.lua");
+    let mut vm = vm();
+    vm.set_args_json(&serde_json::json!({"path":path.to_str().unwrap()}).to_string())
+        .unwrap();
+    vm.load(
+        "worker-owner.lua",
+        br#"
+        PARENT_SECRET='not inherited'
+        local t=require('thread');local s=t.sync
+        assert(s.lock_create('owner_lock'));assert(s.queue_create('ready',{depth=1,item_size=32}))
+        assert(t.start(args.path,{nested={value=42},flag=true},{name='hostile',timeout_ms=0}))
+        assert(s.queue_recv('ready',1000)=='ready\0binary')
+        local ok,err=s.unlock('owner_lock');assert(ok==false and err=='not_owner')
+        local ok,err=s.lock_delete('owner_lock');assert(ok==nil and err=='busy')
+        assert(t.stop('hostile',1000));assert(s.lock('owner_lock',0));assert(s.unlock('owner_lock'))
+        assert(s.lock_delete('owner_lock'));assert(s.queue_delete('ready'))
+        assert(s.queue_create('pending'));local msg,err=s.queue_recv('pending',100000)
+        error('interrupted wait returned unexpectedly: '..tostring(err))
+    "#,
+    )
+    .unwrap();
+    for _ in 0..5000 {
+        let step = vm.resume();
+        assert!(matches!(step, Step::Slice), "{step:?}");
+        advance_ms(1);
+    }
+    vm.interrupt();
+    let out = drive(&mut vm, u32::MAX);
+    assert_eq!(out.step, Step::Interrupted);
 }

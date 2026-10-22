@@ -14,7 +14,7 @@
 extern crate alloc;
 // Links newlib and the file syscalls (see mosaico-fs/build.rs).
 extern crate mosaico_fs;
-#[cfg(test)]
+#[cfg(not(target_os = "none"))]
 extern crate std;
 
 mod call;
@@ -24,6 +24,8 @@ pub use hardware::{ButtonEdge, HapticPreset, HardwareRequest, HardwareSnapshot, 
 pub mod jpeg;
 mod platform;
 mod vm;
+pub mod ui;
+mod workers;
 
 pub use call::{Call, Error, Function, Ret};
 pub use platform::{caps, esp_err, platform_bytes, Blit, DisplayInfo, HeapInfo, TouchPoint};

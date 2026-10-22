@@ -135,6 +135,24 @@ fn main() {
         "0}};\nconst size_t mosaico_arg_schema_lua_len = {};\n",
         src.len()
     ));
+    let lvgl = std::fs::read(root.join("csrc/lvgl.lua")).unwrap();
+    c.push_str("const char mosaico_lvgl_lua[] = {");
+    for b in &lvgl {
+        c.push_str(&format!("{b},"));
+    }
+    c.push_str(&format!(
+        "0}};\nconst size_t mosaico_lvgl_lua_len = {};\n",
+        lvgl.len()
+    ));
+    let thread = std::fs::read(root.join("csrc/thread.lua")).unwrap();
+    c.push_str("const char mosaico_thread_lua[] = {");
+    for b in &thread {
+        c.push_str(&format!("{b},"));
+    }
+    c.push_str(&format!(
+        "0}};\nconst size_t mosaico_thread_lua_len = {};\n",
+        thread.len()
+    ));
     // A shared local scope plus one private block per module. Sources stay
     // small and reviewable, while device builds need no filesystem loader.
     let mut hardware = Vec::new();
@@ -170,11 +188,39 @@ fn main() {
         .include(root.join("vendor/tjpgd-r0.03"))
         .file(root.join("vendor/tjpgd-r0.03/tjpgd.c"))
         .file(root.join("csrc/mosaico_jpeg.c"));
+    // Private LodePNG symbols prevent collisions with LVGL's optional decoder.
+    let png = root.join("vendor/lodepng");
+    let source = std::fs::read_to_string(png.join("lodepng.c")).unwrap();
+    let header = std::fs::read_to_string(png.join("lodepng.h")).unwrap();
+    let mut names = std::collections::BTreeSet::new();
+    for token in source
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .chain(header.split(|c: char| !c.is_ascii_alphanumeric() && c != '_'))
+    {
+        if token.starts_with("lodepng_") {
+            names.insert(token.to_string());
+        }
+    }
+    for name in names {
+        modules.define(&name, format!("mosaico_{name}").as_str());
+    }
+    modules
+        .define("LODEPNG_VERSION_STRING", "MOSAICO_LODEPNG_VERSION_STRING")
+        .define("LODEPNG_NO_COMPILE_ALLOCATORS", None)
+        .define("LODEPNG_NO_COMPILE_DISK", None)
+        .define("LODEPNG_NO_COMPILE_CPP", None)
+        .include(&png)
+        .include(root.join("vendor/stb"))
+        .file(png.join("lodepng.c"))
+        .file(root.join("csrc/mosaico_image.c"))
+        .file(root.join("csrc/mosaico_lvgl.c"));
     modules.compile("mosaico_lua_modules");
 
     // newlib (libc/libm/libgcc) is linked by mosaico-fs, after its syscalls,
     // so the linker resolves `_open_r` & co. there rather than to newlib's
     // own stubs.
+    println!("cargo:rerun-if-changed=vendor/lodepng");
+    println!("cargo:rerun-if-changed=vendor/stb");
     println!("cargo:rerun-if-changed=csrc");
     println!("cargo:rerun-if-changed={LUA_DIR}");
 }

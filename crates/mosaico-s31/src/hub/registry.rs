@@ -17,7 +17,7 @@
 //! are skipped, like the official launcher does.
 //!
 //! On top of that the entry script is checked for modules this firmware does
-//! not have (`lvgl`, `image`, `thread`, ...): such apps are listed but marked
+//! not have (for example network-only modules): such apps are listed but marked
 //! unavailable instead of failing on start.
 
 use alloc::{boxed::Box, format, string::String, vec::Vec};
@@ -50,7 +50,7 @@ pub const ICON_BOX: u16 = 96;
 
 /// Modules every app gets: the Lua standard libraries and the esp-claw
 /// modules `mosaico-lua` provides.
-pub const PROVIDED_MODULES: [&str; 22] = [
+pub const PROVIDED_MODULES: [&str; 25] = [
     "string",
     "table",
     "math",
@@ -61,6 +61,9 @@ pub const PROVIDED_MODULES: [&str; 22] = [
     "debug",
     "package",
     "display",
+    "image",
+    "lvgl",
+    "thread",
     "delay",
     "system",
     "json",
@@ -669,16 +672,16 @@ mod tests {
     fn module_check_sees_hard_requires_only() {
         let src = r#"
             local display = require("display")
-            local lvgl, storage = require("lvgl"), require 'storage'
+            local net, storage = require("net"), require 'storage'
             local ok, button = pcall(require, "button")
             -- local net = require("net")
             local helper = require("helper")
             print("require(button) failed")
             local x = my_require("thing")
-            local again = require("lvgl")
+            local again = require("net")
         "#;
         let missing = missing_modules(src, &mut |m| m == "helper");
-        assert_eq!(missing, ["lvgl"]);
+        assert_eq!(missing, ["net"]);
     }
 
     #[test]
@@ -758,7 +761,7 @@ mod tests {
         let ids: Vec<&str> = reg.apps.iter().map(|a| a.app.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["oled", "dino", "game_2048", "snake", "album"],
+            ["oled", "dino", "album", "game_2048", "snake"],
             "{logs:?}"
         );
         let dino = &reg.apps[reg.find("dino").unwrap()];
@@ -768,8 +771,8 @@ mod tests {
             LuaSource::File("/data/apps/dino/scripts/main.lua".into())
         );
         let album = &reg.apps[reg.find("album").unwrap()];
-        assert_eq!(album.missing, ["lvgl", "image"]);
-        assert!(!album.runnable() && reg.apps[0].runnable());
+        assert!(album.missing.is_empty());
+        assert!(album.runnable() && reg.apps[0].runnable());
         let snake = &reg.apps[reg.find("snake").unwrap()];
         assert_eq!(
             (snake.title.as_str(), snake.origin),
@@ -860,7 +863,7 @@ mod tests {
         assert!(get("dino").runnable() && get("flappybird").runnable());
         assert_eq!(get("flappybird").title, "Flappy Bird");
         assert!(get("dino").icon.is_some());
-        assert!(get("album_app").missing.contains(&String::from("lvgl")));
+        assert!(get("album_app").runnable());
         assert!(!get("app_store").runnable());
         std::println!(
             "{:?}",

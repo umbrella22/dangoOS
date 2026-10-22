@@ -1,0 +1,12 @@
+{
+  "file": "orientation-rgb565.bin",
+  "bytes": 12300,
+  "sha256": "2ffb531dd6989e6ab4b6810ac563bdd5247fe18ce981b2a74f65c0c3a7c72020",
+  "width": 96,
+  "height": 64,
+  "stride": 192,
+  "format": "LVGL v9 uncompressed RGB565LE (magic 0x19, color format 0x12)",
+  "source_pixels": "orientation-pillow.png",
+  "header_reference": "rs_lvgl_sys/vendor/lvgl-9.6/include/lvgl/draw/lv_image_dsc.h",
+  "expected": "same top-left/top-right/bottom-left/bottom-right colors and marker orientation as JPEG oracle, with RGB565 quantization"
+}

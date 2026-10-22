@@ -1420,6 +1420,7 @@ dependencies = [
  "cc",
  "critical-section",
  "mosaico-fs",
+ "serde_json",
 ]
 
 [[package]]

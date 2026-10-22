@@ -52,3 +52,5 @@ pub(crate) mod test_support {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
+
+pub mod lua_lvgl;
