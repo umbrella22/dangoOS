@@ -308,7 +308,15 @@ impl DeviceUpdater {
                 updater.begin(size, sha)?;
                 ACTIVE.store(true, Ordering::Release);
                 self.old_haptic = tasks::haptic::enabled();
-                tasks::haptic::set_enabled(false);
+                match embassy_futures::select::select(
+                    tasks::haptic::quiesce(),
+                    Timer::after_secs(5),
+                )
+                .await
+                {
+                    embassy_futures::select::Either::First(()) => {}
+                    _ => return Err(Error::Busy),
+                }
                 match embassy_futures::select::select(tasks::lua::quiesce(), Timer::after_secs(5))
                     .await
                 {

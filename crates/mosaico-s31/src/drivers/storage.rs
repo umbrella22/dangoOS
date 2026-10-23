@@ -14,7 +14,8 @@
 //! critical section) rather than `FlashStorage`: on the ESP32-S31 its flash
 //! size detection does not give a usable size, so every bounds-checked read
 //! failed. The size comes from the bootloader image header (at 0x2000 on the
-//! S31, 0 on older chips), or else from the end of the partition table.
+//! S31, 0 on older chips). Unknown headers/layouts are rejected; partition
+//! endpoints are not used to guess the capacity of an OTA-capable device.
 
 use alloc::boxed::Box;
 use core::cell::UnsafeCell;

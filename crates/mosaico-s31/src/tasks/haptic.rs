@@ -29,36 +29,51 @@
 //! workspace marks the S31 LEDC and MCPWM drivers as unsupported, so this
 //! module produces the same 5 kHz PWM with the RMT TX peripheral instead:
 //!
-//! - `Rmt::new(RMT, 1 MHz)` gives a 1 us tick.
+//! - The shared RMT runs at 10 MHz; this channel divides by 10 for a 1 us tick.
 //! - One [`PulseCode`] encodes a 200-tick period (5 kHz) with the pattern's
 //!   duty cycle.
 //! - `transmit_continuously(..., LoopMode::Infinite)` replays that period in
 //!   hardware while the task sleeps for the burst duration.
 //! - `stop()` returns the pin to its idle-low level between bursts.
 //!
-//! The task only wakes at burst/gap boundaries, never per PWM edge, so it
-//! cannot starve the UI or sensor tasks. If the RMT channel cannot be set up,
+//! The task wakes at burst/gap deadlines or request/cancellation notifications,
+//! never per PWM edge. If the RMT channel cannot be set up,
 //! `main` holds `GPIO8` low and haptics are disabled; no other task blocks.
 //!
 //! ## Priority and rate limit
 //!
 //! [`play`] replaces the pending pattern when the new priority is at least the
 //! pending one. `Error` (3) > `Panic` (2) > everything else (1). A running
-//! pattern is preempted between bursts when a strictly higher-priority request
+//! pattern is stopped early when a strictly higher-priority request
 //! arrives. Pattern starts are rate-limited to one per [`RATE_LIMIT_MS`]
 //! (150 ms); a request that arrives inside the window waits for it.
 
 #[cfg(feature = "haptic-diagnostics")]
 mod diagnostics;
+mod policy;
+use policy::{Policy, Request};
 
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, Ordering};
-static ENABLED: AtomicBool = AtomicBool::new(true);
 pub fn set_enabled(enabled: bool) {
-    ENABLED.store(enabled, Ordering::Release);
+    critical_section::with(|cs| POLICY.borrow_ref_mut(cs).set_enabled(enabled));
+    // Notification only: every waiter also checks the policy epoch/state.
+    WAKE.signal(());
 }
 pub fn enabled() -> bool {
-    ENABLED.load(Ordering::Acquire)
+    critical_section::with(|cs| POLICY.borrow_ref(cs).enabled())
+}
+/// Disable admission and wait for the task to acknowledge actual PWM stop.
+/// A failed peripheral stop deliberately never produces a silence receipt;
+/// callers must bound this wait and refuse the operation on timeout.
+pub async fn quiesce() {
+    set_enabled(false);
+    loop {
+        if critical_section::with(|cs| POLICY.borrow_ref(cs).quiescent()) {
+            return;
+        }
+        Timer::after_millis(1).await;
+    }
 }
 static READY: AtomicBool = AtomicBool::new(false);
 pub fn available() -> bool {
@@ -90,27 +105,18 @@ pub const RATE_LIMIT_MS: u64 = 150;
 const PWM_PERIOD_TICKS: u16 = 200;
 
 /// Pending request slot. `play` is callable from any task.
-static PENDING: CsMutex<RefCell<Option<HapticPattern>>> = CsMutex::new(RefCell::new(None));
+static POLICY: CsMutex<RefCell<Policy<HapticPattern>>> = CsMutex::new(RefCell::new(Policy::new()));
 /// Wakes the haptic task when a request is posted.
 static WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Request one pattern. Non-blocking and safe to call from the sensor/affect
-/// task. Returns whether the request was accepted (it is ignored only when a
-/// higher-priority pattern is already pending).
+/// task. Returns whether admission succeeded. Disabled/faulted output and a
+/// higher-priority pending pattern reject the request.
 ///
 /// The UI task calls this with each new `AffectTick::haptic`.
 pub fn play(pattern: HapticPattern) -> bool {
-    let accepted = critical_section::with(|cs| {
-        let mut pending = PENDING.borrow_ref_mut(cs);
-        let replace = match *pending {
-            None => true,
-            Some(current) => pattern.priority() >= current.priority(),
-        };
-        if replace {
-            *pending = Some(pattern);
-        }
-        replace
-    });
+    let accepted =
+        critical_section::with(|cs| POLICY.borrow_ref_mut(cs).post(pattern, pattern.priority()));
     if accepted {
         WAKE.signal(());
     }
@@ -218,7 +224,7 @@ pub async fn haptic_task(channel: HapticChannel) {
     info!("haptic_task: GPIO8 5 kHz RMT PWM, rate limit {RATE_LIMIT_MS} ms");
     let mut channel = Some(channel);
     let mut last_start_ms: Option<u64> = None;
-    let mut next_request: Option<HapticPattern> = None;
+    let mut next_request: Option<Request<HapticPattern>> = None;
 
     loop {
         let mut pattern = match next_request.take() {
@@ -226,25 +232,31 @@ pub async fn haptic_task(channel: HapticChannel) {
             None => wait_for_request().await,
         };
 
-        wait_for_rate_limit(last_start_ms).await;
+        if !wait_for_rate_limit(last_start_ms, pattern).await {
+            finish_request();
+            continue;
+        }
 
         // A request posted while waiting for the rate limit replaces the
         // selected pattern when its priority is at least as high.
         if let Some(pending) = peek_pending() {
-            if pending.priority() >= pattern.priority() {
+            if pending.priority >= pattern.priority {
                 pattern = take_pending().unwrap_or(pattern);
             }
         }
 
-        last_start_ms = Some(now_ms());
-        if let Some(preempting) = run_pattern(&mut channel, pattern).await {
-            next_request = Some(preempting);
+        if valid(pattern) {
+            last_start_ms = Some(now_ms());
+            next_request = run_pattern(&mut channel, pattern).await;
+        }
+        if next_request.is_none() {
+            finish_request();
         }
     }
 }
 
 /// Block until a request exists. `play` signals [`WAKE`] after storing it.
-async fn wait_for_request() -> HapticPattern {
+async fn wait_for_request() -> Request<HapticPattern> {
     loop {
         if let Some(pattern) = take_pending() {
             return pattern;
@@ -253,41 +265,52 @@ async fn wait_for_request() -> HapticPattern {
     }
 }
 
-fn take_pending() -> Option<HapticPattern> {
-    critical_section::with(|cs| PENDING.borrow_ref_mut(cs).take())
+fn take_pending() -> Option<Request<HapticPattern>> {
+    critical_section::with(|cs| POLICY.borrow_ref_mut(cs).take())
 }
-
-fn peek_pending() -> Option<HapticPattern> {
-    critical_section::with(|cs| *PENDING.borrow_ref(cs))
+fn peek_pending() -> Option<Request<HapticPattern>> {
+    critical_section::with(|cs| POLICY.borrow_ref(cs).peek())
 }
-
-/// Take the pending request only when it outranks `current`.
-fn take_if_higher(current: u8) -> Option<HapticPattern> {
+fn valid(request: Request<HapticPattern>) -> bool {
+    critical_section::with(|cs| POLICY.borrow_ref(cs).valid(request))
+}
+fn finish_request() {
+    critical_section::with(|cs| POLICY.borrow_ref_mut(cs).finish());
+}
+fn peripheral_failed() {
+    READY.store(false, Ordering::Release);
+    critical_section::with(|cs| POLICY.borrow_ref_mut(cs).failed());
+}
+fn take_if_higher(current: u8) -> Option<Request<HapticPattern>> {
     critical_section::with(|cs| {
-        let mut pending = PENDING.borrow_ref_mut(cs);
-        match *pending {
-            Some(pattern) if pattern.priority() > current => {
-                *pending = None;
-                Some(pattern)
-            }
-            _ => None,
+        let mut policy = POLICY.borrow_ref_mut(cs);
+        if policy.peek().is_some_and(|p| p.priority > current) {
+            policy.take()
+        } else {
+            None
         }
     })
 }
 
 /// Hold the next pattern start until 150 ms after the previous one.
-async fn wait_for_rate_limit(last_start_ms: Option<u64>) {
+async fn wait_for_rate_limit(last_start_ms: Option<u64>, request: Request<HapticPattern>) -> bool {
+    if !valid(request) {
+        return false;
+    }
     let Some(last_start_ms) = last_start_ms else {
-        return;
+        return valid(request);
     };
     let elapsed = now_ms().saturating_sub(last_start_ms);
     if elapsed >= RATE_LIMIT_MS {
-        return;
+        return valid(request);
     }
     let deadline = Instant::now() + Duration::from_millis(RATE_LIMIT_MS - elapsed);
     loop {
+        if !valid(request) {
+            return false;
+        }
         if Instant::now() >= deadline {
-            return;
+            return valid(request);
         }
         // Consume wake-ups so a new request can replace the pending slot while
         // the rate limit runs, but do not start before the deadline.
@@ -296,23 +319,27 @@ async fn wait_for_rate_limit(last_start_ms: Option<u64>) {
 }
 
 /// Play one pattern, returning a higher-priority request that arrived while it
-/// was running. The motor is always stopped before returning.
+/// was running. Every started transaction attempts stop before returning;
+/// a stop error faults the backend and prevents a quiescence receipt.
 async fn run_pattern(
     channel: &mut Option<HapticChannel>,
-    pattern: HapticPattern,
-) -> Option<HapticPattern> {
+    request: Request<HapticPattern>,
+) -> Option<Request<HapticPattern>> {
+    let pattern = request.pattern;
     #[cfg(feature = "haptic-diagnostics")]
     let diagnostic_pattern = diagnostics::next_pattern();
     let spec = spec(pattern);
-    let pattern_priority = pattern.priority();
     info!(
         "haptic: {:?} ({} burst(s) x {} ms, {}%)",
         pattern, spec.bursts, spec.on_ms, spec.duty_pct
     );
 
     for burst in 0..spec.bursts {
+        if !valid(request) {
+            return None;
+        }
         if burst > 0 && spec.gap_ms > 0 {
-            if let Some(next) = wait_or_preempt(spec.gap_ms, pattern_priority).await {
+            if let Some(next) = wait_or_preempt(spec.gap_ms, request).await {
                 return Some(next);
             }
         }
@@ -320,10 +347,21 @@ async fn run_pattern(
         let Some(channel_handle) = channel.take() else {
             return None;
         };
-        let transaction = match start_pulse(channel_handle, spec.duty_pct) {
+        // Serialize the final admission check with disable, so a request cannot
+        // start a new burst after its epoch was invalidated.
+        let started = critical_section::with(|cs| {
+            if POLICY.borrow_ref(cs).valid(request) {
+                Some(start_pulse(channel_handle, spec.duty_pct))
+            } else {
+                *channel = Some(channel_handle);
+                None
+            }
+        });
+        let transaction = match started? {
             Ok(transaction) => transaction,
             Err((error, channel_handle)) => {
                 warn!("haptic: PWM start failed: {error:?}");
+                peripheral_failed();
                 *channel = Some(channel_handle);
                 return None;
             }
@@ -333,7 +371,7 @@ async fn run_pattern(
         if burst == 0 {
             diagnostics::record(diagnostic_pattern, "start");
         }
-        let preempting = wait_or_preempt(spec.on_ms, pattern_priority).await;
+        let preempting = wait_or_preempt(spec.on_ms, request).await;
         #[cfg(feature = "haptic-diagnostics")]
         if burst == 0 {
             diagnostics::record(diagnostic_pattern, "prestop");
@@ -342,6 +380,7 @@ async fn run_pattern(
             Ok(channel_handle) => *channel = Some(channel_handle),
             Err((error, channel_handle)) => {
                 warn!("haptic: PWM stop failed: {error:?}");
+                peripheral_failed();
                 *channel = Some(channel_handle);
             }
         }
@@ -374,21 +413,27 @@ fn start_pulse(
     channel.transmit_continuously(&sequence, LoopMode::Infinite)
 }
 
-/// Sleep for `duration_ms`, returning early when a strictly higher-priority
-/// pattern is requested.
-async fn wait_or_preempt(duration_ms: u16, current_priority: u8) -> Option<HapticPattern> {
+/// Sleep for `duration_ms`, returning early on cancellation or when a strictly
+/// higher-priority pattern is requested.
+async fn wait_or_preempt(
+    duration_ms: u16,
+    request: Request<HapticPattern>,
+) -> Option<Request<HapticPattern>> {
     if duration_ms == 0 {
         return None;
     }
     let deadline = Instant::now() + Duration::from_millis(duration_ms as u64);
     loop {
+        if !valid(request) {
+            return None;
+        }
         if Instant::now() >= deadline {
             return None;
         }
         match select(Timer::at(deadline), WAKE.wait()).await {
             Either::First(()) => return None,
             Either::Second(()) => {
-                if let Some(next) = take_if_higher(current_priority) {
+                if let Some(next) = take_if_higher(request.priority) {
                     return Some(next);
                 }
             }

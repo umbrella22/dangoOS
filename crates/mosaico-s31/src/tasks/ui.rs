@@ -541,11 +541,11 @@ pub async fn ui_task(mut plane: PlaneUi) {
                     lights::replay_preview();
                 }
             }
+            haptic::set_enabled(current.haptics);
             if current.haptics && !settings.haptics {
                 // Switched on: one buzz so the motor answers the switch.
                 haptic::play(HapticPattern::Satisfied);
             }
-            haptic::set_enabled(current.haptics);
             settings = current;
         }
 

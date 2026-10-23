@@ -18,3 +18,7 @@ for file in touch/protocol.rs display/packing.rs geometry.rs \
     rustc --edition=2021 --test "$SRC/$file" -o "$DIR/$name"
     "$DIR/$name" -q "$@"
 done
+
+# Motor admission/cancellation is pure policy; no device or ESP HAL required.
+rustc --edition=2021 --test crates/mosaico-s31/src/tasks/haptic/policy.rs -o "$DIR/haptic-policy"
+"$DIR/haptic-policy" -q "$@"
