@@ -369,12 +369,12 @@ async fn run_pattern(
 
         #[cfg(feature = "haptic-diagnostics")]
         if burst == 0 {
-            diagnostics::record(diagnostic_pattern, "start");
+            diagnostics::record(diagnostic_pattern, burst + 1, "start");
         }
         let preempting = wait_or_preempt(spec.on_ms, request).await;
         #[cfg(feature = "haptic-diagnostics")]
         if burst == 0 {
-            diagnostics::record(diagnostic_pattern, "prestop");
+            diagnostics::record(diagnostic_pattern, burst + 1, "prestop");
         }
         match transaction.stop() {
             Ok(channel_handle) => *channel = Some(channel_handle),
@@ -386,7 +386,7 @@ async fn run_pattern(
         }
         #[cfg(feature = "haptic-diagnostics")]
         if burst == 0 {
-            diagnostics::record(diagnostic_pattern, "stop");
+            diagnostics::record(diagnostic_pattern, burst + 1, "stop");
         }
         if let Some(next) = preempting {
             return Some(next);
@@ -395,21 +395,25 @@ async fn run_pattern(
     None
 }
 
-/// Start the continuous 5 kHz PWM that represents one burst.
+/// Start one burst: continuous high at 100%, otherwise 5 kHz PWM.
 fn start_pulse(
     channel: HapticChannel,
     duty_pct: u8,
 ) -> Result<ContinuousTxTransaction<'static>, (RmtError, HapticChannel)> {
     let duty = duty_pct.min(100) as u32;
-    let high = ((PWM_PERIOD_TICKS as u32 * duty) / 100).clamp(1, PWM_PERIOD_TICKS as u32 - 1);
-    let low = PWM_PERIOD_TICKS as u32 - high;
+    let pulse = if duty == 100 {
+        // Two nonzero high segments represent full duty without a zero-length
+        // end marker or the legacy 1-tick low interval.
+        PulseCode::new(Level::High, 100, Level::High, 100)
+    } else {
+        let high = ((PWM_PERIOD_TICKS as u32 * duty) / 100).clamp(1, PWM_PERIOD_TICKS as u32 - 1);
+        let low = PWM_PERIOD_TICKS as u32 - high;
+        PulseCode::new(Level::High, high as u16, Level::Low, low as u16)
+    };
     // `transmit_continuously` requires the sequence to end with an end marker.
-    // In continuous mode the hardware wraps the memory block, so the marker is
-    // only an API terminator; the PWM period repeats until `stop()`.
-    let sequence = [
-        PulseCode::new(Level::High, high as u16, Level::Low, low as u16),
-        PulseCode::end_marker(),
-    ];
+    // Continuous TX restarts the sequence via TX_CONTI_MODE; it does not use
+    // memory-wrap mode. Keep the marker HAL requires; stop() ends the burst.
+    let sequence = [pulse, PulseCode::end_marker()];
     channel.transmit_continuously(&sequence, LoopMode::Infinite)
 }
 
