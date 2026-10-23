@@ -123,8 +123,12 @@ impl Shutdown {
         }
     }
     /// Exactly one low assertion, at least 1500 ms after the first actual upload.
-    /// No frame acknowledgement means no cut, even if rendering stalls forever.
-    pub fn poll(&mut self, now: u64) -> bool {
+    /// No frame or terminal black-TX acknowledgement means no cut, even if
+    /// either output stalls forever.
+    pub fn poll(&mut self, now: u64, lights_cleared: bool) -> bool {
+        if !lights_cleared {
+            return false;
+        }
         if let Self::ShowingSleep { since } = *self {
             if now.saturating_sub(since) >= SLEEP_VISIBLE_MS {
                 *self = Self::Cut;
@@ -205,18 +209,18 @@ mod tests {
     fn shutdown_waits_for_successful_sleep_upload_and_cuts_once() {
         let mut s = Shutdown::Idle;
         s.uploaded(1, true, true);
-        assert!(!s.poll(9000));
+        assert!(!s.poll(9000, true));
         assert!(s.request(10000));
         assert!(!s.request(11000));
-        assert!(!s.poll(999999)); // no display receipt
+        assert!(!s.poll(999999, true)); // no display receipt
         s.uploaded(999999, true, false);
         s.uploaded(999999, false, true);
-        assert!(!s.poll(999999));
+        assert!(!s.poll(999999, true));
         s.uploaded(1_000_000, true, true);
         s.uploaded(1_000_100, true, true);
-        assert!(!s.poll(1_001_499));
-        assert!(s.poll(1_001_500));
-        assert!(!s.poll(2_000_000));
+        assert!(!s.poll(1_001_499, true));
+        assert!(s.poll(1_001_500, true));
+        assert!(!s.poll(2_000_000, true));
         assert!(!s.request(3_000_000));
     }
 }

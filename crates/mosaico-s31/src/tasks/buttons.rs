@@ -7,7 +7,7 @@ use esp_hal::gpio::{Input, Output};
 use log::{info, warn};
 use mosaico_lua::OnboardButtons;
 use mosaico_s31::behavior::affect::{EventKind, EventSource, SensorEvent};
-use mosaico_s31::buttons::{Button, Gesture, Shutdown};
+use mosaico_s31::buttons::{Button, Gesture, Shutdown, SLEEP_VISIBLE_MS};
 
 static SNAPSHOT: Mutex<RefCell<OnboardButtons>> = Mutex::new(RefCell::new(OnboardButtons {
     ready: 0,
@@ -50,6 +50,7 @@ pub async fn button_task(ai: Input<'static>, boot: Input<'static>, mut power: Ou
     });
     info!("buttons: AI GPIO7 / BOOT GPIO61 low-active, 20ms debounce, 180ms clicks, 1500ms long");
     let mut missing_frame_warned = false;
+    let mut missing_clear_warned = false;
     loop {
         let now = Instant::now().as_millis();
         for (index, pressed) in [ai.is_low(), boot.is_low()].into_iter().enumerate() {
@@ -74,6 +75,7 @@ pub async fn button_task(ai: Input<'static>, boot: Input<'static>, mut power: Ou
                 if index == 0 && gesture == Gesture::Long {
                     let first = critical_section::with(|cs| POWER.borrow_ref_mut(cs).request(now));
                     if first {
+                        super::lights::begin_shutdown();
                         info!("power: shutdown latched; waiting for presented Sleep frame");
                     }
                 }
@@ -84,18 +86,29 @@ pub async fn button_task(ai: Input<'static>, boot: Input<'static>, mut power: Ou
                 });
             }
         }
-        let (cut, waiting) = critical_section::with(|cs| {
+        let lights_cleared = super::lights::shutdown_cleared();
+        let (cut, waiting, clear_waiting) = critical_section::with(|cs| {
             let mut p = POWER.borrow_ref_mut(cs);
-            let cut = p.poll(now);
+            let cut = p.poll(now, lights_cleared);
             let waiting = matches!(*p,Shutdown::WaitingForSleep {requested_at} if now.saturating_sub(requested_at)>=5000);
-            (cut, waiting)
+            let clear_waiting = !lights_cleared
+                && matches!(*p,
+                Shutdown::WaitingForSleep {requested_at} if now.saturating_sub(requested_at)>=5000)
+                || !lights_cleared
+                    && matches!(*p,
+                    Shutdown::ShowingSleep {since} if now.saturating_sub(since)>=SLEEP_VISIBLE_MS);
+            (cut, waiting, clear_waiting)
         });
         if waiting && !missing_frame_warned {
             missing_frame_warned = true;
             warn!("power: no presented Sleep frame; keeping GPIO57 released");
         }
+        if clear_waiting && !missing_clear_warned {
+            missing_clear_warned = true;
+            warn!("power: no shutdown black TX/latch receipt; keeping GPIO57 released");
+        }
         if cut {
-            info!("power: Sleep visible >=1500ms; asserting GPIO57 open-drain low once");
+            info!("power: Sleep >=1500ms and lights cleared; asserting GPIO57 open-drain low once");
             power.set_low();
         }
         Timer::after_millis(5).await;

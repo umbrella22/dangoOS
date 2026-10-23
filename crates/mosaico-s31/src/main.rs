@@ -265,11 +265,11 @@ async fn main(spawner: Spawner) {
                     spawner
                         .spawn(lights::lights_task(channel.with_pin(peripherals.GPIO38)).unwrap());
                 }
-                Err(error) => warn!("light channel setup failed: {error:?}; LEDs off"),
+                Err(error) => warn!("light channel setup failed: {error:?}; no LED clear receipt"),
             }
         }
         Err(error) => {
-            warn!("RMT initialization failed: {error:?}; haptics disabled");
+            warn!("RMT initialization failed: {error:?}; haptics disabled, no LED clear receipt");
             let _motor_off = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
         }
     }

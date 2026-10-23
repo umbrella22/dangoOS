@@ -22,3 +22,7 @@ done
 # Motor admission/cancellation is pure policy; no device or ESP HAL required.
 rustc --edition=2021 --test crates/mosaico-s31/src/tasks/haptic/policy.rs -o "$DIR/haptic-policy"
 "$DIR/haptic-policy" -q "$@"
+
+# Terminal LED clear acknowledgement gates the physical power cutoff.
+rustc --edition=2021 --test crates/mosaico-s31/src/tasks/lights/shutdown.rs -o "$DIR/lights-shutdown"
+"$DIR/lights-shutdown" -q "$@"
