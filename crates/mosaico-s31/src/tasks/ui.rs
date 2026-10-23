@@ -583,7 +583,10 @@ pub async fn ui_task(mut plane: PlaneUi) {
         // ---- merged expression and haptics ----
         // The fox keeps living off Home (lights still react); it only buzzes
         // where it can be seen.
-        if let Some(pattern) = runtime.tick(now_ms) {
+        // Input drains can spend milliseconds in the brain. Age touch responses
+        // against the clock here, rather than the timestamp before those drains.
+        let tick_now_ms = latency::now_us() / 1_000;
+        if let Some(pattern) = runtime.tick(tick_now_ms) {
             if settings.haptics && app.page() == Page::Home {
                 haptic::play(pattern);
             }

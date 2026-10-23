@@ -774,6 +774,62 @@ mod tests {
     }
 
     #[test]
+    fn default_brain_touch_ages_after_drains_and_publishes_an_urgent_frame() {
+        let _guard = test_support::lock();
+        unsafe { lvgl::deinit() };
+        lvgl::init();
+        let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
+        let control = FoxControl::new(Expression::Idle);
+        control.set_plane_mode(true);
+        let mut runtime = crate::behavior::Runtime::new(0, Rc::clone(&control));
+        runtime
+            .enable_brain(
+                crate::behavior::brain::DEFAULT_SOURCE,
+                0,
+                &mosaico_lua::GLOBAL_ALLOCATOR,
+                None,
+            )
+            .unwrap();
+        let mut ui = mount(&control, &display);
+        runtime.tick(1_000);
+        ui.tick(50).unwrap();
+        let baseline = control.take_frame().unwrap().pixels().to_vec();
+        let before = control.rendered_frames();
+        assert!(
+            runtime.on_pointer(crate::behavior::personality::PointerSample {
+                at_ms: 1_000,
+                x: 320,
+                y: 240,
+                pressed: true,
+            })
+        );
+
+        // The pre-drain timestamp leaves the real default brain's pulse at zero.
+        runtime.tick(1_000);
+        assert_eq!(control.visual().pulse, 0.0);
+        ui.tick(5).unwrap();
+        assert_eq!(control.rendered_frames(), before);
+        assert!(control.take_frame().is_none());
+
+        // A fresh timestamp includes time spent draining input. The existing
+        // pulse-rise policy must publish actual pixels before the 50 ms cadence.
+        runtime.tick(1_020);
+        assert!(control.visual().pulse > 0.0);
+        assert!(control.urgent.get());
+        ui.tick(5).unwrap();
+        assert_eq!(control.rendered_frames(), before + 1);
+        let frame = control.take_frame().expect("touch response frame");
+        assert_ne!(frame.pixels(), baseline.as_slice());
+        drop(frame);
+        ui.unmount();
+        drop(ui);
+        unsafe {
+            display.delete();
+            lvgl::deinit();
+        }
+    }
+
+    #[test]
     fn a_tap_pulse_renders_immediately() {
         let _guard = test_support::lock();
 
