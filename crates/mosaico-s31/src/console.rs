@@ -85,6 +85,10 @@ impl core::fmt::Write for LogLine {
 
 /// The bounded queue between `log` producers (all tasks) and the USB pump.
 static LOG_CHANNEL: Channel<CriticalSectionRawMutex, LogRecord, LOG_CHANNEL_DEPTH> = Channel::new();
+// Defer only the retained report until the host has sent real payload bytes.
+#[cfg(feature = "usb-session-diagnostics")]
+static USB_DIAG_RX_GATE: mosaico_s31::telemetry::usb_session::ReportGate =
+    mosaico_s31::telemetry::usb_session::ReportGate::new();
 /// The host has the port open.
 static CONNECTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // Only the OTA reboot acknowledgement carries this fence.
@@ -215,37 +219,46 @@ pub async fn pump<'a>(class: &mut Sender<'a, Driver<'a>>) {
             Timer::after_millis(20).await;
         }
         usb_trace!(DtrReady, class.dtr() as u32);
-        #[cfg(feature = "usb-session-diagnostics")]
-        if let Some(previous) = mosaico_s31::telemetry::usb_session::take_previous() {
-            let mut completed = 0;
-            let mut terminal = 1;
-            let mut last_index = 0;
-            for index in 0..mosaico_s31::telemetry::usb_session::REPORT_LINES {
-                let Some(line) = mosaico_s31::telemetry::usb_session::report_line(&previous, index)
-                else {
-                    break;
-                };
-                last_index = index as u32;
-                mosaico_s31::telemetry::usb_session::report_progress(last_index, completed, 0);
-                let mut bytes = [0u8; 160];
-                let n = line.bytes().len();
-                bytes[..n].copy_from_slice(line.bytes());
-                bytes[n..n + 2].copy_from_slice(b"\r\n");
-                if usb_write!(class, &bytes[..n + 2]).is_err() {
-                    terminal = 2;
-                    break;
-                }
-                completed += 1;
-                mosaico_s31::telemetry::usb_session::report_progress(last_index, completed, 0);
-            }
-            mosaico_s31::telemetry::usb_session::report_progress(last_index, completed, terminal);
-        }
         CONNECTED.store(true, Ordering::Relaxed);
         let mut next_status = embassy_time::Instant::now() + CONSOLE_STATUS_PERIOD;
         let status = status_record(true);
         let _ = usb_write!(class, &status.bytes[..status.len as usize]);
 
         loop {
+            #[cfg(feature = "usb-session-diagnostics")]
+            if USB_DIAG_RX_GATE.take_ready() {
+                if let Some(previous) = mosaico_s31::telemetry::usb_session::take_previous() {
+                    let mut completed = 0;
+                    let mut terminal = 1;
+                    let mut last_index = 0;
+                    for index in 0..mosaico_s31::telemetry::usb_session::REPORT_LINES {
+                        let Some(line) =
+                            mosaico_s31::telemetry::usb_session::report_line(&previous, index)
+                        else {
+                            break;
+                        };
+                        last_index = index as u32;
+                        mosaico_s31::telemetry::usb_session::report_progress(
+                            last_index, completed, 0,
+                        );
+                        let mut bytes = [0u8; 160];
+                        let n = line.bytes().len();
+                        bytes[..n].copy_from_slice(line.bytes());
+                        bytes[n..n + 2].copy_from_slice(b"\r\n");
+                        if usb_write!(class, &bytes[..n + 2]).is_err() {
+                            terminal = 2;
+                            break;
+                        }
+                        completed += 1;
+                        mosaico_s31::telemetry::usb_session::report_progress(
+                            last_index, completed, 0,
+                        );
+                    }
+                    mosaico_s31::telemetry::usb_session::report_progress(
+                        last_index, completed, terminal,
+                    );
+                }
+            }
             let result = match select(LOG_CHANNEL.receive(), Timer::at(next_status)).await {
                 Either::First(record) => {
                     let result = usb_write!(class, &record.bytes[..record.len as usize]);
@@ -335,6 +348,8 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
             let n = match class.read_packet(&mut buf).await {
                 Ok(n) => {
                     usb_trace!(RxPacket, n as u32);
+                    #[cfg(feature = "usb-session-diagnostics")]
+                    USB_DIAG_RX_GATE.received(n);
                     n
                 }
                 Err(EndpointError::Disabled) => {
@@ -426,6 +441,24 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                                 ),
                             };
                             reply(text.trim_end()).await;
+                        }
+                        #[cfg(feature = "usb-session-diagnostics")]
+                        Effect::UsbDiagReset(arm) => {
+                            use mosaico_s31::telemetry::usb_session;
+                            if arm {
+                                let now = embassy_time::Instant::now().as_millis();
+                                match usb_session::arm_reset(now) {
+                                    Some(deadline) => reply(&alloc::format!("@ok usb-diag-reset-arm armed delay_ms=120000 deadline_ms={deadline}")).await,
+                                    None => reply("@err usb-diag-reset-arm busy").await,
+                                }
+                            } else {
+                                let active = usb_session::cancel_reset();
+                                reply(&alloc::format!(
+                                    "@ok usb-diag-reset-cancel cancelled active={}",
+                                    active as u8
+                                ))
+                                .await;
+                            }
                         }
                         Effect::Reboot => {
                             warn!("push: reboot requested");

@@ -20,7 +20,7 @@ haptic-diagnostics = []
 touch-key-diagnostics = []
 # Bounded touch-to-plane phase receipts; timing and behavior remain unchanged.
 touch-latency-diagnostics = []
-# Retained USB session observations only; no reconnect policy changes.
+# Retained USB observations and explicit one-shot diagnostic reset commands; no reconnect policy changes.
 usb-session-diagnostics = []
 
 [dependencies]

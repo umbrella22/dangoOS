@@ -66,6 +66,9 @@ pub enum Effect {
     /// The UI task validates/commits the resident brain and returns the reply.
     Brain(super::brain_store::Action),
     Ota(crate::ota::Command),
+    /// Explicit one-shot diagnostic reset control; unavailable in normal builds.
+    #[cfg(feature = "usb-session-diagnostics")]
+    UsbDiagReset(bool),
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -433,6 +436,11 @@ impl Session {
                 let result = super::skins::remove(vfs, id);
                 out(Effect::SkinsChanged);
                 result.map(|()| format!("skin-rm {id}"))
+            }
+            #[cfg(feature = "usb-session-diagnostics")]
+            (verb @ ("usb-diag-reset-arm" | "usb-diag-reset-cancel"), []) => {
+                out(Effect::UsbDiagReset(verb == "usb-diag-reset-arm"));
+                return;
             }
             ("skin-ls", []) => super::skins::list(vfs),
             ("file", [rel, size, crc]) => match self.file(vfs, rel, size, crc) {
@@ -1236,5 +1244,40 @@ mod tests {
         let mut empty = Vfs::new();
         let r = replies(&run(&mut empty, &mut sess, b"@mosaico status\n", 64));
         assert_eq!(r, ["@ok status no-mounts"]);
+    }
+    #[test]
+    fn diagnostic_reset_commands_are_feature_gated_exact_and_not_binary_controls() {
+        let mut v = vfs();
+        let mut session = Session::new();
+        let effects = run(
+            &mut v,
+            &mut session,
+            b"@mosaico usb-diag-reset-arm\n@mosaico usb-diag-reset-cancel\n",
+            3,
+        );
+        #[cfg(feature = "usb-session-diagnostics")]
+        assert_eq!(
+            effects,
+            [Effect::UsbDiagReset(true), Effect::UsbDiagReset(false)]
+        );
+        #[cfg(not(feature = "usb-session-diagnostics"))]
+        assert!(
+            replies(&effects)
+                .iter()
+                .all(|s| s.starts_with("@err bad command:"))
+                && effects.len() == 2
+        );
+        let effects = run(&mut v, &mut session, b"@mosaico usb-diag-reset-arm 1\n", 64);
+        assert!(replies(&effects)[0].starts_with("@err bad command:"));
+        run(&mut v, &mut session, b"@mosaico begin hello\n", 64);
+        let binary = file_cmd(
+            "raw.bin",
+            b"@mosaico usb-diag-reset-arm\n@mosaico usb-diag-reset-cancel\n",
+        );
+        let effects = run(&mut v, &mut session, &binary, 5);
+        assert!(effects.iter().all(|e| matches!(e, Effect::Reply(_))));
+        assert!(replies(&effects)
+            .iter()
+            .all(|s| !s.contains("usb-diag-reset")));
     }
 }

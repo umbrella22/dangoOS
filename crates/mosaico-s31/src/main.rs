@@ -374,5 +374,8 @@ async fn usb_diagnostic_sampler() {
             mosaico_s31::telemetry::display::FRAMES.load(Ordering::Relaxed),
             console::diagnostic_log_drops(),
         );
+        if usb_diag::reset_due(embassy_time::Instant::now().as_millis()) {
+            esp_hal::system::software_reset();
+        }
     }
 }

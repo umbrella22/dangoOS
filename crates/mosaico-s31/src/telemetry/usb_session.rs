@@ -356,6 +356,67 @@ pub fn report_line(record: &Record, index: usize) -> Option<Line> {
     Some(out)
 }
 
+/// Boot-local nonempty RX gate. ZLPs never unlock or rearm a consumed report.
+pub struct ReportGate {
+    state: core::sync::atomic::AtomicU8,
+}
+impl ReportGate {
+    pub const fn new() -> Self {
+        Self {
+            state: core::sync::atomic::AtomicU8::new(0),
+        }
+    }
+    pub fn received(&self, bytes: usize) {
+        if bytes > 0 {
+            let _ = self.state.compare_exchange(
+                0,
+                1,
+                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+    pub fn take_ready(&self) -> bool {
+        self.state
+            .compare_exchange(
+                1,
+                2,
+                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+    }
+}
+
+/// Boot-local explicit one-shot timer; never inferred from USB failure.
+struct ResetTimer {
+    deadline: Option<u64>,
+}
+impl ResetTimer {
+    const fn new() -> Self {
+        Self { deadline: None }
+    }
+    fn arm(&mut self, now_ms: u64) -> Option<u64> {
+        if self.deadline.is_some() {
+            return None;
+        }
+        let deadline = now_ms.checked_add(120_000)?;
+        self.deadline = Some(deadline);
+        Some(deadline)
+    }
+    fn cancel(&mut self) -> bool {
+        self.deadline.take().is_some()
+    }
+    fn due(&mut self, now_ms: u64) -> bool {
+        if self.deadline.is_some_and(|deadline| now_ms >= deadline) {
+            self.deadline = None;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[cfg(all(feature = "usb-session-diagnostics", target_os = "none"))]
 mod device {
     use super::*;
@@ -366,6 +427,7 @@ mod device {
     #[esp_hal::ram(unstable(rtc_fast, persistent))]
     static mut USB_RECORD: Record = EMPTY;
     static mut PREVIOUS: Record = EMPTY;
+    static mut RESET_TIMER: ResetTimer = ResetTimer::new();
     static REPORTED: AtomicBool = AtomicBool::new(false);
     /// Exactly once, before HAL/task startup. No RTC state controls boot policy.
     pub fn begin_boot() {
@@ -416,6 +478,15 @@ mod device {
         critical_section::with(|_| unsafe {
             (&mut *addr_of_mut!(USB_RECORD)).report_progress(index, completed, terminal);
         });
+    }
+    pub fn arm_reset(now_ms: u64) -> Option<u64> {
+        critical_section::with(|_| unsafe { (&mut *addr_of_mut!(RESET_TIMER)).arm(now_ms) })
+    }
+    pub fn cancel_reset() -> bool {
+        critical_section::with(|_| unsafe { (&mut *addr_of_mut!(RESET_TIMER)).cancel() })
+    }
+    pub fn reset_due(now_ms: u64) -> bool {
+        critical_section::with(|_| unsafe { (&mut *addr_of_mut!(RESET_TIMER)).due(now_ms) })
     }
     pub fn take_previous() -> Option<Record> {
         if REPORTED.swap(true, Ordering::Relaxed) {
@@ -575,5 +646,39 @@ mod tests {
         assert!(core::str::from_utf8(report_line(&r, 14).unwrap().bytes())
             .unwrap()
             .contains("usable=0"));
+    }
+    #[test]
+    fn explicit_reset_timer_is_one_shot_busy_without_extension_and_cancellable() {
+        let mut timer = ResetTimer::new();
+        assert!(!timer.due(u64::MAX));
+        assert_eq!(timer.arm(100), Some(120100));
+        assert_eq!(timer.arm(1000), None);
+        assert!(!timer.due(120099));
+        assert!(timer.due(120100));
+        assert!(!timer.due(120101));
+        assert_eq!(timer.arm(200000), Some(320000));
+        assert!(timer.cancel());
+        assert!(!timer.cancel());
+        assert!(!timer.due(u64::MAX));
+        assert_eq!(timer.arm(u64::MAX), None);
+        assert_eq!(timer.deadline, None);
+    }
+    #[test]
+    fn previous_report_gate_ignores_zlp_and_consumes_first_nonempty_rx_once() {
+        let gate = ReportGate::new();
+        assert!(!gate.take_ready());
+        gate.received(0);
+        assert!(!gate.take_ready());
+        gate.received(10);
+        gate.received(0);
+        gate.received(512);
+        assert!(gate.take_ready());
+        assert!(!gate.take_ready());
+        gate.received(1);
+        assert!(!gate.take_ready());
+        let next_boot = ReportGate::new();
+        assert!(!next_boot.take_ready());
+        next_boot.received(1);
+        assert!(next_boot.take_ready());
     }
 }
