@@ -1,14 +1,16 @@
 # N1 集中真机验收清单
 
 状态日期：2026-10-23（北京时间）。范围为六个 Lua 硬件模块、资源释放、马达诊断和
-共享传感器采样的性能影响。主机检查已通过；**马达实物仍无震动，N1 尚未整体验收通过**。
+共享传感器采样的性能影响。主机检查已通过；**Lua Error 曾无触感，原生 Angry 有操作者
+正例，Lua Angry 尚缺触感记录，N1 尚未整体验收通过**。
 
-设备当前运行首次验收的 N1 固件。带 `haptic-diagnostics` 的诊断镜像已构建、校验，
-尚未烧录。详细历史证据见 [LUA_HARDWARE.md](LUA_HARDWARE.md#2026-10-23-真机验收记录)。
+设备最后确认运行首次验收的 N1 固件，现场先核对。带 `haptic-diagnostics` 的诊断镜像
+尚未烧录。先前 Error 无震动不代表马达硬件失效；本轮原生 Angry 的正例也还没有与镜像
+指纹及日志绑定。详细历史证据见 [LUA_HARDWARE.md](LUA_HARDWARE.md#2026-10-23-真机验收记录)。
 
-本文的旧默认 / 诊断镜像与手工烧录命令只适用于迁移前布局。集中验收使用最新集成
-镜像；N6 迁移后不得刷回这些旧镜像，因为其 data 定位会进入新的应用槽。迁移后的
-诊断版本应从最新集成代码构建，并按 [N6 流程](N6_MIGRATION.md) 更新或恢复。
+历史 N1 默认 / 诊断镜像仅用于旧布局复现，指纹保存在 LUA_HARDWARE.md。当前集成
+默认 / 诊断镜像与震动取消修复见 [测试前核对](lessons/n1-n7-preflight.md)。N6 迁移后
+不得刷回 N1 历史镜像，因为其 data 定位会进入新的应用槽；使用 [N6 流程](N6_MIGRATION.md) 更新或恢复。
 
 ## 待测项目与顺序
 
@@ -17,9 +19,9 @@
 
 | 完成 | 顺序 / 项目 | 操作与通过条件 | 当前缺口 |
 | --- | --- | --- | --- |
-| [ ] | 1. 诊断启动与马达 | 仅刷诊断 main_app；手持设备运行四次 `angry`。记录每次是否有两段震动，并取得对应 `hd start/prestop/stop` 日志 | 此前五次 `error` 请求均被接受，但手持完全无震动；四次 `angry` 的触感尚无反馈 |
+| [ ] | 1. 同预设马达对照 | 刷机前先记录原生 Angry → Lua Angry 四次 → 原生 Angry；需要诊断时换当前集成诊断版，重做全部三段。记录触感与日志，检查关闭 / 开启取消语义 | 五次 Lua Error 无触感；原生 Angry 有操作者正例；Lua Angry 触感尚无反馈 |
 | [ ] | 2. 异常退出退灯 | 运行 `n1_error_probe`：两端红/绿约 3 秒，出现 `N1_EXPECTED_FAILURE` 后回应用列表，两灯熄灭 | 已确认主动报错和返回 Launcher，未确认实物熄灭 |
-| [ ] | 3. 异常后重开、双键、正常退灯 | 紧接着运行 `n1_contract_probe`；红/绿重新点亮，左右分别单击、快速双击、长按约 2 秒并松手；结束后灯熄灭 | 左键 GPIO11 双击缺失；异常后重开和正常退出实物熄灭尚缺证据 |
+| [ ] | 3. 异常后重开、双键、正常退灯 | 紧接着运行 `n1_contract_probe`；红/绿重新点亮，左右分别单击、双击、长按约 2 秒并松手；同步核对 down/up 边沿，结束后灯熄灭 | 左键 GPIO11 双击缺失；异常后重开和正常退出实物熄灭尚缺证据 |
 | [ ] | 4. 外部停止释放 | 再运行有灯的探针，执行 `stop`；返回列表，灯熄灭；再次运行时可以重新打开 LED / 两键 | 需独立验证从外部停止 VM 的清理路径 |
 | [ ] | 5. 默认固件稳定性与屏幕触摸 | 恢复默认固件后，在狐狸主页采样至少 3 分钟，做至少 20 次独立屏幕点按；记录帧率、丢帧、触摸统计、IMU / BMM 错误计数增量和 USB 状态 | 先前屏幕触摸 `n=0`；有 CST9220 Header 警告、IMU 累计 2 次读错误；首次启动断连原因未定 |
 | [ ] | 6. 马达电气时序 | 测 GPIO8 PWM 与预设包络；测持续请求时相邻 pattern 启动间隔不小于 150 ms | 未测物理波形；请求日志与 `hd` 快照均不能替代仪器读数 |
@@ -54,59 +56,66 @@ pyserial；上面的 esptool Python 已具备该依赖。工具拒绝覆盖已�
 详见 [N1_PROBES.md](../examples/lua-apps/N1_PROBES.md)。运行工具退出 0 仅表示传输完成，
 仍需检查 Lua 汇总、预期退出方式和实物观察。
 
-## 1. 诊断固件、启动与马达
+## 1. 同一固件的原生 / Lua / 原生 Angry 对照
 
-先校验两份已准备的镜像。任一文件不匹配时停止使用该文件，重新构建并记录新指纹。
+设置开启震动；回 Home，使用原生 / 默认大脑，同一供电方式，手持设备。先记录运行
+固件身份、最近烧录 BIN 的 SHA 和对应 ELF；如果无法确认，就标记身份未证实，不把
+此次观察与某个归档镜像绑定。三段之间不刷机、不改震动设置。
 
 ```sh
-python3 - <<'PY'
-from pathlib import Path
-import hashlib
-root = Path('target/n1-acceptance-20261023')
-images = {
-    'haptic-diagnostics.bin': (2628944, 'a2e1962c142fcd80418bbb4a88e3dca295822b915992b3ffb89be7936a6ebb9d'),
-    'haptic-default.bin': (2627792, '29fbfd4a3ffcc599bd1fe6b91f0d6c7b454937fb9bfc34797277f8b05f6e6d30'),
-}
-for name, (size, expected) in images.items():
-    data = (root / name).read_bytes()
-    actual = hashlib.sha256(data).hexdigest()
-    if len(data) != size or actual != expected or not 0 < len(data) <= 0x7E0000 - 0x210000:
-        raise SystemExit('IMAGE MISMATCH: ' + name)
-    print(name, len(data), actual, 'OK')
-PY
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/native-angry-before.log" --wait 0 --seconds 40 --command status
 ```
 
-按住 BOOT 点 RESET，进入下载模式。只写 `0x210000`，镜像必须止于 `/data` 起点
-`0x7E0000` 之前。不使用 `flash-app.sh` 烧诊断版，因为该脚本会重新构建默认固件。
-以下刷机命令完成后保留下载状态，便于先启动日志采集再手动复位。
+在第一段采集窗口内以原来能触发生气的动作触发 Angry，核对任务确实记录 Angry，记录
+「无 / 微弱 / 清晰」及能否分辨两段。冷却后运行 Lua 对照：
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/lua-angry.log" --wait 0 --seconds 30 \
+  --command status --push examples/lua-apps/n1_haptic_probe
+```
+
+脚本先等 5 秒，再发四次 `angry`，每次请求间隔 3 秒，每个预设有两段 160 ms、90%
+占空比的脉冲。分别记录每次触感，不靠放在桌上是否有声音判断。然后返回 Home，待
+生气状态和冷却恢复，再以相同动作触发原生 Angry：
+
+```sh
+"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
+  --log "$N1_LOG_DIR/native-angry-after.log" --wait 0 --seconds 40 --command status
+```
+
+原生与 Lua 的 Angry 经相同任务和 RMT 输出。若三段不同，保留差异；若 Angry 全部
+通过，再独立测 Error，不能把两个预设的触感差异直接归因于 Lua。当前设备的旧版对照
+与后续集成修复版的验收分别记录。
+
+### 按需启用当前集成诊断版
+
+当前集成两份镜像及 SHA 见 [测试前核对](lessons/n1-n7-preflight.md)。先用收据校验
+BIN / ELF 和小于 3 MiB 的容量约束。**仅在已确认仍是旧布局时**使用下面的 ROM 命令；
+迁移后按 N6 更新 / 恢复流程选择目标槽，不沿用此固定地址。
 
 ```sh
 esptool --chip esp32s31 --port "$N1_DOWNLOAD" --baud 115200 \
   --before no-reset --after no-reset \
-  write-flash 0x210000 target/n1-acceptance-20261023/haptic-diagnostics.bin \
+  write-flash 0x210000 target/haptic-followup-20261023/haptic-diagnostics.bin \
   > "$N1_LOG_DIR/flash-diagnostics.log" 2>&1
 cat "$N1_LOG_DIR/flash-diagnostics.log"
-```
 
-确认 esptool 成功且包含 `Hash of data verified`，再运行下列采集命令；等待端口时松开
-BOOT、点 RESET。保留启动日志，核对传感器与文件系统初始化、无 panic / 意外复位。
-原生 USB 枚举前的日志仍可能丢失，日志起点过晚不能证明此前无错误。
-
-```sh
 "$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
   --log "$N1_LOG_DIR/boot-diagnostics.log" --wait 60 --seconds 40
-
-"$N1_PY" scripts/n1-device-session.py --port "$N1_RUNTIME" \
-  --log "$N1_LOG_DIR/haptic.log" --wait 0 --seconds 30 \
-  --command status --push examples/lua-apps/n1_haptic_probe
 ```
 
-第二条命令开始后手持设备。脚本先等 5 秒，再发四次 `angry`，每次请求间隔 3 秒，
-每个预设有两段 160 ms、90% 占空比的脉冲。分别记录「无 / 微弱 / 清晰」和能否分辨两段。
-不要靠放在桌上是否有声音判断。
+按住 BOOT 点 RESET 进入下载模式；写入成功且包含 `Hash of data verified` 后启动日志
+采集，再松开 BOOT 点 RESET。此时重新运行上面的原生 / Lua / 原生三段，使用新日志名。
+原生 USB 枚举前的日志仍可能丢失，日志起点过晚不能证明此前无错误。
 
 诊断最多记录启动后前 10 个 pattern，每个只记录首段 burst，启动插板反馈也占用额度。
 若没有 `hd` 行，先核对烧录指纹及额度；需要重新复位后尽早运行探针，再保存新日志。
+
+集成修复版还需验证：关闭震动会取消当前与排队输出，原生 / Lua 新请求均受阻；再开启
+仅播放开启提示和新请求，不复活旧队列。主机策略测试不替代实际 burst / gap / 限速
+等待中的取消时序测量。OTA begin 的静默回执在 N6 单独验证。
 
 寄存器解释供分析日志使用：
 
@@ -143,10 +152,16 @@ BOOT、点 RESET。保留启动日志，核对传感器与文件系统初始化�
   --push examples/lua-apps/n1_contract_probe
 ```
 
-红/绿应再次亮起。右槽左键是 GPIO11，右键是 GPIO10；依次对两键做单击、快速双击、
-长按约 2 秒后松手。默认双击间隔窗口 180 ms、长按门槛 1500 ms；日志分别应有
+红/绿应再次亮起。右槽左键是 GPIO11，右键是 GPIO10；依次对两键做单击、双击、
+长按约 2 秒后松手。默认双击窗口从已防抖的松开边沿起计 180 ms，长按门槛 1500 ms；日志分别应有
 `single_click`、`double_click`、`long_press_start` / `long_press_up`。重点补齐 GPIO11
 的 `double_click`。不要只以总回调数判断手势齐全。
+
+先慢做一次按下 / 松开并核对 `press_down` / `press_up`，再尝试双击。电容键约每 40 ms
+采样一次，TouchKey 要连续 4 个安静样本才松开，后续 Debounce 还要 3 个同状态样本；
+首个 false 已计入后级，因此理想轨迹共需 6 个安静样本，约 200–240 ms（采样相位会影响
+延迟，调度也会拉长）。第二次按得过早可能根本没有第一次 `press_up`。现场逐步调整
+松手间隔，以真实边沿判断；不要先缩小防噪阈值。这是待检验的时序因素，不是已经定位的根因。
 
 脚本标称窗口 60 秒，既有实测约 73 秒完成，因此采集留出 90 秒。预期接口汇总 0 FAIL，
 两键均有真实回调、正常结束后两灯熄灭。若窗口内没收到目标手势，记录未覆盖，不能记 PASS。
@@ -181,12 +196,13 @@ BOOT、点 RESET。保留启动日志，核对传感器与文件系统初始化�
 
 ## 5. 恢复默认固件与稳定性
 
-诊断结束后使用已校验的默认镜像恢复。再次进入下载模式，仅写 `0x210000`：
+若使用过诊断版，结束后恢复同轮已校验的默认镜像。以下仍仅适用于确认的旧布局；
+若没有更换固件，直接做稳定性采样。迁移后按 N6 流程更新：
 
 ```sh
 esptool --chip esp32s31 --port "$N1_DOWNLOAD" --baud 115200 \
   --before no-reset --after no-reset \
-  write-flash 0x210000 target/n1-acceptance-20261023/haptic-default.bin \
+  write-flash 0x210000 target/haptic-followup-20261023/haptic-default.bin \
   > "$N1_LOG_DIR/flash-default.log" 2>&1
 cat "$N1_LOG_DIR/flash-default.log"
 
