@@ -237,6 +237,68 @@ fn output_errors_keep_the_real_host_error_and_disconnect_invalidates_handle() {
 }
 
 #[test]
+fn button_domain_defaults_and_explicit_click_gap_boundaries() {
+    for (short, gap, doubles, singles) in [
+        (0, 399, 1, 0),
+        (0, 400, 0, 2),
+        (0, 401, 0, 2),
+        (180, 179, 1, 0),
+        (180, 180, 0, 2),
+        (180, 399, 0, 2),
+    ] {
+        let mut board = Board::present();
+        board.snapshot.onboard.ready = 1;
+        let source = alloc::format!(
+            r#"
+          local b=require('button');local d=require('delay')
+          local h=assert(b.new(11,0,0,{short}))
+          assert(h.short=={effective})
+          local other=assert(b.new(10));assert(other.short==400)
+          local ai=assert(b.new(7));assert(ai.short==180)
+          local boot=assert(b.new(61,0,0,0));assert(boot.short==180)
+          local singles,doubles=0,0
+          b.on(h,'single_click',function() singles=singles+1 end)
+          b.on(h,'double_click',function() doubles=doubles+1 end)
+          d.delay_ms(2000);b.dispatch()
+          assert(singles=={singles} and doubles=={doubles})
+        "#,
+            effective = if short == 0 { 400 } else { short },
+        );
+        let mut vm = vm(board, &source);
+        sleep(&mut vm);
+        let s = &mut vm.host_mut::<Board>().unwrap().snapshot;
+        s.button_edge(0, true, 1100);
+        s.button_edge(0, false, 1140);
+        s.button_edge(0, true, 1140 + gap);
+        s.button_edge(0, false, 1180 + gap);
+        finish(&mut vm);
+    }
+}
+
+#[test]
+fn button_default_long_press_does_not_join_following_short_click() {
+    let mut vm = vm(
+        Board::present(),
+        r#"
+      local b=require('button');local h=assert(b.new(11))
+      local singles,doubles,longs=0,0,0
+      b.on(h,'single_click',function() singles=singles+1 end)
+      b.on(h,'double_click',function() doubles=doubles+1 end)
+      b.on(h,'long_press_up',function(e) longs=longs+1;assert(e.pressed_time_ms==1500) end)
+      require('delay').delay_ms(3000);b.dispatch()
+      assert(singles==1 and doubles==0 and longs==1)
+    "#,
+    );
+    sleep(&mut vm);
+    let s = &mut vm.host_mut::<Board>().unwrap().snapshot;
+    s.button_edge(0, true, 1100);
+    s.button_edge(0, false, 2600);
+    s.button_edge(0, true, 2700);
+    s.button_edge(0, false, 2740);
+    finish(&mut vm);
+}
+
+#[test]
 fn button_taps_between_dispatches_keep_edge_timing_and_callbacks_are_lua_only() {
     let mut vm = vm(
         Board::present(),

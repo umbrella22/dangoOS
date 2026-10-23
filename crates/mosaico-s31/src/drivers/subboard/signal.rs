@@ -6,7 +6,7 @@
 /// Consecutive samples needed to accept a change (official module manager).
 pub const DEBOUNCE_SAMPLES: u8 = 3;
 
-/// Three-sample debounce for a boolean level.
+/// Boolean edge state with three-sample debounce for raw levels.
 #[derive(Clone, Copy, Debug)]
 pub struct Debounce {
     stable: Option<bool>,
@@ -35,13 +35,23 @@ impl Debounce {
         }
     }
 
+    /// Accept an already-filtered level without filtering it a second time.
+    /// Shares the silent first sample and accepted state with raw GPIO input.
+    pub fn accept_filtered(&mut self, level: bool) -> Option<bool> {
+        let previous = self.stable.replace(level);
+        self.candidate = level;
+        self.count = 0;
+        previous
+            .filter(|previous| *previous != level)
+            .map(|_| level)
+    }
+
     /// Feed one raw sample. Returns `Some(level)` once
     /// [`DEBOUNCE_SAMPLES`] consecutive samples disagree with the accepted
     /// level.
     pub fn update(&mut self, raw: bool) -> Option<bool> {
         let Some(stable) = self.stable else {
-            self.stable = Some(raw);
-            return None;
+            return self.accept_filtered(raw);
         };
         if raw == stable {
             self.count = 0;
@@ -54,9 +64,7 @@ impl Debounce {
             self.count = 1;
         }
         if self.count >= DEBOUNCE_SAMPLES {
-            self.stable = Some(raw);
-            self.count = 0;
-            Some(raw)
+            self.accept_filtered(raw)
         } else {
             None
         }
@@ -121,6 +129,10 @@ impl LdrFilter {
 }
 
 #[cfg(test)]
+#[path = "touch_key.rs"]
+mod touch_key;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -151,6 +163,87 @@ mod tests {
         assert_eq!(key.update(true), None);
         assert_eq!(key.update(true), None);
         assert_eq!(key.update(true), Some(true));
+    }
+
+    #[test]
+    fn filtered_levels_keep_initial_silence_and_clear_raw_candidates() {
+        let mut key = Debounce::new();
+        assert_eq!(key.accept_filtered(true), None);
+        assert_eq!(key.accept_filtered(true), None);
+        assert_eq!(key.accept_filtered(false), Some(false));
+        assert_eq!(key.update(true), None);
+        assert_eq!(key.update(true), None);
+        assert_eq!(key.accept_filtered(false), None);
+        assert_eq!(key.update(true), None);
+        assert_eq!(key.update(true), None);
+        assert_eq!(key.update(true), Some(true));
+    }
+
+    #[test]
+    fn recorded_touch_taps_with_five_quiet_samples_keep_both_releases() {
+        // Continuous smooth sequences from 24-fast-keys-trace.log. Use the
+        // actual TouchKey implementation, not a second filter model.
+        let traces: &[(u16, &[u16])] = &[
+            (
+                15139,
+                &[
+                    31612, 38837, 32372, 15240, 15098, 15198, 15204, 15232, 31799, 41431, 16594,
+                    15203, 15187, 15187, 15192, 15191, 15186,
+                ],
+            ),
+            (
+                15151,
+                &[
+                    34481, 38245, 15255, 14724, 15181, 15179, 15195, 28010, 37855, 15223, 14645,
+                    15188, 15180, 15185, 15180,
+                ],
+            ),
+            (
+                14600,
+                &[
+                    22279, 37463, 14721, 14622, 14615, 14604, 14607, 23243, 44334, 42065, 14664,
+                    14625, 14613, 14609, 14612,
+                ],
+            ),
+        ];
+        for &(baseline, readings) in traces {
+            let mut touch = super::touch_key::TouchKey::new();
+            let mut key = Debounce::new();
+            let mut old_second_filter = Debounce::new();
+            let idle = touch.update(baseline);
+            assert_eq!(key.accept_filtered(idle), None);
+            old_second_filter.update(idle);
+            let mut edges = Vec::new();
+            let mut old_edges = Vec::new();
+            for &smooth in readings {
+                let held = touch.update(smooth);
+                edges.extend(key.accept_filtered(held));
+                old_edges.extend(old_second_filter.update(held));
+            }
+            assert_eq!(edges, [true, false, true, false]);
+            assert_eq!(old_edges.iter().filter(|&&pressed| pressed).count(), 1);
+        }
+    }
+
+    #[test]
+    fn filtered_touch_stays_held_through_single_baseline_crossing_and_long_hold() {
+        let mut touch = super::touch_key::TouchKey::new();
+        let mut key = Debounce::new();
+        key.accept_filtered(touch.update(15000));
+        assert_eq!(key.accept_filtered(touch.update(35000)), Some(true));
+        // Four seconds held, one baseline crossing, then another four seconds
+        // swinging below baseline: neither may invent a release or press.
+        for smooth in core::iter::repeat_n(35000, 100)
+            .chain(core::iter::once(15000))
+            .chain(core::iter::repeat_n(2000, 100))
+        {
+            assert!(touch.update(smooth));
+            assert_eq!(key.accept_filtered(touch.pressed()), None);
+        }
+        for _ in 0..3 {
+            assert_eq!(key.accept_filtered(touch.update(15000)), None);
+        }
+        assert_eq!(key.accept_filtered(touch.update(15000)), Some(false));
     }
 
     #[test]

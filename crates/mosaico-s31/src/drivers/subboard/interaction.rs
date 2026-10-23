@@ -97,6 +97,11 @@ struct TouchKeys {
     /// Samples left before the benchmark is trusted.
     warmup: u8,
     log_countdown: u16,
+    #[cfg(feature = "touch-key-diagnostics")]
+    diagnostic_left: u16,
+    // Read time, smooth values and baselines BEFORE TouchKey::update.
+    #[cfg(feature = "touch-key-diagnostics")]
+    diagnostic_sample: Option<(u64, [u16; 2], [u32; 2])>,
 }
 
 enum KeyMode {
@@ -173,6 +178,10 @@ where
                     keys: [TouchKey::new(); 2],
                     warmup: touch_key::WARMUP_SAMPLES,
                     log_countdown: TOUCH_LOG_EVERY,
+                    #[cfg(feature = "touch-key-diagnostics")]
+                    diagnostic_left: 6000,
+                    #[cfg(feature = "touch-key-diagnostics")]
+                    diagnostic_sample: None,
                 })
             }
             None => self.gpio_keys(),
@@ -182,6 +191,10 @@ where
         self.key_l_debounce = Debounce::new();
         self.key_r_debounce = Debounce::new();
         self.first_sample = true;
+        #[cfg(feature = "touch-key-diagnostics")]
+        if matches!(self.key_mode, KeyMode::Touch(_)) {
+            info!("tkdiag armed: max6000 post-warmup samples; edge -1=none 0=up 1=down; baseline before update");
+        }
     }
 
     fn input_with_pull(pin: &mut Flex<'static>, pull: Pull) {
@@ -218,15 +231,31 @@ where
             log::info!("Interaction LDR raw={raw} level={light_level}%");
         }
         let (key_l, key_r) = self.read_keys();
+        // TouchKey already filters noise and requires four quiet samples to
+        // release. Debouncing that state again can swallow a complete release
+        // between two taps. Plain GPIO fallback still needs three samples.
+        let (key_l_edge, key_r_edge) = if matches!(self.key_mode, KeyMode::Touch(_)) {
+            (
+                self.key_l_debounce.accept_filtered(key_l),
+                self.key_r_debounce.accept_filtered(key_r),
+            )
+        } else {
+            (
+                self.key_l_debounce.update(key_l),
+                self.key_r_debounce.update(key_r),
+            )
+        };
+        #[cfg(feature = "touch-key-diagnostics")]
+        self.log_touch_sample(key_l_edge, key_r_edge);
         Some(InteractionInputs {
             light_level,
             pir_edge: self.pir_debounce.update(self.pir.is_high()),
-            key_l_edge: self.key_l_debounce.update(key_l),
-            key_r_edge: self.key_r_debounce.update(key_r),
+            key_l_edge,
+            key_r_edge,
         })
     }
 
-    /// Raw key states (`true` = held).
+    /// TouchKey-filtered or raw GPIO states (`true` = held).
     fn read_keys(&mut self) -> (bool, bool) {
         let touch = match &mut self.key_mode {
             KeyMode::Off => return (false, false),
@@ -257,6 +286,14 @@ where
             return (false, false);
         }
         let before = [touch.keys[0].pressed(), touch.keys[1].pressed()];
+        #[cfg(feature = "touch-key-diagnostics")]
+        if touch.diagnostic_left > 0 {
+            touch.diagnostic_sample = Some((
+                embassy_time::Instant::now().as_millis(),
+                [r[0].smooth, r[1].smooth],
+                [touch.keys[0].baseline(), touch.keys[1].baseline()],
+            ));
+        }
         let held = [
             touch.keys[0].update(r[0].smooth),
             touch.keys[1].update(r[1].smooth),
@@ -274,5 +311,36 @@ where
             );
         }
         (held[0], held[1])
+    }
+
+    #[cfg(feature = "touch-key-diagnostics")]
+    fn log_touch_sample(&mut self, left_edge: Option<bool>, right_edge: Option<bool>) {
+        let KeyMode::Touch(touch) = &mut self.key_mode else {
+            return;
+        };
+        let Some((at, smooth, baseline)) = touch.diagnostic_sample.take() else {
+            return;
+        };
+        touch.diagnostic_left -= 1;
+        let edge = |value: Option<bool>| value.map_or(-1i8, |pressed| pressed as i8);
+        // Every valid sample is retained: 1-3 quiet samples must remain visible
+        // even when TouchKey has not yet emitted a release.
+        info!(
+            "tkdiag t={} ch={}/{} s={}/{} b={}/{} h={}/{} e={}/{}",
+            at,
+            touch.channels[0],
+            touch.channels[1],
+            smooth[0],
+            smooth[1],
+            baseline[0],
+            baseline[1],
+            touch.keys[0].pressed() as u8,
+            touch.keys[1].pressed() as u8,
+            edge(left_edge),
+            edge(right_edge),
+        );
+        if touch.diagnostic_left == 0 {
+            info!("tkdiag complete: 6000 post-warmup samples; reactivate port to rearm");
+        }
     }
 }

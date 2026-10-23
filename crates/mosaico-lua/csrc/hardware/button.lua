@@ -2,6 +2,8 @@ do
   local button = {}
   local buttons = {}
   local dispatching = false
+  local INTERACTION_CLICK_GAP_MS = 400
+  local ONBOARD_CLICK_GAP_MS = 180
   local events = {
     press_down = true,
     press_up = true,
@@ -40,14 +42,15 @@ do
     active = active == nil and 0 or int(active, 0, 1)
     long = long == nil and 0 or int(long, 0, 65535)
     short = short == nil and 0 or int(short, 0, 65535)
+    local onboard = pin == 7 or pin == 61
     -- Upstream uses uint16_t thresholds; zero selects driver defaults.
     if long == 0 then
       long = 1500
     end
     if short == 0 then
-      short = 180
+      -- Touch keys need a more forgiving gap; AI/BOOT match native buttons.
+      short = onboard and ONBOARD_CLICK_GAP_MS or INTERACTION_CLICK_GAP_MS
     end
-    local onboard = pin == 7 or pin == 61
     local s = domain(host.snapshot(), onboard)
     if s.available & 8 == 0 then
       return nil, onboard and "onboard buttons unavailable" or "interaction board unavailable"
@@ -170,6 +173,7 @@ do
             h.long_started = true
             emit(h, "long_press_start", duration)
           end
+        -- The next down must precede this release-to-down limit strictly.
         elseif h.released_at and elapsed(at, h.released_at) >= h.short then
           end_click(h)
         end

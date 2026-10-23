@@ -16,6 +16,8 @@ default = []
 ota-test-panic = []
 # Read-only motor/RMT receipts for manual hardware diagnosis; no waveform changes.
 haptic-diagnostics = []
+# Read-only per-sample touch/edge receipts, capped per port activation.
+touch-key-diagnostics = []
 
 [dependencies]
 sha2 = { version = "0.10", default-features = false }
