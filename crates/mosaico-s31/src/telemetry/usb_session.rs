@@ -3,9 +3,10 @@
 use core::fmt::{self, Write};
 
 const MAGIC: u32 = 0x5553_4431;
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const RING: usize = 8;
-pub const REPORT_LINES: usize = 11 + RING;
+const BASE_LINES: usize = 11 + RING;
+pub const REPORT_LINES: usize = BASE_LINES + 9;
 const EVENTS: usize = 30;
 
 /// Counter indices and last-phase codes in the bounded retained report.
@@ -119,6 +120,31 @@ const EMPTY_RARE: Rare = Rare {
     ordinal: 0,
     commit: 0,
 };
+// Metadata: TxWrite seq, capture ms, TX phase ms, bytes, event, actual EP index.
+// Registers: DIEPCTL, DTXFSTS, DIEPTSIZ, DIEPINT, DIEPTXF,
+// DAINTMSK, DIEPMSK, DIEPEMPMSK, GINTMSK, GINTSTS.
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct Hardware {
+    words: [u32; 16],
+    commit: u32,
+}
+const EMPTY_HARDWARE: Hardware = Hardware {
+    words: [0; 16],
+    commit: 0,
+};
+fn pending_long_enough(tx: Progress, now: u32) -> bool {
+    tx.event == Event::TxWrite as u32 && now.wrapping_sub(tx.at_ms) >= 1_000
+}
+fn write_hardware(slot: &mut Hardware, words: [u32; 16], commit: u32) {
+    store(&mut slot.commit, 0);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    for (field, value) in slot.words.iter_mut().zip(words) {
+        store(field, value);
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    store(&mut slot.commit, commit);
+}
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct Record {
@@ -136,6 +162,7 @@ pub struct Record {
     rx_bytes: u32,
     tx_bytes: u32,
     sample: [u32; 5], // ticks, low32 monotonic ms, UI heartbeat, plane frames, log drops
+    hardware: [Hardware; 3], // latest configured, first pending, last pending for same TxWrite sequence
 }
 const EMPTY: Record = Record {
     magic: 0,
@@ -157,6 +184,7 @@ const EMPTY: Record = Record {
     rx_bytes: 0,
     tx_bytes: 0,
     sample: [0; 5],
+    hardware: [EMPTY_HARDWARE; 3],
 };
 fn store(word: &mut u32, value: u32) {
     // Volatile stores ensure each bounded observation reaches retained RAM.
@@ -221,6 +249,26 @@ impl Record {
             store(&mut r.commit, done); // last: zero is never a usable committed entry
             store(&mut self.ring_head, ((slot + 1) % RING) as u32);
             store(&mut self.ring_total, next);
+        }
+        self.end(done);
+    }
+    fn capture_hardware(&mut self, configured: bool, words: [u32; 16]) {
+        // MMIO is read outside the lock; discard if TX phase changed meanwhile.
+        let tx = self.progress[2];
+        if tx.sequence != words[0] || tx.event != words[4] {
+            return;
+        }
+        if !configured && !pending_long_enough(tx, words[1]) {
+            return;
+        }
+        let done = self.begin();
+        if configured {
+            write_hardware(&mut self.hardware[0], words, done);
+        } else {
+            if self.hardware[1].commit == 0 || self.hardware[1].words[0] != words[0] {
+                write_hardware(&mut self.hardware[1], words, done);
+            }
+            write_hardware(&mut self.hardware[2], words, done);
         }
         self.end(done);
     }
@@ -335,7 +383,7 @@ pub fn report_line(record: &Record, index: usize) -> Option<Line> {
             record.report[0], record.report[1], record.report[2]
         )
         .ok()?;
-    } else if index < REPORT_LINES {
+    } else if index < BASE_LINES {
         let slot = index - 11;
         let r = record.rare[slot];
         write!(
@@ -350,6 +398,19 @@ pub fn report_line(record: &Record, index: usize) -> Option<Line> {
             (r.commit != 0 && r.commit & 1 == 0) as u8
         )
         .ok()?;
+    } else if index < REPORT_LINES {
+        let kind = (index - BASE_LINES) / 3;
+        let part = (index - BASE_LINES) % 3;
+        let h = record.hardware[kind];
+        if part == 0 {
+            write!(out, "[usb-prev] hw={} txseq={:08x} ms={} txms={} n={} ev={} ep={} commit={:08x} usable={}", kind, h.words[0], h.words[1], h.words[2], h.words[3], h.words[4], h.words[5], h.commit, (h.commit != 0 && h.commit & 1 == 0) as u8).ok()?;
+        } else {
+            let start = 6 + (part - 1) * 5;
+            write!(out, "[usb-prev] hw={} regs{}=", kind, start - 6).ok()?;
+            for (i, word) in h.words[start..start + 5].iter().enumerate() {
+                write!(out, "{}{:08x}", if i == 0 { "" } else { "," }, word).ok()?;
+            }
+        }
     } else {
         return None;
     }
@@ -421,7 +482,8 @@ impl ResetTimer {
 mod device {
     use super::*;
     use core::ptr::{addr_of, addr_of_mut};
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    static BULK_IN: AtomicU32 = AtomicU32::new(u32::MAX);
     // All fields are integers; every RTC power-on bit pattern is representable.
     unsafe impl esp_hal::Persistable for Record {}
     #[esp_hal::ram(unstable(rtc_fast, persistent))]
@@ -456,6 +518,47 @@ mod device {
             );
         }
     }
+    pub fn allocated_bulk_in(index: usize) {
+        // Allocated EndpointInfo from the pass-through Driver, never guessed.
+        BULK_IN.store(index as u32, Ordering::Relaxed);
+    }
+    fn hardware_snapshot(configured: bool) {
+        let ep = BULK_IN.load(Ordering::Relaxed) as usize;
+        // DIEPTXF supports nonzero endpoints 1..=7 in the pinned layout.
+        if !(1..=7).contains(&ep) {
+            return;
+        }
+        let at = embassy_time::Instant::now().as_millis() as u32;
+        let tx = critical_section::with(|_| unsafe { (*addr_of!(USB_RECORD)).progress[2] });
+        if !configured && !pending_long_enough(tx, at) {
+            return;
+        }
+        // Layout bound to pinned OTG otg_v1.rs; base bound to S31 HAL/PAC USB_HS.
+        // All are ordinary read-safe registers; no FIFO/pop reads or MMIO writes.
+        let offsets = [
+            0x900 + ep * 32,
+            0x918 + ep * 32,
+            0x910 + ep * 32,
+            0x908 + ep * 32,
+            0x104 + (ep - 1) * 4,
+            0x81c,
+            0x810,
+            0x834,
+            0x18,
+            0x14,
+        ];
+        let base = esp_hal::peripherals::USB_HS::PTR.cast::<u8>();
+        let mut words = [0; 16];
+        words[..6].copy_from_slice(&[tx.sequence, at, tx.at_ms, tx.value, tx.event, ep as u32]);
+        for (word, offset) in words[6..].iter_mut().zip(offsets) {
+            // SAFETY: allocated USB_HS is initialized before configured/sampling;
+            // offsets above are aligned ordinary registers in its retained owner.
+            *word = unsafe { core::ptr::read_volatile(base.add(offset).cast::<u32>()) };
+        }
+        critical_section::with(|_| unsafe {
+            (&mut *addr_of_mut!(USB_RECORD)).capture_hardware(configured, words);
+        });
+    }
     pub fn observe(event: Event, value: u32) {
         let at = embassy_time::Instant::now().as_millis() as u32;
         critical_section::with(|_| {
@@ -466,6 +569,7 @@ mod device {
         });
     }
     pub fn sample(ui: u32, frames: u32, drops: u32) {
+        hardware_snapshot(false);
         let at = embassy_time::Instant::now().as_millis() as u32;
         critical_section::with(|_| {
             // SAFETY: same single-record access protocol as observe.
@@ -515,6 +619,9 @@ mod device {
                 },
                 on as u32,
             );
+            if on {
+                hardware_snapshot(true);
+            }
         }
         fn suspended(&mut self, on: bool) {
             observe(
@@ -611,6 +718,10 @@ mod tests {
         r.ring_head = u32::MAX;
         r.ring_total = u32::MAX;
         r.report = [u32::MAX; 3];
+        r.hardware = [Hardware {
+            words: [u32::MAX; 16],
+            commit: u32::MAX,
+        }; 3];
         for i in 0..REPORT_LINES {
             let line = report_line(&r, i).unwrap();
             assert!(line.bytes().len() <= 158);
@@ -680,5 +791,42 @@ mod tests {
         assert!(!next_boot.take_ready());
         next_boot.received(1);
         assert!(next_boot.take_ready());
+    }
+    #[test]
+    fn hardware_guard_preserves_configuration_and_first_last_same_write() {
+        let mut r = Record::fresh(1);
+        r.observe(Event::TxWrite, 100, 142);
+        let seq = r.progress[2].sequence;
+        let mut words = [0; 16];
+        words[..6].copy_from_slice(&[seq, 200, 100, 142, Event::TxWrite as u32, 2]);
+        r.capture_hardware(true, words);
+        assert_ne!(r.hardware[0].commit, 0);
+        r.capture_hardware(false, words);
+        assert_eq!(r.hardware[1].commit, 0);
+        words[1] = 1100;
+        r.capture_hardware(false, words);
+        assert_eq!(r.hardware[1].words[1], 1100);
+        words[1] = 9000;
+        r.capture_hardware(false, words);
+        assert_eq!(r.hardware[1].words[1], 1100);
+        assert_eq!(r.hardware[2].words[1], 9000);
+        assert_eq!(r.hardware[0].words[1], 200);
+        r.observe(Event::TxWritten, 9001, 142);
+        r.capture_hardware(false, words);
+        assert_eq!(r.hardware[2].words[1], 9000);
+        r.observe(Event::TxWrite, 10000, 20);
+        words[..6].copy_from_slice(&[
+            r.progress[2].sequence,
+            11000,
+            10000,
+            20,
+            Event::TxWrite as u32,
+            2,
+        ]);
+        r.capture_hardware(false, words);
+        assert_eq!(r.hardware[1].words[1], 11000);
+        assert_eq!(r.hardware[2].words[0], r.progress[2].sequence);
+        assert_eq!(core::mem::size_of::<Record>(), 600);
+        assert!(!Record { version: 2, ..r }.recognized());
     }
 }

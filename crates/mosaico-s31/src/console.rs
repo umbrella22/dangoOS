@@ -15,6 +15,8 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
+#[cfg(feature = "usb-session-diagnostics")]
+use crate::usb_diag_driver::Driver;
 use alloc::vec::Vec;
 use embassy_futures::select::{select, Either};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
@@ -23,6 +25,7 @@ use embassy_usb::{
     class::cdc_acm::{Receiver, Sender},
     driver::EndpointError,
 };
+#[cfg(not(feature = "usb-session-diagnostics"))]
 use esp_hal::usb::otg::embassy_usb_device::Driver;
 use log::{info, warn};
 use mosaico_s31::hub::push::{Effect, Session};

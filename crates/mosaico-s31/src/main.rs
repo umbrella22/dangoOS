@@ -50,6 +50,8 @@ mod crashlog;
 mod drivers;
 mod ota_runtime;
 mod tasks;
+#[cfg(feature = "usb-session-diagnostics")]
+mod usb_diag_driver;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::join4;
@@ -326,6 +328,8 @@ async fn usb_task(
     let usb = Usb::new_hs(usb_hs);
     let ep_out_buffer = make_static!([u8; 1024], [0u8; 1024]);
     let driver = Driver::new(usb, ep_out_buffer, UsbDriverConfig::default());
+    #[cfg(feature = "usb-session-diagnostics")]
+    let driver = usb_diag_driver::Driver(driver);
 
     let mut usb_config = embassy_usb::Config::new(0x303A, 0x4001);
     usb_config.max_packet_size_0 = 64;
