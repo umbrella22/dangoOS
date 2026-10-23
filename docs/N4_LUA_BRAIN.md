@@ -62,6 +62,33 @@ carries an expression. The source enum is preserved, including separate left and
 right keys/modules and power/boot buttons. The serialization is exhaustive for
 payload-bearing EventKind variants, so field names preserve their units.
 
+Since `8d49214`, internally generated inputs use a typed inbox instead of a JSON
+string. The existing `host.next()` callback returns at most seven scalar values;
+the resident Lua dispatcher constructs the same event tables inside protected
+`lua_resume` execution. Table allocation therefore remains subject to the VM's
+heap and instruction budgets. The public raw JSON `BrainVm::rpc` and
+`Controller::dispatch` paths remain available. Numbers retain the previous
+JSON decoder's floating-point mapping, including large timestamp rounding;
+booleans, unit variants, structured variants and one-based `args` retain their
+existing shapes. Output JSON and pointer nil/false semantics are unchanged.
+
+```mermaid
+flowchart LR
+    A[Internal typed input] --> B[Bounded scalar inbox]
+    B --> C[Protected Lua dispatcher]
+    D[Public raw JSON input] --> C
+    C --> E[Existing event table and callbacks]
+    E --> F[Existing bounded output contract]
+```
+
+Host differential tests cover the new input route, numeric boundaries, reset and
+expiry behavior, errors, OOM and instruction exhaustion. The 4,161 frozen oracle
+calls still exercise the raw route and are not counted as direct typed coverage.
+Builds and independent artifact checks are recorded in
+`target/brain-input-rpc-20261024/`; device timing after this change is not yet
+measured. The latest ordinary device image before this optimization has touch
+P95 51 ms against the unchanged 50 ms limit.
+
 Available output functions:
 
 | Function | Contract |

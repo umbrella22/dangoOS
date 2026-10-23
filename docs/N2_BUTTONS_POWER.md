@@ -72,7 +72,8 @@ shutdown action.
 1. The first confirmed AI long press latches `Shutdown::WaitingForSleep`.
    Releasing the button, repeat long events or further clicks cannot cancel or
    restart it. Detection does not depend on successfully enqueueing the emotion
-   event when the bounded channel is full.
+   event when the bounded channel is full. The same branch latches terminal
+   light shutdown, clears Lua/brain leases and rejects subsequent colour input.
 2. The UI returns to Home, reconciles the fox widget and stops an active Lua
    page through the existing page lifecycle. `Runtime::begin_shutdown` is
    terminal: it publishes Sleep and a neutral pose, ignores later sensor/touch
@@ -85,10 +86,42 @@ shutdown action.
    shutdown state machine. Failed or untagged uploads cannot arm the timer.
    The first successful tagged upload begins a 1500 ms display interval;
    subsequent frames do not restart it.
-5. After that interval the button task asserts GPIO57 low **once**, retaining
-   low if external power prevents immediate loss of execution. If no successful
-   Sleep upload arrives, it keeps GPIO57 released and logs a warning after
-   5 seconds. A display stall does not silently bypass the animation contract.
+5. Independently, the right-slot light task sends a fresh six-pixel black frame,
+   even if discovery reports no board, lights are disabled or the cached frame
+   was already black. Successful RMT completion followed by at least 280 µs
+   of low latch time acknowledges that shutdown. A prior or in-flight startup
+   clear cannot acknowledge the new shutdown request.
+6. The button task asserts GPIO57 low **once** after both the Sleep interval and
+   the shutdown light receipt, retaining low if external power prevents immediate
+   loss of execution. Missing receipts keep GPIO57 released with a warning;
+   neither display nor light failure has an unconditional cutoff fallback.
+
+```mermaid
+flowchart TD
+    A[First AI long] --> B[Terminal Sleep and light shutdown]
+    B --> C[Upload actual Sleep frame]
+    B --> D[Send fresh six-pixel black frame]
+    C --> E[Wait 1500 ms after successful upload]
+    D --> F{RMT TX successful?}
+    F -->|Yes| G[Wait at least 280 us latch]
+    F -->|No| H[No clear receipt; keep GPIO57 released]
+    E --> I{Sleep interval and shutdown clear both complete?}
+    G --> I
+    I -->|Yes| J[Assert GPIO57 low once]
+    I -->|No| H
+    style B fill:#bbdefb,color:#0d47a1
+    style D fill:#bbdefb,color:#0d47a1
+    style J fill:#c8e6c9,color:#1a5e20
+    style H fill:#fff3e0,color:#e65100
+```
+
+Startup also sends a black frame before allowing normal colour output. RMT
+errors that return the channel retry after a task yield. A transfer that never
+reports completion is bounded, drops the transaction and leaves light output
+unavailable until reboot; it cannot publish a successful clear receipt.
+Physical RESET/BOOT entry into ROM does not execute application cleanup.
+The application therefore makes no promise to clear a powered strip in ROM.
+GPIO60 supplies multiple peripherals and is not used as an isolated slot switch.
 
 An upload receipt proves the panel driver accepted all chunks, not optical
 visibility. Real panel behavior, supply cutoff and wake circuitry require
@@ -103,6 +136,7 @@ The implementation is host-testable without GPIO access. Targeted checks:
 cargo test -p mosaico-s31 --lib --offline buttons -- --nocapture
 cargo test -p mosaico-s31 --lib --offline behavior::runtime::tests -- --nocapture
 cargo test -p mosaico-lua --lib --offline tests_hardware -- --nocapture
+./scripts/test-drivers.sh
 cargo fw --offline
 cargo fmt --all -- --check
 git diff --check
@@ -117,7 +151,7 @@ onboard handles across slot detach/reinsert alongside original N1 contracts.
 Firmware compilation validates actual pin configuration, task spawning and the
 UI/plane wiring; no hardware operation is part of these checks.
 
-Pending physical checks:
+Physical acceptance categories (current observations are recorded below):
 
 - AI and BOOT short/double/long, bounce handling and boot-held release behavior;
   BOOT must not request power-off.
@@ -128,7 +162,9 @@ Pending physical checks:
 - AI long from Home, Settings and a Lua page: visible Sleep after any entrance,
   then one GPIO57 low assertion at least 1500 ms after the first Sleep upload.
 - Confirm real supply current falls to the expected off-state, including USB
-  and battery configurations; confirm AI can power the device back on.
+  and battery configurations; confirm the separate physical POWER button can
+  power the device back on. AI GPIO7 is an application input, not the SAM8108
+  power-latch button; see the [V1.2 hardware reference](lessons/esp-mosaico-v1.2-reference.md).
 - If a failed display upload can be induced safely, verify power remains on
   and the missing-frame warning appears; no unconditional cutoff fallback.
 
@@ -152,3 +188,51 @@ flashed during this stage.
 `receipt.json` records each implementation file hash and the base commit. The
 source digest hashes sorted `path + NUL + file_sha256 + LF` entries; documentation
 is excluded. Later integration builds require their own receipts.
+
+## 正式默认镜像现场结果：2026-10-23
+
+本节使用 `target/haptic-fixed-20261023/default.bin`，SHA-256
+`92fbffad3f5c69d3cb62c581cd897cdef1246c907ae06746f1d11772fd8d0be9`，
+源码提交 `1f97924`，CoreBoard V1.2，USB 连接、右槽交互板。当前结果不追写到早期
+N2 冻结分支。证据目录 `target/n1-live-20261023-143145-nmf7roas/`，汇总为
+`n2-left-results.json`。
+
+- `48` 主页：AI 单击进入 Listening；BOOT 短按、一次双击、长按均被捕获，长按不关机。
+  初轮 AI 双击未捕获，操作者在可见计数页确认此前间隔较长，认可现有 180ms 窗口。
+- `49` Lua：GPIO7 有 34/34 down/up、8 single、11 double、4 完整 long；GPIO61
+  有 26/26 down/up、7 single、7 double、2 完整 long。Lua AI long=800ms，系统
+  仍为1500ms；四次 1170/1322/1391/1245ms 保持均未关机。BOOT 2551/2172ms
+  长按亦未关机。实际回调计数不替代操作者精确动作次数，未计算零漏计率。
+- `50`、`51`、`53`：分别从 Home、Settings、前台 Lua 长按 AI，均只出现一次
+  shutdown latch，随后 Sleep 日志与 USB 断开；操作者确认关机，Settings/Lua
+  还明确确认睡觉表情短暂停留，Lua 页面先退出。三次会话 exit2 是断电断开。
+- `51`、`52`、`54`：独立 POWER 键均重新启动，默认脑与设备任务恢复。
+- `50`、`55` 已分别删除板载键与关机临时 Lua 探针。
+
+GPIO57 最终 assert 日志在这些断电窗口未送达，不能把断连推断成精确拉低时刻。
+尚未测电源电流、GPIO57 波形或精确光学1500ms；Home AI 双击映射、同一 VM 的换板句柄存活与上传失败保持供电仍需各自证据。
+`49` 的 CST9220 Header 警告和 ierr=1 单独保留，不与 `47` 稳定窗口的零增量混合。
+
+随后按先关机取板的顺序完成空槽测试。`58` 主页 AI 表情响应正常、BOOT双击及长按
+保持开机。`60` Lua 的 AI 有20/20 down/up、5 single、5 double、2完整long
+（1354/1113ms）；BOOT有12/12 down/up、5 single、3 double、1完整long（1872ms）。
+操作者确认正常。四个交互板 GPIO 均返回 unavailable，LED亦拒绝；`61`已删除探针。
+`59`是一次主机采集器交接时串口争用的失败尝试，不作为设备缺陷或验收证据；旧采集器
+结束后，`60`先abort未完成上传，再重新完整上传并取得END。后续恢复右槽在`63`确认。
+
+**新缺陷：关机后灯带仍亮。** 操作者在右槽恢复后、进入触摸诊断下载模式前反馈
+“灯带卡住了，我现在关机它依旧亮着，进入下载模式还是亮着”。此前三页面结果只证明
+Sleep、屏幕熄灭与USB断开，没有覆盖灯带关机释放；N2不视为整体验收通过。
+清灯修复首轮主机产物与源码收据位于
+`target/lights-shutdown-20261023/receipt.json`。该归档未烧录，覆盖 9 项独立生命周期 /
+按键测试与 257 项 S31 测试；后续组合镜像有独立收据。WS2812 保留颜色的可能性
+不代替电气测量。
+
+`1c793c5`、`cc949c9` 的组合诊断镜像（SHA `2d0895c9…`）完成三处回归：
+`68` Lua 六灯交替红绿页、`69` Settings 预览、`70` Home。每次日志都按顺序出现一次
+shutdown latch、Shutdown 黑帧 / 至少280µs latch 回执、Sleep 与 USB 断开；操作者
+分别反馈“全部正常，关机以后表情显示，灯也熄灭了”、“ok是正常的”、“一切正常”。
+该应用关机残灯用例已通过。RMT 回执和目视熄灭是两条证据；仍未测关机电流、GPIO57
+波形或精确光学时间，不能保证物理 RESET 进入 ROM 时执行清理。完整记录见
+`target/n1-live-20261023-143145-nmf7roas/lights-shutdown-results.json`。普通镜像恢复后，
+`73` 已删除 `n2_lights_shutdown_probe`。
