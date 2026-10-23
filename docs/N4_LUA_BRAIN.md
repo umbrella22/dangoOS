@@ -85,8 +85,9 @@ Host differential tests cover the new input route, numeric boundaries, reset and
 expiry behavior, errors, OOM and instruction exhaustion. The 4,161 frozen oracle
 calls still exercise the raw route and are not counted as direct typed coverage.
 Builds and independent artifact checks are recorded in
-`target/brain-input-rpc-20261024/`; device timing after this change is not yet
-measured. The latest ordinary device image before this optimization has touch
+`target/brain-input-rpc-20261024/`. The change subsequently booted successfully
+in the USB diagnostic image; ordinary-image touch timing is not yet measured.
+The latest ordinary device image before this optimization has touch
 P95 51 ms against the unchanged 50 ms limit.
 
 Available output functions:
