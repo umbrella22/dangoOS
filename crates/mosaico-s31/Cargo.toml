@@ -18,6 +18,8 @@ ota-test-panic = []
 haptic-diagnostics = []
 # Read-only per-sample touch/edge receipts, capped per port activation.
 touch-key-diagnostics = []
+# Bounded touch-to-plane phase receipts; timing and behavior remain unchanged.
+touch-latency-diagnostics = []
 
 [dependencies]
 sha2 = { version = "0.10", default-features = false }

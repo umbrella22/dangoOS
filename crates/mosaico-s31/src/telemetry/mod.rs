@@ -5,3 +5,6 @@
 
 pub mod display;
 pub mod latency;
+
+#[cfg(feature = "touch-latency-diagnostics")]
+pub mod touch_trace;

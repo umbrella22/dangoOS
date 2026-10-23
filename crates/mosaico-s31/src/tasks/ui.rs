@@ -287,6 +287,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
         // Wall-clock animation step. The loop period is a floor, not a fixed
         // timestep: a long render must slow the engine down by the same amount
         // instead of replaying it faster.
+        #[cfg(feature = "touch-latency-diagnostics")]
+        mosaico_s31::telemetry::touch_trace::with(|t| t.begin_loop());
         let now = Instant::now();
         let elapsed_ms = now
             .duration_since(last_tick)
@@ -327,6 +329,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
         // Drained before the render so a shake that happened during the last
         // frame is part of this one. The channel is bounded and the producer
         // drops the oldest non-edge event, so this loop always terminates.
+        #[cfg(feature = "touch-latency-diagnostics")]
+        let trace_sensor_started = latency::now_us();
         let mut sensor_count = 0u32;
         let mut sensors_changed = false;
         while let Ok(event) = SENSOR_EVENTS.try_receive() {
@@ -355,11 +359,20 @@ pub async fn ui_task(mut plane: PlaneUi) {
             warn!("ui_task: sensor drain hit {SENSOR_DRAIN_MAX} events in one loop");
         }
 
+        #[cfg(feature = "touch-latency-diagnostics")]
+        mosaico_s31::telemetry::touch_trace::with(|t| {
+            t.sensor(latency::now_us().saturating_sub(trace_sensor_started))
+        });
+
         // ---- pointer queue -> personality engine ----
         // Every event is delivered in order: collapsing would swallow the press
         // edge of a tap that starts and ends inside one 5 ms loop.
         // Edge swipes go to the shell; the rest to the fox (Home) or LVGL.
         while let Ok(event) = INPUT.try_receive() {
+            #[cfg(feature = "touch-latency-diagnostics")]
+            let trace_dequeue = latency::now_us();
+            #[cfg(feature = "touch-latency-diagnostics")]
+            let trace_rpc_before = mosaico_s31::telemetry::touch_trace::with(|t| t.rpc_snapshot());
             let sample = PointerSample {
                 at_ms: (event.at_us / 1000).max(now_ms),
                 x: event.x as i32,
@@ -383,6 +396,15 @@ pub async fn ui_task(mut plane: PlaneUi) {
                     // latency sample.
                     let acted = runtime.on_pointer(sample);
                     if event.pressed && !was_pressed && acted && pending_touch.is_none() {
+                        #[cfg(feature = "touch-latency-diagnostics")]
+                        mosaico_s31::telemetry::touch_trace::with(|t| {
+                            t.accept(
+                                event.at_us,
+                                trace_dequeue,
+                                latency::now_us(),
+                                trace_rpc_before,
+                            )
+                        });
                         pending_touch = Some(event.at_us);
                     }
                 }
@@ -655,6 +677,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
             last_stats = Instant::now();
             let (samples, p50, p95, max) = latency::summary();
             let heartbeat = HEARTBEATS.fetch_add(1, Ordering::Relaxed) + 1;
+            #[cfg(feature = "touch-latency-diagnostics")]
+            mosaico_s31::telemetry::touch_trace::report();
             let fps = display_stats::FPS.load(Ordering::Relaxed);
             let transfer_ms = display_stats::AVG_TRANSFER_US.load(Ordering::Relaxed) / 1000;
             let shown = runtime.expression();

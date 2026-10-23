@@ -589,12 +589,16 @@ impl CustomWidget for FoxWidget {
         let frame_due = self.since_frame_ms >= FRAME_INTERVAL_MS;
         let urgent = self.control.urgent.replace(false);
         if !frame_due && !urgent {
+            #[cfg(all(feature = "touch-latency-diagnostics", target_os = "none"))]
+            crate::telemetry::touch_trace::with(|t| t.cadence_skip());
             return Ok(());
         }
 
         // Both slots busy (one on the wire, one shown or being written): keep
         // the frame due, and the urgency, for the next tick.
         let Some(mut lease) = pool.acquire() else {
+            #[cfg(all(feature = "touch-latency-diagnostics", target_os = "none"))]
+            crate::telemetry::touch_trace::with(|t| t.pool_miss());
             if urgent {
                 self.control.mark_urgent();
             }
@@ -610,6 +614,10 @@ impl CustomWidget for FoxWidget {
         let scene = self.animator.scene(input);
         self.renderer.render(&scene, lease.pixels_mut());
         self.control.last_render_us.set(elapsed_us(render_started));
+        #[cfg(all(feature = "touch-latency-diagnostics", target_os = "none"))]
+        crate::telemetry::touch_trace::with(|t| {
+            t.raster(render_started, mono_us(), frame_due, urgent)
+        });
         FoxControl::bump(&self.control.rendered);
         lease.publish();
         self.control.rendered_pose.set(Some(scene.pose));

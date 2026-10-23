@@ -721,7 +721,13 @@ impl Controller {
         self.active.as_mut().map(BrainVm::output)
     }
     pub fn dispatch(&mut self, input: String, now: u64) -> Option<String> {
+        #[cfg(all(feature = "touch-latency-diagnostics", target_os = "none"))]
+        let trace_started = crate::telemetry::touch_trace::now();
         let result = self.active.as_mut()?.rpc(input, now);
+        #[cfg(all(feature = "touch-latency-diagnostics", target_os = "none"))]
+        crate::telemetry::touch_trace::with(|t| {
+            t.rpc(crate::telemetry::touch_trace::now().saturating_sub(trace_started))
+        });
         match result {
             Ok(v) => Some(v),
             Err(e) => {

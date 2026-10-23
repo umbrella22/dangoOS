@@ -149,9 +149,12 @@ static SAMPLES: critical_section::Mutex<RefCell<SampleRing>> =
 /// the elapsed microseconds divided by 1000 (saturating at `u32::MAX`).
 #[cfg(target_os = "none")]
 pub fn note_first_pixel(at_us: u64) {
-    let elapsed_us = now_us().saturating_sub(at_us);
+    let sampled_at = now_us();
+    let elapsed_us = sampled_at.saturating_sub(at_us);
     let millis = (elapsed_us / 1000).min(u32::MAX as u64) as u32;
     critical_section::with(|cs| SAMPLES.borrow_ref_mut(cs).record(millis));
+    #[cfg(feature = "touch-latency-diagnostics")]
+    super::touch_trace::with(|t| t.finish(at_us, sampled_at));
 }
 
 /// `(count, p50, p95, max)` in milliseconds.

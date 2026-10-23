@@ -149,7 +149,15 @@ impl PlaneUi {
     /// its touch tag is carried over so a press is never lost from the
     /// latency statistics.
     pub fn submit(&mut self, mut job: PlaneJob) {
+        #[cfg(feature = "touch-latency-diagnostics")]
+        let trace_original = job.touch_at_us;
+        #[cfg(feature = "touch-latency-diagnostics")]
+        let mut trace_stale = None;
         if let Some(stale) = JOBS.try_take() {
+            #[cfg(feature = "touch-latency-diagnostics")]
+            {
+                trace_stale = stale.touch_at_us;
+            }
             job.touch_at_us = match (stale.touch_at_us, job.touch_at_us) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
@@ -163,6 +171,15 @@ impl PlaneUi {
                 };
             }
         }
+        #[cfg(feature = "touch-latency-diagnostics")]
+        mosaico_s31::telemetry::touch_trace::with(|t| {
+            t.submit(
+                trace_original,
+                trace_stale,
+                job.touch_at_us,
+                latency::now_us(),
+            )
+        });
         JOBS.signal(job);
     }
 }
@@ -233,6 +250,10 @@ async fn run_plane(
 
     loop {
         let job = display.next_job().await;
+        #[cfg(feature = "touch-latency-diagnostics")]
+        if let Some(tag) = job.touch_at_us {
+            mosaico_s31::telemetry::touch_trace::with(|t| t.pickup(tag, latency::now_us()));
+        }
 
         if job.touch_at_us.is_some() {
             TE_BYPASS.fetch_add(1, Ordering::Relaxed);
