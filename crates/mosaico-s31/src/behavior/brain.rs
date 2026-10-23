@@ -103,8 +103,21 @@ impl Default for Output {
         }
     }
 }
+/// Commands generated internally; raw JSON remains the public compatibility path.
+#[derive(Clone, Copy, Debug)]
+enum Input {
+    Tick(u64),
+    Sensor(SensorEvent),
+    Pointer(super::personality::PointerSample),
+    Interaction(u64),
+    IgnoreTouch(u64),
+}
+enum Inbox {
+    Raw(String),
+    Typed(Input),
+}
 struct BrainHost {
-    inbox: Option<String>,
+    inbox: Option<Inbox>,
     response: Option<String>,
     output: Output,
     now: u64,
@@ -117,10 +130,112 @@ fn next(c: &mut Call) -> Result<Ret, Error> {
         .host::<BrainHost>()
         .ok_or_else(|| Error::msg("brain host missing"))?;
     if let Some(input) = host.inbox.take() {
-        c.push_str(&input);
-        Ok(Ret::Values(1))
+        match input {
+            Inbox::Raw(raw) => {
+                c.push_str(&raw);
+                Ok(Ret::Values(1))
+            }
+            Inbox::Typed(input) => Ok(input.push(c)),
+        }
     } else {
         Ok(Ret::Yield(Request::Host(IDLE)))
+    }
+}
+impl Input {
+    /// Return at most seven scalars through the existing host trampoline.
+    /// Allocate tables only in Lua, under lua_resume's protected boundary and
+    /// heap cap. JSON's decoder pushes all numbers as floats, including u64s.
+    fn push(self, c: &mut Call) -> Ret {
+        match self {
+            Self::Tick(now) => {
+                c.push_number(1.);
+                c.push_number(now as f64);
+                Ret::Values(2)
+            }
+            Self::Pointer(p) => {
+                c.push_number(2.);
+                c.push_number(p.at_ms as f64);
+                c.push_number(p.x as f64);
+                c.push_number(p.y as f64);
+                c.push_bool(p.pressed);
+                Ret::Values(5)
+            }
+            Self::Interaction(now) | Self::IgnoreTouch(now) => {
+                c.push_number(if matches!(self, Self::Interaction(_)) {
+                    3.
+                } else {
+                    4.
+                });
+                c.push_number(now as f64);
+                Ret::Values(2)
+            }
+            Self::Sensor(e) => {
+                c.push_number(5.);
+                c.push_number(e.at_ms as f64);
+                c.push_str(&format!("{:?}", e.source));
+                match e.kind {
+                    EventKind::Accel {
+                        ax_mg,
+                        ay_mg,
+                        az_mg,
+                    } => {
+                        c.push_str("Accel");
+                        for n in [ax_mg, ay_mg, az_mg] {
+                            c.push_number(n as f64);
+                        }
+                        Ret::Values(7)
+                    }
+                    EventKind::Gyro {
+                        gx_dps,
+                        gy_dps,
+                        gz_dps,
+                    } => {
+                        c.push_str("Gyro");
+                        for n in [gx_dps, gy_dps, gz_dps] {
+                            c.push_number(n as f64);
+                        }
+                        Ret::Values(7)
+                    }
+                    EventKind::MagneticEdge { confidence } => {
+                        c.push_str("MagneticEdge");
+                        c.push_number(confidence as f64);
+                        Ret::Values(5)
+                    }
+                    EventKind::LightLevel(n) | EventKind::BatteryLevel(n) => {
+                        c.push_str(if matches!(e.kind, EventKind::LightLevel(_)) {
+                            "LightLevel"
+                        } else {
+                            "BatteryLevel"
+                        });
+                        c.push_number(n as f64);
+                        Ret::Values(5)
+                    }
+                    EventKind::Presence(value) => {
+                        c.push_str("Presence");
+                        c.push_bool(value);
+                        Ret::Values(5)
+                    }
+                    EventKind::ModuleInserted(value) | EventKind::ModuleRemoved(value) => {
+                        c.push_str(if matches!(e.kind, EventKind::ModuleInserted(_)) {
+                            "ModuleInserted"
+                        } else {
+                            "ModuleRemoved"
+                        });
+                        c.push_str(&format!("{value:?}"));
+                        Ret::Values(5)
+                    }
+                    EventKind::Activity(value) => {
+                        c.push_str("Activity");
+                        c.push_str(&format!("{value:?}"));
+                        Ret::Values(5)
+                    }
+                    unit => {
+                        c.push_str(&format!("{unit:?}"));
+                        Ret::Values(4)
+                    }
+                }
+            }
+        }
     }
 }
 fn complete(c: &mut Call) -> Result<Ret, Error> {
@@ -244,9 +359,21 @@ app.tick(START_MS)
 local engines={}
 host.complete('null')
 while true do
-    local raw=host.next()
+    local raw,a,b,kind,d,e,f=host.next()
     if raw then
-        local c=json.decode(raw)
+        local c
+        if type(raw)=='string' then c=json.decode(raw)
+        elseif raw==1 then c={op='tick',input=a}
+        elseif raw==2 then c={op='event',input={type='PointerSample',at_ms=a,x=b,y=kind,pressed=d}}
+        elseif raw==3 or raw==4 then c={op='event',input={type=raw==3 and 'Interaction' or 'IgnoreTouch',at_ms=a}}
+        else
+            local k=kind
+            if kind=='Accel' then k={type=kind,ax_mg=d,ay_mg=e,az_mg=f}
+            elseif kind=='Gyro' then k={type=kind,gx_dps=d,gy_dps=e,gz_dps=f}
+            elseif kind=='MagneticEdge' then k={type=kind,confidence=d}
+            elseif d~=nil then k={type=kind,args={d}} end
+            c={op='event',input={type='SensorEvent',at_ms=a,source=b,kind=k}}
+        end
         local result
         if c.op=='event' then result=app.on_event(c.input);assert(result==nil or type(result)=='boolean','on_event must return boolean or nil')
         elseif c.op=='tick' then app.tick(c.input)
@@ -357,6 +484,13 @@ impl BrainVm {
         Err("callback resume budget exhausted".into())
     }
     pub fn rpc(&mut self, raw: String, now: u64) -> Result<String, String> {
+        self.rpc_inbox(Inbox::Raw(raw), now)
+    }
+    #[cfg(test)]
+    fn rpc_typed(&mut self, input: Input, now: u64) -> Result<String, String> {
+        self.rpc_inbox(Inbox::Typed(input), now)
+    }
+    fn rpc_inbox(&mut self, input: Inbox, now: u64) -> Result<String, String> {
         let h = self.vm.host_mut::<BrainHost>().unwrap();
         h.now = now;
         h.output.haptic = None;
@@ -364,7 +498,7 @@ impl BrainVm {
         if h.output.play.is_some_and(|(_, end)| now >= end) {
             h.output.play = None;
         }
-        h.inbox = Some(raw);
+        h.inbox = Some(input);
         self.vm.set_callback_budget(CALLBACK_HOOKS, CALLBACK_US);
         self.finish()
     }
@@ -618,6 +752,235 @@ mod tests {
         assert!(brain.active());
     }
 
+    fn raw_command(input: Input) -> (String, u64) {
+        match input {
+            Input::Tick(now) => (format!("{{\"op\":\"tick\",\"input\":{now}}}"), now),
+            Input::Sensor(e) => (format!("{{\"op\":\"event\",\"input\":{}}}", sensor_json(e)), e.at_ms),
+            Input::Pointer(p) => (format!("{{\"op\":\"event\",\"input\":{{\"type\":\"PointerSample\",\"at_ms\":{},\"x\":{},\"y\":{},\"pressed\":{}}}}}",p.at_ms,p.x,p.y,p.pressed), p.at_ms),
+            Input::Interaction(now) => (format!("{{\"op\":\"event\",\"input\":{{\"type\":\"Interaction\",\"at_ms\":{now}}}}}"), now),
+            Input::IgnoreTouch(until) => (format!("{{\"op\":\"event\",\"input\":{{\"type\":\"IgnoreTouch\",\"at_ms\":{until}}}}}"), 0),
+        }
+    }
+    fn inputs() -> alloc::vec::Vec<Input> {
+        use super::super::affect::{EventSource::*, ModuleKind};
+        use EventKind::*;
+        let mut kinds = alloc::vec![
+            Accel {
+                ax_mg: i16::MIN,
+                ay_mg: 0,
+                az_mg: i16::MAX
+            },
+            Gyro {
+                gx_dps: i16::MAX,
+                gy_dps: i16::MIN,
+                gz_dps: -1
+            },
+            TouchPet,
+            TouchPoke,
+            LightLevel(0),
+            LightLevel(255),
+            Presence(false),
+            Presence(true),
+            KeyDown,
+            KeyUp,
+            ButtonShort,
+            ButtonLong,
+            ButtonDouble,
+            MagneticApproach,
+            MagneticContact,
+            MagneticRelease,
+            MagneticOrbit,
+            MagneticEdge { confidence: 255 },
+            ModuleInserted(ModuleKind::Interaction),
+            ModuleInserted(ModuleKind::Camera),
+            ModuleRemoved(ModuleKind::Interaction),
+            ModuleRemoved(ModuleKind::Camera),
+            BatteryLevel(0),
+            BatteryLevel(255),
+        ];
+        kinds.extend(Expression::ALL.into_iter().map(Activity));
+        let sources = [
+            Imu,
+            Touch,
+            Light,
+            Pir,
+            KeyLeft,
+            KeyRight,
+            ButtonPower,
+            ButtonBoot,
+            Bmm150,
+            ModuleRight,
+            ModuleLeft,
+            Battery,
+            System,
+        ];
+        let mut commands = alloc::vec::Vec::new();
+        for (index, kind) in kinds.into_iter().enumerate() {
+            commands.push(Input::Sensor(SensorEvent {
+                at_ms: index as u64 * 100,
+                source: sources[index % sources.len()],
+                kind,
+            }));
+        }
+        // Include JSON number rounding boundaries, beyond i64 and at u64 max.
+        for now in [
+            0,
+            1,
+            1_000,
+            (1u64 << 53) - 1,
+            1u64 << 53,
+            (1u64 << 53) + 1,
+            (1u64 << 63) - 1,
+            1u64 << 63,
+            u64::MAX,
+        ] {
+            commands.extend([
+                Input::Tick(now),
+                Input::Interaction(now),
+                Input::IgnoreTouch(now),
+            ]);
+            for pressed in [false, true] {
+                commands.push(Input::Pointer(super::super::personality::PointerSample {
+                    at_ms: now,
+                    x: i32::MIN,
+                    y: i32::MAX,
+                    pressed,
+                }));
+            }
+        }
+        commands
+    }
+    #[test]
+    fn typed_inputs_match_raw_structure_and_number_observations() {
+        // A sandboxed user brain observes exact structure, array key types,
+        // numeric subtypes and tostring; read it back via unchanged raw oracle.
+        let source = r#"
+local last
+local function signature(v)
+ local t=type(v)
+ if t=='number' then return t..':'..math.type(v)..':'..tostring(v) end
+ if t~='table' then return t..':'..tostring(v) end
+ local keys={};for k in pairs(v) do keys[#keys+1]=k end
+ table.sort(keys,function(a,b)return tostring(a)<tostring(b) end)
+ local out={'table['}
+ for _,k in ipairs(keys) do out[#out+1]=signature(k)..'='..signature(v[k])..';' end
+ return table.concat(out)..']'
+end
+return {on_event=function(e)last=signature(e);return e.pressed end,
+ tick=function(n)last=signature(n) end,
+ Affect={new=function()return {read=function()return last end}end}}
+"#;
+        let mut raw = BrainVm::new(source, 0, &mosaico_lua::GLOBAL_ALLOCATOR, None).unwrap();
+        let mut typed = BrainVm::new(source, 0, &mosaico_lua::GLOBAL_ALLOCATOR, None).unwrap();
+        for brain in [&mut raw, &mut typed] {
+            brain
+                .rpc(
+                    r#"{"op":"oracle","method":"affect.new","engine":1,"input":0}"#.into(),
+                    0,
+                )
+                .unwrap();
+        }
+        for input in inputs() {
+            let (json, now) = raw_command(input);
+            assert_eq!(raw.rpc(json, now), typed.rpc_typed(input, now), "{input:?}");
+            assert_eq!(raw.output(), typed.output(), "{input:?}");
+            let read = r#"{"op":"oracle","method":"affect.read","engine":1,"input":null}"#;
+            assert_eq!(
+                raw.rpc(read.into(), now),
+                typed.rpc(read.into(), now),
+                "{input:?}"
+            );
+        }
+    }
+    #[test]
+    fn typed_default_brain_replays_raw_outputs_and_expiry() {
+        let mut raw =
+            BrainVm::new(DEFAULT_SOURCE, 0, &mosaico_lua::GLOBAL_ALLOCATOR, None).unwrap();
+        let mut typed =
+            BrainVm::new(DEFAULT_SOURCE, 0, &mosaico_lua::GLOBAL_ALLOCATOR, None).unwrap();
+        for input in inputs()
+            .into_iter()
+            .chain((0..120).map(|n| Input::Tick(n * 100)))
+        {
+            let (json, now) = raw_command(input);
+            assert_eq!(raw.rpc(json, now), typed.rpc_typed(input, now), "{input:?}");
+            assert_eq!(raw.output(), typed.output(), "{input:?}");
+        }
+        // Custom callback makes reset order, side-effect order and host now
+        // observable; IgnoreTouch deliberately uses host now=0, not until.
+        let source = r#"local n=0
+return {tick=function()end,on_event=function(e)
+n=n+1
+if n==1 then fox.play('Happy',10);haptic.play('Happy');fox.command('Hub');fox.set_expression('Happy');fox.set_expression('Angry');led_strip.set(1,1,2,3)
+elseif e.type=='IgnoreTouch' then fox.play('Curious',7) end
+end}"#;
+        raw = BrainVm::new(source, 0, &mosaico_lua::GLOBAL_ALLOCATOR, None).unwrap();
+        typed = BrainVm::new(source, 0, &mosaico_lua::GLOBAL_ALLOCATOR, None).unwrap();
+        for input in [
+            Input::Interaction(100),
+            Input::Tick(109),
+            Input::Tick(110),
+            Input::IgnoreTouch(999),
+            Input::Tick(6),
+            Input::Tick(7),
+        ] {
+            let (json, now) = raw_command(input);
+            assert_eq!(raw.rpc(json, now), typed.rpc_typed(input, now));
+            assert_eq!(raw.output(), typed.output());
+            match input {
+                Input::Interaction(_) => {
+                    assert_eq!(typed.output().play, Some((FoxPose::Happy, 110)))
+                }
+                Input::IgnoreTouch(_) => {
+                    assert_eq!(typed.output().play, Some((FoxPose::Curious, 7)))
+                }
+                Input::Tick(109) => {
+                    assert!(typed.output().haptic.is_none());
+                    assert!(typed.output().command.is_none());
+                    assert!(typed.output().play.is_some());
+                }
+                Input::Tick(110) | Input::Tick(7) => assert!(typed.output().play.is_none()),
+                _ => {}
+            }
+        }
+    }
+    #[test]
+    fn typed_controller_acceptance_and_failures_match_raw_fallback() {
+        for result in [
+            "nil",
+            "false",
+            "true",
+            "42",
+            "'invalid'",
+            "error('failure')",
+            "(function()while true do end end)()",
+            "(function()local t={} while true do t[#t+1]={1,2,3,4} end end)()",
+        ] {
+            let source=format!("return {{tick=function()end,on_event=function()fox.set_expression('Happy');return {result} end}}");
+            let mut raw =
+                Controller::new(&source, 0, &mosaico_lua::GLOBAL_ALLOCATOR, None).unwrap();
+            let mut typed =
+                Controller::new(&source, 0, &mosaico_lua::GLOBAL_ALLOCATOR, None).unwrap();
+            let p = super::super::personality::PointerSample {
+                at_ms: 123,
+                x: 1,
+                y: 2,
+                pressed: true,
+            };
+            let (json, now) = raw_command(Input::Pointer(p));
+            let expected = raw.dispatch(json, now).is_some_and(|v| v != "false");
+            assert_eq!(typed.pointer(p), expected, "{result}");
+            assert_eq!(raw.active(), typed.active(), "{result}");
+            assert_eq!(raw.output(), typed.output(), "{result}");
+            assert_eq!(raw.error().is_some(), typed.error().is_some(), "{result}");
+            if !raw.active() {
+                raw.tick(200);
+                typed.tick(200);
+                assert!(!typed.active());
+                assert!(typed.output().is_none());
+            }
+        }
+    }
     #[test]
     fn frozen_native_oracle_all_calls() {
         let oracle: Value = serde_json::from_slice(include_bytes!(
@@ -721,9 +1084,15 @@ impl Controller {
         self.active.as_mut().map(BrainVm::output)
     }
     pub fn dispatch(&mut self, input: String, now: u64) -> Option<String> {
+        self.dispatch_inbox(Inbox::Raw(input), now)
+    }
+    fn dispatch_typed(&mut self, input: Input, now: u64) -> Option<String> {
+        self.dispatch_inbox(Inbox::Typed(input), now)
+    }
+    fn dispatch_inbox(&mut self, input: Inbox, now: u64) -> Option<String> {
         #[cfg(all(feature = "touch-latency-diagnostics", target_os = "none"))]
         let trace_started = crate::telemetry::touch_trace::now();
-        let result = self.active.as_mut()?.rpc(input, now);
+        let result = self.active.as_mut()?.rpc_inbox(input, now);
         #[cfg(all(feature = "touch-latency-diagnostics", target_os = "none"))]
         crate::telemetry::touch_trace::with(|t| {
             t.rpc(crate::telemetry::touch_trace::now().saturating_sub(trace_started))
@@ -738,33 +1107,24 @@ impl Controller {
         }
     }
     pub fn tick(&mut self, now: u64) {
-        self.dispatch(format!("{{\"op\":\"tick\",\"input\":{now}}}"), now);
+        self.dispatch_typed(Input::Tick(now), now);
     }
     pub fn event(&mut self, event: SensorEvent) {
-        self.dispatch(
-            format!("{{\"op\":\"event\",\"input\":{}}}", sensor_json(event)),
-            event.at_ms,
-        );
+        self.dispatch_typed(Input::Sensor(event), event.at_ms);
     }
     pub fn pointer(&mut self, p: super::personality::PointerSample) -> bool {
-        self.dispatch(format!("{{\"op\":\"event\",\"input\":{{\"type\":\"PointerSample\",\"at_ms\":{},\"x\":{},\"y\":{},\"pressed\":{}}}}}",p.at_ms,p.x,p.y,p.pressed),p.at_ms).is_some_and(|v|v!="false")
+        self.dispatch_typed(Input::Pointer(p), p.at_ms)
+            .is_some_and(|v| v != "false")
     }
     pub fn interaction(&mut self, now: u64) {
-        self.dispatch(
-            format!("{{\"op\":\"event\",\"input\":{{\"type\":\"Interaction\",\"at_ms\":{now}}}}}"),
-            now,
-        );
+        self.dispatch_typed(Input::Interaction(now), now);
     }
     pub fn ignore_touch(&mut self, until: u64) {
-        self.dispatch(
-            format!(
-                "{{\"op\":\"event\",\"input\":{{\"type\":\"IgnoreTouch\",\"at_ms\":{until}}}}}"
-            ),
-            0,
-        );
+        self.dispatch_typed(Input::IgnoreTouch(until), 0);
     }
 }
 use super::affect::{EventKind, SensorEvent};
+#[cfg(test)]
 fn sensor_json(e: SensorEvent) -> String {
     let kind = match e.kind {
         EventKind::Accel {
