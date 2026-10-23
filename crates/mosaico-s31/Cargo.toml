@@ -20,6 +20,8 @@ haptic-diagnostics = []
 touch-key-diagnostics = []
 # Bounded touch-to-plane phase receipts; timing and behavior remain unchanged.
 touch-latency-diagnostics = []
+# Retained USB session observations only; no reconnect policy changes.
+usb-session-diagnostics = []
 
 [dependencies]
 sha2 = { version = "0.10", default-features = false }

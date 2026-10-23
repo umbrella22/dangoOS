@@ -72,6 +72,8 @@ use esp_hal::{
 };
 use esp_rtos::embassy::InterruptExecutor;
 use log::{info, warn};
+#[cfg(feature = "usb-session-diagnostics")]
+use mosaico_s31::telemetry::usb_session as usb_diag;
 
 use crate::drivers::{display, shared_i2c, subboard, touch};
 use crate::tasks::{haptic, input, lights, lua, plane, sensors, ui};
@@ -79,6 +81,8 @@ use crate::tasks::{haptic, input, lights, lua, plane, sensors, ui};
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
     ota_runtime::record_boot_attempt();
+    #[cfg(feature = "usb-session-diagnostics")]
+    usb_diag::begin_boot();
     console::install_logger();
     crashlog::report_last_boot();
 
@@ -115,6 +119,8 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
     info!("esp-rtos scheduler started (TIMG0 timer, FROM_CPU_INTR0)");
+    #[cfg(feature = "usb-session-diagnostics")]
+    spawner.spawn(usb_diagnostic_sampler().unwrap());
 
     // BSP power switch is open-drain, active low: high means released, never
     // push-pull high. Inputs are low-active with pull-ups, including BOOT.
@@ -340,6 +346,8 @@ async fn usb_task(
         &mut [],
         control_buf,
     );
+    #[cfg(feature = "usb-session-diagnostics")]
+    builder.handler(make_static!(usb_diag::Handler, usb_diag::Handler));
     // High-speed CDC requires a 512-byte packet size.
     let class = CdcAcmClass::new(&mut builder, cdc_state, 512);
     let (mut tx, mut rx) = class.split();
@@ -353,4 +361,18 @@ async fn usb_task(
         mount_storage(flash),
     )
     .await;
+}
+
+#[cfg(feature = "usb-session-diagnostics")]
+#[embassy_executor::task]
+async fn usb_diagnostic_sampler() {
+    use core::sync::atomic::Ordering;
+    loop {
+        embassy_time::Timer::after_secs(1).await;
+        usb_diag::sample(
+            ui::HEARTBEATS.load(Ordering::Relaxed),
+            mosaico_s31::telemetry::display::FRAMES.load(Ordering::Relaxed),
+            console::diagnostic_log_drops(),
+        );
+    }
 }

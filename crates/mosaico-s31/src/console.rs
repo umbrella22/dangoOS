@@ -155,6 +155,49 @@ fn status_record(connected: bool) -> LogRecord {
     line.finish()
 }
 
+#[cfg(feature = "usb-session-diagnostics")]
+macro_rules! usb_trace {
+    ($event:ident, $value:expr) => {
+        mosaico_s31::telemetry::usb_session::observe(
+            mosaico_s31::telemetry::usb_session::Event::$event,
+            $value,
+        )
+    };
+}
+#[cfg(not(feature = "usb-session-diagnostics"))]
+macro_rules! usb_trace {
+    ($event:ident, $value:expr) => {};
+}
+#[cfg(feature = "usb-session-diagnostics")]
+macro_rules! usb_write {
+    ($class:expr, $data:expr) => {
+        traced_write($class, $data).await
+    };
+}
+#[cfg(not(feature = "usb-session-diagnostics"))]
+macro_rules! usb_write {
+    ($class:expr, $data:expr) => {
+        $class.write_packet($data).await
+    };
+}
+#[cfg(feature = "usb-session-diagnostics")]
+async fn traced_write<'a>(
+    class: &mut Sender<'a, Driver<'a>>,
+    data: &[u8],
+) -> Result<(), EndpointError> {
+    usb_trace!(TxWrite, data.len() as u32);
+    let result = class.write_packet(data).await;
+    match result {
+        Ok(()) => usb_trace!(TxWritten, data.len() as u32),
+        Err(EndpointError::Disabled) => usb_trace!(TxDisabled, 0),
+        Err(EndpointError::BufferOverflow) => usb_trace!(TxOverflow, 0),
+    }
+    result
+}
+#[cfg(feature = "usb-session-diagnostics")]
+pub fn diagnostic_log_drops() -> u32 {
+    LOG_DROPS.load(Ordering::Relaxed)
+}
 /// Pump queued log lines to the CDC-ACM class.
 ///
 /// Waits for the host to open the port, drains the bounded channel, and sends a
@@ -162,25 +205,50 @@ fn status_record(connected: bool) -> LogRecord {
 /// when no logs are produced.
 pub async fn pump<'a>(class: &mut Sender<'a, Driver<'a>>) {
     loop {
+        usb_trace!(TxWait, 0);
         class.wait_connection().await;
+        usb_trace!(TxReady, 0);
+        usb_trace!(DtrWait, class.dtr() as u32);
         // Hold the queue until a host opens the port (DTR), so boot lines
         // are not sent into a port nobody reads.
         while !class.dtr() {
             Timer::after_millis(20).await;
         }
+        usb_trace!(DtrReady, class.dtr() as u32);
+        #[cfg(feature = "usb-session-diagnostics")]
+        if let Some(previous) = mosaico_s31::telemetry::usb_session::take_previous() {
+            let mut completed = 0;
+            let mut terminal = 1;
+            let mut last_index = 0;
+            for index in 0..mosaico_s31::telemetry::usb_session::REPORT_LINES {
+                let Some(line) = mosaico_s31::telemetry::usb_session::report_line(&previous, index)
+                else {
+                    break;
+                };
+                last_index = index as u32;
+                mosaico_s31::telemetry::usb_session::report_progress(last_index, completed, 0);
+                let mut bytes = [0u8; 160];
+                let n = line.bytes().len();
+                bytes[..n].copy_from_slice(line.bytes());
+                bytes[n..n + 2].copy_from_slice(b"\r\n");
+                if usb_write!(class, &bytes[..n + 2]).is_err() {
+                    terminal = 2;
+                    break;
+                }
+                completed += 1;
+                mosaico_s31::telemetry::usb_session::report_progress(last_index, completed, 0);
+            }
+            mosaico_s31::telemetry::usb_session::report_progress(last_index, completed, terminal);
+        }
         CONNECTED.store(true, Ordering::Relaxed);
         let mut next_status = embassy_time::Instant::now() + CONSOLE_STATUS_PERIOD;
         let status = status_record(true);
-        let _ = class
-            .write_packet(&status.bytes[..status.len as usize])
-            .await;
+        let _ = usb_write!(class, &status.bytes[..status.len as usize]);
 
         loop {
             let result = match select(LOG_CHANNEL.receive(), Timer::at(next_status)).await {
                 Either::First(record) => {
-                    let result = class
-                        .write_packet(&record.bytes[..record.len as usize])
-                        .await;
+                    let result = usb_write!(class, &record.bytes[..record.len as usize]);
                     if result.is_ok() && record.reboot_fence {
                         REBOOT_ACK_SENT.store(true, Ordering::Release);
                     }
@@ -189,9 +257,7 @@ pub async fn pump<'a>(class: &mut Sender<'a, Driver<'a>>) {
                 Either::Second(()) => {
                     next_status += CONSOLE_STATUS_PERIOD;
                     let record = status_record(true);
-                    class
-                        .write_packet(&record.bytes[..record.len as usize])
-                        .await
+                    usb_write!(class, &record.bytes[..record.len as usize])
                 }
             };
             match result {
@@ -218,7 +284,9 @@ async fn reply(text: &str) {
     for text in text.lines() {
         let mut line = LogLine::new();
         let _ = line.write_str(text);
+        usb_trace!(ReplyWait, 0);
         LOG_CHANNEL.send(line.finish()).await;
+        usb_trace!(ReplyQueued, 0);
     }
 }
 
@@ -259,12 +327,24 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
     let mut ota = crate::ota_runtime::DeviceUpdater::new();
     let mut no_mounts = mosaico_fs::Vfs::new();
     loop {
+        usb_trace!(RxWait, 0);
         class.wait_connection().await;
+        usb_trace!(RxReady, 0);
         loop {
+            usb_trace!(RxRead, 0);
             let n = match class.read_packet(&mut buf).await {
-                Ok(n) => n,
-                Err(EndpointError::Disabled) => break,
-                Err(EndpointError::BufferOverflow) => continue,
+                Ok(n) => {
+                    usb_trace!(RxPacket, n as u32);
+                    n
+                }
+                Err(EndpointError::Disabled) => {
+                    usb_trace!(RxDisabled, 0);
+                    break;
+                }
+                Err(EndpointError::BufferOverflow) => {
+                    usb_trace!(RxOverflow, 0);
+                    continue;
+                }
             };
             // Preserve whole USB payload chunks, stopping only at a deferred
             // command boundary before processing the packet's remaining bytes.
@@ -272,6 +352,7 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
             while consumed < n {
                 session.set_management_busy(apps::is_managing());
                 let mut effects = Vec::new();
+                usb_trace!(Feed, (n - consumed) as u32);
                 let fed = mosaico_fs::global::with(|vfs| {
                     Ok(session
                         .feed_until_deferred(vfs, &buf[consumed..n], &mut |e| effects.push(e)))
@@ -284,6 +365,7 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                         })
                     }
                 };
+                usb_trace!(Fed, consumed as u32);
                 for effect in effects {
                     match effect {
                         Effect::OtaCancel => {
@@ -357,9 +439,15 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
         }
         ota.abort();
         // The host went away mid-push: drop the staged files.
-        let _ = mosaico_fs::global::with(|vfs| {
+        usb_trace!(SessionReset, 0);
+        let _reset_result = mosaico_fs::global::with(|vfs| {
             session.reset(vfs);
             Ok(())
         });
+        #[cfg(feature = "usb-session-diagnostics")]
+        match _reset_result {
+            Ok(()) => usb_trace!(SessionResetOk, 0),
+            Err(e) => usb_trace!(SessionResetError, e.0 as u32),
+        }
     }
 }
