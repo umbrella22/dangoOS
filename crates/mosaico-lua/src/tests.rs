@@ -418,3 +418,68 @@ fn bounded_vm_coroutine_catchers_cannot_swallow_total_budget() {
         assert!(matches!(run(&mut vm,source).0,Step::Error(ref e) if e.contains("callback budget exhausted")));
     }
 }
+
+#[test]
+fn callback_wall_deadline_survives_resume_and_reports_its_cause() {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static NOW: AtomicU64 = AtomicU64::new(0);
+    fn clock() -> u64 {
+        NOW.load(Ordering::SeqCst)
+    }
+    NOW.store(0, Ordering::SeqCst);
+    let mut vm = vm_with(Limits {
+        clock: Some(clock),
+        ..Limits::default()
+    });
+    vm.load("wall-budget", b"coroutine.yield(); while true do end")
+        .unwrap();
+    vm.set_callback_budget(2_000, 20_000);
+    assert_eq!(vm.resume(), Step::Slice);
+    NOW.store(20_001, Ordering::SeqCst);
+    assert!(
+        matches!(vm.resume(), Step::Error(ref e) if e.contains("callback budget exhausted (wall;")),
+        "deadline was reset across resume"
+    );
+}
+
+#[test]
+fn callback_hook_budget_reports_its_cause_without_a_clock() {
+    let mut vm = fresh();
+    vm.set_callback_budget(2, 20_000);
+    assert!(
+        matches!(run(&mut vm, "while true do end").0, Step::Error(ref e) if e.contains("callback budget exhausted (hooks;"))
+    );
+}
+
+#[test]
+fn prepared_chunk_is_text_only_isolated_and_bound_without_executing_early() {
+    let mut vm = fresh();
+    assert!(vm.prepare_chunk("bad", "binary", b"\x1bLua").is_err());
+    let error = vm
+        .prepare_chunk("bad", "syntax", b"local x=1\nend")
+        .unwrap_err();
+    assert!(error.contains("syntax:2:"), "{error}");
+    vm.prepare_chunk("prepared", "user-source", b"return value, private, _G")
+        .unwrap();
+    vm.load(
+        "dispatcher",
+        br#"
+      local private='trusted'
+      local bind=require('prepared')
+      assert(not pcall(bind, 1))
+      local env={value=42};env._G=env
+      local user=bind(env)
+      local value,private,global=user()
+      assert(value==42 and private==nil and global==env)
+    "#,
+    )
+    .unwrap();
+    assert!(vm.prepare_chunk("late", "late", b"return 1").is_err());
+    loop {
+        match vm.resume() {
+            Step::Slice => continue,
+            Step::Done => break,
+            other => panic!("prepared chunk failed: {other:?}"),
+        }
+    }
+}

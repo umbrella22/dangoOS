@@ -189,6 +189,7 @@ pub(crate) struct Ctx {
     worker_mode: bool,
     callback_hooks_left: u32,
     callback_deadline: Option<u64>,
+    callback_exhaustion: Option<&'static str>,
     abort_guard: *mut c_void,
     pub(crate) host: Box<dyn Host>,
     heap: *const Heap,
@@ -287,6 +288,7 @@ impl Vm {
         ctx.bounded = true;
         unsafe { mosaico_lua_restrict_finalizers(self.main) };
         ctx.callback_hooks_left = hooks.max(1);
+        ctx.callback_exhaustion = None;
         ctx.callback_deadline = ctx
             .limits
             .clock
@@ -328,6 +330,7 @@ impl Vm {
             worker_mode: false,
             callback_hooks_left: 0,
             callback_deadline: None,
+            callback_exhaustion: None,
             abort_guard: ptr::null_mut(),
             host,
             heap,
@@ -396,6 +399,34 @@ impl Vm {
         let _enter = Enter::new(self.ctx);
         let status = unsafe {
             mosaico_lua_register(self.main, module.as_ptr().cast(), regs.as_ptr(), regs.len())
+        };
+        if status == LUA_OK {
+            Ok(())
+        } else {
+            Err(unsafe { self.pop_message(self.main) })
+        }
+    }
+
+    /// Precompiles a separate text chunk without executing it. A trusted
+    /// dispatcher obtains it with `require(module)(environment)` and then
+    /// calls the returned function under its normal execution budget.
+    /// The supplied table becomes the chunk's `_ENV`; dispatcher locals are
+    /// never in the chunk's lexical scope. Only allowed before `load`.
+    pub fn prepare_chunk(&mut self, module: &str, name: &str, source: &[u8]) -> Result<(), String> {
+        if self.state != State::Fresh {
+            return Err("a script is already loaded".into());
+        }
+        let module = cstring(module);
+        let name = cstring(&alloc::format!("@{name}"));
+        let _enter = Enter::new(self.ctx);
+        let status = unsafe {
+            mosaico_lua_prepare_chunk(
+                self.main,
+                module.as_ptr().cast(),
+                name.as_ptr().cast(),
+                source.as_ptr().cast(),
+                source.len(),
+            )
         };
         if status == LUA_OK {
             Ok(())
@@ -536,7 +567,14 @@ impl Vm {
         };
         if status == -2 {
             self.state = State::Finished;
-            return Step::Error("callback budget exhausted".into());
+            let ctx = unsafe { &*self.ctx };
+            return Step::Error(alloc::format!(
+                "callback budget exhausted ({}; hooks_left={}; now_us={:?}; deadline_us={:?})",
+                ctx.callback_exhaustion.unwrap_or("unknown"),
+                ctx.callback_hooks_left,
+                ctx.limits.clock.map(|clock| clock()),
+                ctx.callback_deadline,
+            ));
         }
         let ctx = unsafe { &mut *self.ctx };
         match status {
@@ -687,11 +725,15 @@ unsafe extern "C" fn mosaico_lua_on_hook(
     let ctx = &mut *(ctx as *mut Ctx);
     if ctx.bounded {
         ctx.callback_hooks_left = ctx.callback_hooks_left.saturating_sub(1);
-        if ctx.callback_hooks_left == 0
-            || ctx
-                .callback_deadline
-                .is_some_and(|deadline| ctx.limits.clock.is_some_and(|clock| clock() >= deadline))
+        if ctx.callback_hooks_left == 0 {
+            ctx.callback_exhaustion = Some("hooks");
+            return 4;
+        }
+        if ctx
+            .callback_deadline
+            .is_some_and(|deadline| ctx.limits.clock.is_some_and(|clock| clock() >= deadline))
         {
+            ctx.callback_exhaustion = Some("wall");
             return 4;
         }
     }

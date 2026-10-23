@@ -245,6 +245,42 @@ int mosaico_lua_register(lua_State *L, const char *module, const mosaico_lua_reg
   return lua_pcall(L, 1, 0, 0);
 }
 
+/* A prepared text chunk is bound to its restricted environment only when
+ * the trusted dispatcher starts. No parser or user execution runs here. */
+static int bind_prepared_chunk(lua_State *L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  lua_pushvalue(L, lua_upvalueindex(1));
+  lua_pushvalue(L, 1);
+  const char *name = lua_setupvalue(L, -2, 1);
+  if (!name || strcmp(name, "_ENV") != 0)
+    return luaL_error(L, "prepared chunk has no environment");
+  return 1;
+}
+
+typedef struct {
+  const char *module, *name, *source;
+  size_t len;
+} prepare_chunk_args;
+
+static int prepare_chunk_impl(lua_State *L) {
+  const prepare_chunk_args *a = lua_touserdata(L, 1);
+  if (luaL_loadbufferx(L, a->source, a->len, a->name, "t") != LUA_OK)
+    return lua_error(L);
+  lua_pushcclosure(L, bind_prepared_chunk, 1);
+  luaL_getsubtable(L, LUA_REGISTRYINDEX, LUA_LOADED_TABLE);
+  lua_pushvalue(L, -2);
+  lua_setfield(L, -2, a->module);
+  return 0;
+}
+
+int mosaico_lua_prepare_chunk(lua_State *L, const char *module, const char *name,
+                              const char *source, size_t len) {
+  prepare_chunk_args a = {module, name, source, len};
+  lua_pushcfunction(L, prepare_chunk_impl);
+  lua_pushlightuserdata(L, &a);
+  return lua_pcall(L, 1, 0, 0);
+}
+
 /* ---- Scheduling hook --------------------------------------------------- */
 
 extern void *mosaico_lua_swap_abort_guard(void *ctx, void *guard);

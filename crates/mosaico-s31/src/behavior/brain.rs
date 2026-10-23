@@ -225,19 +225,6 @@ fn led_clear(c: &mut Call) -> Result<Ret, Error> {
     c.host::<BrainHost>().unwrap().output.leds = None;
     Ok(Ret::Values(0))
 }
-/// Encode arbitrary UTF-8 source safely as one Lua string literal.
-fn literal(text: &str) -> String {
-    let mut s = String::from("\"");
-    for b in text.bytes() {
-        if (32..127).contains(&b) && b != b'"' && b != b'\\' {
-            s.push(b as char)
-        } else {
-            s.push_str(&format!("\\{b:03}"));
-        }
-    }
-    s.push('"');
-    s
-}
 const DISPATCH: &str = r#"
 local json=require('json')
 local host=require('brain_host')
@@ -249,7 +236,7 @@ local safe={assert=assert,error=error,ipairs=ipairs,pairs=pairs,next=next,pcall=
     setmetatable=setmetatable,getmetatable=getmetatable,rawget=rawget,rawset=rawset,rawequal=rawequal,math=math,string=string,table=table,utf8=utf8,
     fox=require('fox'),haptic=require('brain_haptic'),led_strip=require('brain_led')}
 safe._G=safe
-local module=assert(load(SOURCE,'@brain','t',safe))()
+local module=require('brain_source')(safe)()
 assert(type(module)=='table','brain must return a table')
 local app=module.create and module.create(START_MS) or module
 assert(type(app.on_event)=='function' and type(app.tick)=='function','brain needs on_event and tick')
@@ -283,6 +270,7 @@ impl BrainVm {
         allocator: &'static RawAllocator,
         clock: Option<fn() -> u64>,
     ) -> Result<Self, String> {
+        let prepare_started = clock.map(|clock| clock());
         if source.len() > SOURCE_MAX {
             return Err("brain source exceeds 64 KiB".into());
         }
@@ -306,7 +294,6 @@ impl BrainVm {
             1,
         )?;
         vm.set_storage_root("/data/appdata/brain")?;
-        vm.set_callback_budget(CALLBACK_HOOKS, CALLBACK_US);
         vm.register("brain_host", &[("next", next), ("complete", complete)])?;
         vm.register(
             "fox",
@@ -319,13 +306,31 @@ impl BrainVm {
         )?;
         vm.register("brain_haptic", &[("play", haptic)])?;
         vm.register("brain_led", &[("set", led_set), ("clear", led_clear)])?;
-        let wrapped = format!(
-            "local SOURCE={}\nlocal START_MS={now}\n{DISPATCH}",
-            literal(source)
-        );
+        let wrapped = format!("local START_MS={now}\n{DISPATCH}");
+        let load_started = clock.map(|clock| clock());
+        // Compile the standalone user chunk once, before the execution budget.
+        // Concatenating source into a function wrapper would allow `end` to
+        // escape its lexical sandbox and would shift user error line numbers.
+        vm.prepare_chunk("brain_source", "brain", source.as_bytes())?;
         vm.load("brain-dispatch", wrapped.as_bytes())?;
+        let loaded_at = clock.map(|clock| clock());
+        // Registration and both chunk compilations are preparation, not callback
+        // execution. Arm once here; slices and pcall retain this same deadline.
+        vm.set_callback_budget(CALLBACK_HOOKS, CALLBACK_US);
         let mut brain = Self { vm };
-        brain.finish()?;
+        let result = brain.finish();
+        if let (Some(start), Some(load), Some(loaded), Some(clock)) =
+            (prepare_started, load_started, loaded_at, clock)
+        {
+            log::info!(
+                "brain startup: prepare={}us compile={}us first_finish={}us ok={}",
+                load.saturating_sub(start),
+                loaded.saturating_sub(load),
+                clock().saturating_sub(loaded),
+                result.is_ok(),
+            );
+        }
+        result?;
         Ok(brain)
     }
     fn finish(&mut self) -> Result<String, String> {
@@ -406,6 +411,135 @@ mod tests {
             _ => assert_eq!(expected, actual, "{path}"),
         }
     }
+    #[test]
+    fn source_compilation_latency_does_not_spend_callback_wall_budget() {
+        use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        static NOW: AtomicU64 = AtomicU64::new(0);
+        static DELAYED: AtomicBool = AtomicBool::new(false);
+        fn clock() -> u64 {
+            NOW.load(Ordering::SeqCst)
+        }
+        unsafe fn allocate(layout: core::alloc::Layout) -> *mut u8 {
+            // A real user-chunk string constant forces parser allocations.
+            // Charge EVERY large allocation, so reparsing the source during
+            // execution would consume a fresh >20ms and fail this test.
+            if layout.size() > 16_000 {
+                DELAYED.store(true, Ordering::SeqCst);
+                NOW.fetch_add(CALLBACK_US + 1, Ordering::SeqCst);
+            }
+            unsafe { (mosaico_lua::GLOBAL_ALLOCATOR.alloc)(layout) }
+        }
+        unsafe fn deallocate(ptr: *mut u8, layout: core::alloc::Layout) {
+            unsafe { (mosaico_lua::GLOBAL_ALLOCATOR.dealloc)(ptr, layout) }
+        }
+        static ALLOCATOR: RawAllocator = RawAllocator {
+            alloc: allocate,
+            dealloc: deallocate,
+        };
+        NOW.store(0, Ordering::SeqCst);
+        DELAYED.store(false, Ordering::SeqCst);
+        let source = format!(
+            "local text='{}'\nassert(#text==24000)\nreturn {{on_event=function()end,tick=function()fox.set_expression('Happy')end}}",
+            "x".repeat(24_000)
+        );
+        let mut brain = BrainVm::new(&source, 0, &ALLOCATOR, Some(clock)).unwrap();
+        assert!(DELAYED.load(Ordering::SeqCst));
+        assert!(NOW.load(Ordering::SeqCst) > CALLBACK_US);
+        assert_eq!(brain.output().expression, Expression::Happy);
+
+        // Negative control: the old runtime load(source) reparses the same
+        // constant after arming, and must fail with this same allocator/clock.
+        let mut legacy = Vm::new(
+            Box::new(BrainHost {
+                inbox: None,
+                response: None,
+                output: Output::default(),
+                now: 0,
+            }),
+            Limits {
+                clock: Some(clock),
+                hook_interval: 100,
+                ..Limits::default()
+            },
+            &ALLOCATOR,
+            1,
+        )
+        .unwrap();
+        legacy
+            .load(
+                "runtime-reparse-control",
+                format!(
+                    "local source={};assert(load(source))();for i=1,1000 do end",
+                    serde_json::to_string(&source).unwrap(),
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        legacy.set_callback_budget(CALLBACK_HOOKS, CALLBACK_US);
+        let error = loop {
+            match legacy.resume() {
+                Step::Slice => continue,
+                Step::Error(error) => break error,
+                other => panic!("runtime reparse escaped its budget: {other:?}"),
+            }
+        };
+        assert!(
+            error.contains("callback budget exhausted (wall;"),
+            "{error}"
+        );
+
+        // Large allocations caused by USER EXECUTION remain inside the same
+        // wall budget, even though compilation now occurs before it.
+        let error = BrainVm::new(
+            "local t={};for i=1,3000 do t[i]=i end;while true do end",
+            0,
+            &ALLOCATOR,
+            Some(clock),
+        )
+        .err()
+        .unwrap();
+        assert!(
+            error.contains("callback budget exhausted (wall;"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn standalone_source_keeps_lexical_isolation_lines_and_size_boundary() {
+        let allocator = &mosaico_lua::GLOBAL_ALLOCATOR;
+        let isolated = r#"
+          assert(SOURCE==nil and START_MS==nil and module==nil and host==nil and safe==nil and json==nil)
+          assert(load==nil and require==nil and debug==nil and package==nil)
+          assert(_G==_ENV)
+          return {on_event=function()end,tick=function()fox.set_expression('Happy')end}
+        "#;
+        let mut brain = BrainVm::new(isolated, 123, allocator, None).unwrap();
+        assert_eq!(brain.output().expression, Expression::Happy);
+        for source in [
+            "end; fox.set_expression('Angry'); local x=function()",
+            "local ok=true\nerror('line receipt')",
+        ] {
+            let err = BrainVm::new(source, 0, allocator, None).err().unwrap();
+            assert!(
+                err.contains(if source.starts_with("end") {
+                    "brain:1:"
+                } else {
+                    "brain:2:"
+                }),
+                "{err}"
+            );
+        }
+        let mut maximum = String::from("return {on_event=function()end,tick=function()end}\n--");
+        maximum.push_str(&"x".repeat(SOURCE_MAX - maximum.len()));
+        assert_eq!(maximum.len(), SOURCE_MAX);
+        assert!(BrainVm::new(&maximum, 0, allocator, None).is_ok());
+        maximum.push('x');
+        assert_eq!(
+            BrainVm::new(&maximum, 0, allocator, None).err().unwrap(),
+            "brain source exceeds 64 KiB"
+        );
+    }
+
     #[test]
     fn bounded_adversaries_and_transactional_replacement() {
         let allocator = &mosaico_lua::GLOBAL_ALLOCATOR;
