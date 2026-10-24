@@ -237,7 +237,7 @@ skin-ls，无重启；同ID完整重传未select自动换色，目视确认无�
 主机差分与默认 / 诊断构建通过，已随 USB 诊断镜像正常启动，普通镜像性能尚未测。接口、启动时序、
 资源限制、USB 命令与指纹见 [N4_LUA_BRAIN.md](N4_LUA_BRAIN.md)。
 
-### N5. 原版 album_app（原版核对与空库通过；有照片交互待测）
+### N5. 原版 album_app（原版空库与三图浏览部分通过）
 
 已实现 JPEG/PNG 帧、JPEG 编码、UI task 原生 LVGL 服务及独立 worker VM。
 原版相册字节不变，读取 `/data/appdata/album_app/photos` 中的 JPG / JPEG / BIN；
@@ -246,7 +246,10 @@ skin-ls，无重启；同ID完整重传未select自动换色，目视确认无�
 资源释放验收通过。该阶段 BIN 2987056 字节，3 MiB 槽剩 158672 字节。
 后续普通集成镜像 `dce2f5f0…` 已开始真机验收：出厂相册 manifest／源码逐字节
 一致、无下载版覆盖、照片与暂存目录不存在；原版空库画面及左边缘返回通过。
-目前尚未投递照片，独立图像与 worker 未测，见 [N5 现场记录](N5_ALBUM_LIVE_20261024.md)。
+三张 JPEG 投递和设备大小／CRC 校验通过，颜色方向、前后切换、返回网格及删除
+取消获确认；用完的两只核验应用已清理。更多照片、确认删除、独立图像与 worker
+未测；浏览日志最长 slice 323,903 µs，未声明实时性通过，见
+[N5 现场记录](N5_ALBUM_LIVE_20261024.md)。
 接口、资源与兼容边界、收据见 [LUA-N5-RUNTIME.md](LUA-N5-RUNTIME.md)。
 
 ### N6. A/B 分区与 USB OTA（代码与主机检查完成；尚未迁移设备）
