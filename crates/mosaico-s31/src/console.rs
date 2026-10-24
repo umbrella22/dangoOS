@@ -472,6 +472,8 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                     }
                 }
             }
+            // A continuously ready USB read does not yield to other thread tasks.
+            embassy_futures::yield_now().await;
         }
         ota.abort();
         // The host went away mid-push: drop the staged files.
