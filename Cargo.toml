@@ -3,6 +3,7 @@
 # The earlier vector "grok-ball" core is in git history (before the fox).
 members = ["crates/mosaico-s31", "crates/mosaico-lua", "crates/mosaico-fs"]
 resolver = "2"
+exclude = ["vendor/embassy-usb-synopsys-otg"]
 
 [workspace.package]
 version = "0.2.0"
@@ -37,3 +38,7 @@ lto = "fat"
 codegen-units = 1
 
 
+
+[patch.crates-io]
+# Preserve the actual 0.4.0 source and local reconnect patches; terminate stale IN transfers on reset.
+embassy-usb-synopsys-otg = { path = "vendor/embassy-usb-synopsys-otg" }

@@ -1,0 +1,27 @@
+{
+  "package": "embassy-usb-synopsys-otg",
+  "version": "0.4.0",
+  "origin": "Exact locally compiled Cargo cache at vendoring; not pristine upstream replacement",
+  "cache_lib_sha256": "f25fbc4c8793607df4bf36f0782234aa2eb9bc1c565a6a0541a73f8d9e19a85f",
+  "cache_manifest": {
+    "Cargo.toml": "7b37784b9b17161151f6f6a6a97c3557614b8c35f4da95ee92ac4581c9ac766e",
+    "CHANGELOG.md": "d4a6c36963053080eb474e73ec036f573515dad83bb064314822559b0898c577",
+    "Cargo.lock": "10498ff1c509d02f8d0cac6c208dcea6b34bbc136e9241b4f11c165c774c3cba",
+    "README.md": "fde9bcdb6f76f477b4f5c8ad9a27a9cb53e046a5c94c6e74fd39fc75c71858c0",
+    ".cargo_vcs_info.json": "a070270055953f0b1283d8b803fde1ad395d421eddaa83d20d2ddb8069064aa2",
+    "Cargo.toml.orig": "fe87a2c0c4396d11d1b30dde565689a7e1b3fb9129d43229b5883f6c169fc96e",
+    ".cargo-ok": "afbf9d0f3560b0fd7795e81c42a0a79ee6b6fc67e064f77826aee642cad28d91",
+    "src/host.rs": "fbf30a91cad37f9e674e13cb34749e2212767879122157bc17f85d1c925585e3",
+    "src/lib.rs": "f25fbc4c8793607df4bf36f0782234aa2eb9bc1c565a6a0541a73f8d9e19a85f",
+    "src/fmt.rs": "29efbba075d0bcf8acd4c3f3228bbe5ab3be735c48d3894c86a957d15bab0f12",
+    "src/otg_v1.rs": "e1d58fbfff69bb54e6667c43fc5748d301924ef16a3a834e76dc995b1f0bd39c"
+  },
+  "upstream_metadata_commit": "664d4ead36bb24a63955ca649bcec66c6e70bf6d",
+  "licenses_added_from_original_commit": {
+    "LICENSE-MIT": "https://raw.githubusercontent.com/embassy-rs/embassy/664d4ead36bb24a63955ca649bcec66c6e70bf6d/LICENSE-MIT",
+    "LICENSE-APACHE": "https://raw.githubusercontent.com/embassy-rs/embassy/664d4ead36bb24a63955ca649bcec66c6e70bf6d/LICENSE-APACHE"
+  },
+  "preserved_existing_changes": "All cached files unchanged except src/lib.rs; including existing OUT reconnect priming and IN SNAK/FIFO behavior",
+  "new_source": "src/reset_in.rs",
+  "scope": "Stop old allocated non-EP0 IN transfers before reset FIFO flush/reconfigure; no normal packet or SET_CONFIGURATION changes"
+}
