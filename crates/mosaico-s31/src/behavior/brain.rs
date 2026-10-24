@@ -1100,8 +1100,14 @@ impl Controller {
         match result {
             Ok(v) => Some(v),
             Err(e) => {
-                self.error = Some(e);
                 self.active = None;
+                self.error = Some(e);
+                // Report the transition once, after releasing the failed VM.
+                // Later callbacks return above while inactive, without logging.
+                log::warn!(
+                    "brain: runtime fallback: {}",
+                    crate::hub::brain_store::error_line(self.error.as_deref().unwrap_or(""))
+                );
                 None
             }
         }
