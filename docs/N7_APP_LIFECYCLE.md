@@ -32,7 +32,7 @@ Receipts are saved under `target/n7-acceptance-20261023/`. The production host V
 
 `cargo run -p mosaico-s31 --example n7_lifecycle_preview --offline` runs the real application on an LVGL memory display with a real LVGL pointer input device. It holds beyond the long-press threshold, releases without launch, short-clicks to launch, opens Builtin/System/Data dialogs, cancels via background and Back, reorders registry entries before confirmation, captures the busy screen and success toast, and rejects a source change. PPM screenshots are under `target/n7-acceptance-20261023/ui/`.
 
-Device/USB hardware operation, physical flash interruption, actual panel busy-frame visibility, manual vibration and power-loss cycling remain **not run**. RAM LittleFS recovery tests establish logical intent semantics, not exhaustive physical power-cut coverage. The parent integration review owns full-suite, ROM-size and stage acceptance.
+At the original 2026-10-23 host acceptance snapshot, device/USB operation, physical flash interruption, actual panel busy-frame visibility, manual vibration and power-loss cycling were **not run**; updated device scope appears below. RAM LittleFS recovery tests establish logical intent semantics, not exhaustive physical power-cut coverage. The parent integration review owns full-suite, ROM-size and stage acceptance.
 
 ## 2026-10-23 independent acceptance receipt
 
@@ -55,3 +55,58 @@ characters. Existing underlying font family and display geometry remain the
 same. Management currently quiesces the foreground Lua VM for either removal
 or clearing; it does not preserve an unrelated foreground app during a USB
 management operation. Hardware behavior remains deferred to the unified checklist.
+
+
+## 2026-10-24 device acceptance: partial pass through capture49
+
+The ordinary firmware from `14316ff` (BIN SHA-256 prefix `7b7b65b0`) was tested with temporary downloaded IDs
+`n7_probe_a_20261024` and `n7_probe_b_20261024`. Both temporary apps and the unique
+legacy sentinel have completed cleanup. Capture 49 lists exactly hardware_probe,
+hello_push, n1_contract_probe and n1_lifecycle_probe, skin default, brain default
+CRC `bc14ae2e`, error=0, and 465/512 free data blocks. N7 remains partially accepted.
+No production changes, repartitioning or physical interruption were performed.
+
+| Accepted device case | Evidence and boundary |
+| --- | --- |
+| Independent roots and persistent same-name counts | 03–07 use `shared.count` under distinct VM roots; peer values remain correct. Uploading B rescans the registry and restarts foreground A, so counts follow actual STARTs. Sequential foreground VMs, not acceptance of concurrent VMs on the device or a security sandbox. |
+| UI removal and fresh reinstall | 08 was an accidental confirmation; 09/10 directly establish A body/data absence and B preservation; 13 reinstalls A with count=1 and fresh=true while retaining B count=3. |
+| Release, button/background/Back cancellation and haptic | 14/23/26 operator observations plus no new START and retained app listings. Capture 23 records MagneticContact, one 30 ms burst at 35%, and felt vibration. Single trials, no waveform or precise input latency claim. |
+| Native and factory source UI | 25: Settings/Sensors/Timer no destructive long-press dialog/haptic; 2048/Album clear-data/keep-factory copy, cancelled. Four haptic entries cannot be mapped individually to source categories; category observation comes from the operator. No factory data was actually cleared. |
+| Normal USB stop barrier | 17/19 raw/log/events agree: stopped→post-drop(vm) heap summary→rm/rmdata ACK. Later direct peer checks establish deletion/clearing. Quiet alone is not closure evidence; host queue arrival does not measure physical stop latency. |
+| rmdata retains body and recreates fresh data | 21 sees B body=true/data=false before B restarts; 22 starts B at count=1 with fresh=true and retains A count=1. |
+| Registry reorder retains confirmation identity | 27 retains A confirmation; 29 changes only B order from 98 to 0 and scans B before A; 30 confirms visible movement and no wrong deletion; 31/32 verify only A was removed and B data was retained. Origin-change rejection is a separate untested device case. Later AppStore launch was explicitly confirmed as an operator tap. |
+| One unique legacy root sentinel survives removal/clear | 37 creates `/data/n7_legacy_guard_20261024_6d3f98a7.txt` only when absent; 41/45 verify exact fixed bytes after B rmdata/rm. No preexisting root files were scanned or modified. |
+| Final cleanup | 45 directly stats B body/data absent; 48 checks exact owner and sentinel bytes, removes sentinel, asserts exists=false. The rm A ACK in 49 and exact original-four listing complete body cleanup; final A appdata deletion has management ACK evidence only, without an independent final stat. |
+
+The sentinel contains 19 bytes and its A owner marker contains 29 bytes; four manifests share
+one script and use global args through Vm::set_args_json. Each upload is at most
+1,600 bytes. The sequence is create → owned B rmdata → check-clear → owned B rm →
+check-remove → cleanup sentinel → rm A. Each mode upload follows a captured stop/known
+text state; each subsequent stage binds the previous successful probe and matching
+B-operation receipt. The through49 supplement verifies all 15 added phase file
+fingerprints and those bindings. Preparation and execution records remain separate.
+
+### Evidence ledger
+
+All paths are under `target/n7-live-20261024/`. Earlier receipts and operator
+snapshots are immutable; each supplement adds only its measured cases.
+
+| Receipt | Scope |
+| --- | --- |
+| `partial-acceptance-through-13.json` | Initial data isolation, UI removal and reinstall |
+| `partial-acceptance-through-14-supplement.json` | Button cancellation and target name |
+| `partial-acceptance-through-22-supplement.json` | USB stop, rmdata and fresh recreation |
+| `partial-acceptance-through-24-supplement.json` | Release/background cancellation and haptic |
+| `partial-acceptance-through-25-supplement.json` | Native/factory dialog categories |
+| `partial-acceptance-through-32-supplement.json` | Back, actual registry reorder, intentional AppStore tap |
+| `partial-acceptance-through-49-supplement.json` | Legacy sentinel preservation/removal and final cleanup |
+
+### Remaining device acceptance
+
+Source-Origin changes, downloaded factory shadows, concurrent upload/delete,
+stalled finalizers, physical interrupted intent/reboot recovery, visible busy/toast
+and stopped-page timing, scroll/press-lost cancellation and repeated stability
+remain unaccepted. Existing host tests cover several logical cases but do not
+replace these device gates. Absolute io paths remain unrestricted. The single new
+sentinel establishes one controlled preservation case, not a general audit of old
+/data contents. A final independent appdata stat is absent for the last removed A.
