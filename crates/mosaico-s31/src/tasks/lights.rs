@@ -81,6 +81,11 @@ static READY: AtomicBool = AtomicBool::new(false);
 static LUA_FRAME: critical_section::Mutex<core::cell::RefCell<Option<Frame>>> =
     critical_section::Mutex::new(core::cell::RefCell::new(None));
 
+/// Successful startup black TX and latch, independent of board discovery.
+/// Used only to bound early boot waiting; it does not acknowledge shutdown.
+pub fn startup_cleared() -> bool {
+    READY.load(Ordering::Acquire)
+}
 pub fn available() -> bool {
     READY.load(Ordering::Acquire) && ATTACHED.load(Ordering::Acquire) && !shutting_down()
 }

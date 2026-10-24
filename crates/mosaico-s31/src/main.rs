@@ -141,6 +141,51 @@ async fn main(spawner: Spawner) {
     // a panic, wait (bounded) for the host so the record is read before the
     // same step can fail again.
     spawner.spawn(usb_task(peripherals.USB_HS, flash).unwrap());
+    // WS2812 retains its last colour across an MCU reset. Clear it before
+    // slow panel/storage work or the bounded post-panic USB wait. This only
+    // runs after firmware entry; ROM download mode cannot execute this clear.
+    // Haptics: motor on GPIO8 (BSP BSP_MOTOR_GPIO, active high). The S31
+    // LEDC driver is not available in this esp-hal revision; the RMT TX
+    // peripheral generates the same 5 kHz PWM in hardware.
+    // RMT runs at 10 MHz: channel 0 divides to 1 MHz for the motor PWM,
+    // channel 1 keeps 0.1 us ticks for the WS2812 light on GPIO38.
+    match Rmt::new(peripherals.RMT, Rate::from_mhz(10)) {
+        Ok(rmt) => {
+            match haptic::configure_channel(rmt.channel0) {
+                Ok(channel) => {
+                    spawner
+                        .spawn(haptic::haptic_task(channel.with_pin(peripherals.GPIO8)).unwrap());
+                    info!("haptic task spawned (RMT TX 5 kHz PWM on GPIO8)");
+                }
+                Err(error) => {
+                    warn!("haptic channel setup failed: {error:?}; motor held low");
+                    let _motor_off =
+                        Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
+                }
+            }
+            match lights::configure_channel(rmt.channel1) {
+                Ok(channel) => {
+                    spawner
+                        .spawn(lights::lights_task(channel.with_pin(peripherals.GPIO38)).unwrap());
+                }
+                Err(error) => warn!("light channel setup failed: {error:?}; no LED clear receipt"),
+            }
+        }
+        Err(error) => {
+            warn!("RMT initialization failed: {error:?}; haptics disabled, no LED clear receipt");
+            let _motor_off = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
+        }
+    }
+
+    let light_clear_deadline =
+        embassy_time::Instant::now() + embassy_time::Duration::from_millis(100);
+    while !lights::startup_cleared() && embassy_time::Instant::now() < light_clear_deadline {
+        embassy_time::Timer::after_millis(1).await;
+    }
+    if !lights::startup_cleared() {
+        warn!("lights: early startup clear unavailable after 100ms; continuing USB startup");
+    }
+
     if crashlog::last_boot_panicked() {
         let deadline = embassy_time::Instant::now() + embassy_time::Duration::from_secs(5);
         while !console::connected() && embassy_time::Instant::now() < deadline {
@@ -248,39 +293,6 @@ async fn main(spawner: Spawner) {
         "sensor task spawned (BMI270/BMM150 on I2C0, slot EEPROMs 0x50/0x51 on I2C1, queue={})",
         sensors::SENSOR_QUEUE_CAPACITY
     );
-
-    // Haptics: motor on GPIO8 (BSP BSP_MOTOR_GPIO, active high). The S31
-    // LEDC driver is not available in this esp-hal revision; the RMT TX
-    // peripheral generates the same 5 kHz PWM in hardware.
-    // RMT runs at 10 MHz: channel 0 divides to 1 MHz for the motor PWM,
-    // channel 1 keeps 0.1 us ticks for the WS2812 light on GPIO38.
-    match Rmt::new(peripherals.RMT, Rate::from_mhz(10)) {
-        Ok(rmt) => {
-            match haptic::configure_channel(rmt.channel0) {
-                Ok(channel) => {
-                    spawner
-                        .spawn(haptic::haptic_task(channel.with_pin(peripherals.GPIO8)).unwrap());
-                    info!("haptic task spawned (RMT TX 5 kHz PWM on GPIO8)");
-                }
-                Err(error) => {
-                    warn!("haptic channel setup failed: {error:?}; motor held low");
-                    let _motor_off =
-                        Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
-                }
-            }
-            match lights::configure_channel(rmt.channel1) {
-                Ok(channel) => {
-                    spawner
-                        .spawn(lights::lights_task(channel.with_pin(peripherals.GPIO38)).unwrap());
-                }
-                Err(error) => warn!("light channel setup failed: {error:?}; no LED clear receipt"),
-            }
-        }
-        Err(error) => {
-            warn!("RMT initialization failed: {error:?}; haptics disabled, no LED clear receipt");
-            let _motor_off = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
-        }
-    }
 
     spawner.spawn(lua::lua_task().unwrap());
     info!("lua task spawned ({})", mosaico_lua::LUA_RELEASE);
