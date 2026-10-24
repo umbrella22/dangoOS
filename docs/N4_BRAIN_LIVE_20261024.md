@@ -158,7 +158,13 @@ Lua/error=0；Happy 和周期震动符合该脚本，未恢复的灯带属于识
 `33-led-bug-restore-default` 已取得 stop、brain-default、临时蓝灯页 rmdata／rm
 成功回执；默认脑恢复为 29672 B／CRC `bc14ae2e`／error=0，皮肤仅 default，
 下载列表精确恢复原四个，data 空闲回到 463 块。该次关机没有同步采集 AI／Sleep／
-黑帧／USB 消失序列，不能填入正式并发关机通过项。识别重试修复和新镜像验收另行记录。
+黑帧／USB 消失序列，不能填入正式并发关机通过项。
+
+后续 `0b1b211` 普通重试修复已仅写 main_app，完整回读与引导区一致，使用独立目录
+`target/slot-recovery-live-20261024/`。新目录 `02`／`03` 一轮默认脑下的 AI 关机／
+POWER 开机、灯光和双键通过；此结果不替代本节未完成的自定义脑／前台应用并发关机。
+两次描述符首读均成功，失败后的重试分支尚未取得真机证据，见
+[识别失败复盘](lessons/subboard-descriptor-retry.md)。
 
 ## 验收边界
 

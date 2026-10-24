@@ -8,7 +8,17 @@ Error 与 Panic 无触感。后续已定位到可复现的新旧编码差异，�
 
 ## 当前运行镜像
 
-2026-10-24 当前为 `c86811b` 的普通固件
+2026-10-24 当前为 `0b1b211` 的普通固件
+`target/slot-descriptor-retry-20261024/default.bin`，3,058,496 B，SHA-256
+`dce2f5f0bfaeb56806d933b3266dc9a11df3ea3b1c309e43f05c0abe58d9ca56`，
+无诊断 feature。该版在前版基础上增加扩展板描述符传输失败后的有限重试。
+`target/slot-recovery-live-20261024/flash-01/` 保存 main_app 完整回读与引导区一致
+收据；`01-startup` 自动启动查询为默认脑、默认皮肤、原四个下载应用，右槽
+`R=interact* derr=0`。`02`／`03` 一轮 AI 关机、独立 POWER 开机后的灯光、
+双键与设置预览已获实物确认。两次首次读取均成功，没有覆盖失败后重试恢复分支。详见
+[描述符重试复盘](lessons/subboard-descriptor-retry.md)。
+
+前一版为 `c86811b` 的普通固件
 `target/lights-early-reset-clear-usb-first-20261024/default.bin`，3,057,568 B，
 SHA-256 `c8e4f00de7a31aec5936ffc3f54cedd0b0fc992a595beee07949365f54f9af42`，
 无诊断 feature。在前版基础上增加常驻脑运行时故障原因日志，并将启动黑帧提前到

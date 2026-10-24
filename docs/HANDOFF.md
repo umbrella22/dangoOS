@@ -223,7 +223,10 @@ skin-ls，无重启；同ID完整重传未select自动换色，目视确认无�
 同一 effects 脑的设置禁用、Settings 预览／前台蓝灯覆盖与原生 Panic 已测；测试脑和
 蓝灯页已在阶段 `33` 清理。随后发现 POWER 开机时右槽 EEPROM 首读失败后持续
 `R=bad`，导致灯带未启用；`0b1b211` 已补描述符传输失败后的有限重试，普通构建和
-主机检查通过，当前待刷写与实测，见 [识别失败复盘](lessons/subboard-descriptor-retry.md)。
+主机检查通过。普通 `dce2f5f0…` 已仅写 main_app、完整回读及引导区核对通过，
+自动启动右槽 `R=interact* derr=0`；一轮 AI 关机／POWER 开机后灯光、双键与设置
+预览实测通过，首读失败重试分支尚未在设备上触发，见
+[识别失败复盘](lessons/subboard-descriptor-retry.md)。
 首次传输失败的电气原因未定；全输入时间线、关机及重复稳定性余项见
 [N4 现场记录](N4_BRAIN_LIVE_20261024.md)。
 `8d49214` 将内部输入改为类型化传递，
