@@ -45,7 +45,7 @@ N7 已将数据根改为每 VM 独立上下文，默认根只在创建时复制�
 | N3 | `codex/n3-skin-pack` | `1b4cf33` → `c45966c` | 完成；317 项主机测试、20 姿态像素等价、真实打包渲染与 release 通过；[收据](N3_SKIN_PACK.md#2026-10-23-independent-acceptance-receipt) | 换色、同 ID 替换、重启保留、五类坏包拒绝及选中删除通过；修复诊断版普通 / 半包拔插各一次自行恢复，半包后完整重传与清理通过；普通7b7b版一轮半包恢复63.428 / 118.114ms、完整重传及清理ACK通过，清理后目视由34确认；重复稳定性与客观触摸待验收，整体上传实时性未通过，见 [现场记录](N3_SKIN_LIVE_20261024.md) |
 | N7 | `codex/n7-app-uninstall` | `2cb36dd` → `09c252d` | 完成；328 项主机测试、17 项工具测试、8 个真实 LVGL 指针场景与 release 通过；[收据](N7_APP_LIFECYCLE.md#2026-10-23-independent-acceptance-receipt) | 普通7b7b截至49部分通过：顺序隔离/UI取消与卸载/USB stop与rmdata/真实重排/legacy sentinel/最终清理；来源变化、影子、冲突、物理中断及busy/停页等待测 |
 | N4 | `codex/n4-lua-brain` | `c571e2e` → `d0835e2` | 完成；341 项主机测试、4161 条原生对照、12 个外部恶意脚本进程、21 项工具测试；[收据](N4_LUA_BRAIN.md#2026-10-23-independent-acceptance-receipt) | 热加载/语法拒绝/持久化、三故障分类/回退、前后台调度、清理/default重启通过；设置禁用/预览和前台灯带覆盖/原生Panic已测；关机/全行为/稳定性余项见现场记录 |
-| N5 | `codex/n5-album` | `ab1be60` → `5410697` | 完成；347 项主机测试、25 项工具测试、11 个真实 LVGL 场景、48 次往返、独立图像 / worker 验收；[收据](LUA-N5-RUNTIME.md#2026-10-23-independent-acceptance-receipt) | dce2 普通版完成原版核对、空库、三图投递／校验／浏览和删除取消；更多照片、独立图像／worker待测，最长slice323903µs仍待定位，见 [N5 现场记录](N5_ALBUM_LIVE_20261024.md) |
+| N5 | `codex/n5-album` | `ab1be60` → `5410697` | 完成；347 项主机测试、25 项工具测试、11 个真实 LVGL 场景、48 次往返、独立图像 / worker 验收；[收据](LUA-N5-RUNTIME.md#2026-10-23-independent-acceptance-receipt) | dce2 普通版原版核对、空库、三图浏览／取消及二十图文件校验通过；二十图复现卡顿和切图全屏黑闪，约325ms最长slice，修复后待复测；独立图像／worker待测，见 [N5 现场记录](N5_ALBUM_LIVE_20261024.md) |
 | N6 | `codex/n6-usb-ota` | `df6b6b4` → `586cfc9` | 完成；360 项主机测试、46 项工具测试、39 个镜像语料、十次 NOR 更新 / 39 故障点与迁移恢复模拟；[收据](N6_USB_OTA.md#2026-10-23-independent-acceptance-receipt) | not-run；未迁移设备 |
 
 后续修复：N2 的实际 Sleep 帧回执修复提交为 `1b4cf33`。Animator 切换初期绘制的
