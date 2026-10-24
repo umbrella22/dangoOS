@@ -8,13 +8,14 @@ Error 与 Panic 无触感。后续已定位到可复现的新旧编码差异，�
 
 ## 当前运行镜像
 
-2026-10-24 为定位 N3 的 USB 拔线重连失败，已刷入 `e9f8ffe` 对应的
-`target/usb-session-recovery-diag-20261024/diagnostic.bin`，3,068,800 B，SHA-256
-`c74702dd49d9566340b8120f56e1ee378aa72c16d6a6397899ef35b5ad9d40fa`，
+2026-10-24 为定位 N3 的 USB 拔线重连失败，已刷入 `cb73dc6` 对应的
+`target/usb-tx-register-diag-20261024/diagnostic.bin`，3,072,720 B，SHA-256
+`4c4b577c7dc5109761245915901927a2a788b0058f35d10dd0b63357c123f830`，
 仅开启 `usb-session-diagnostics`，包含 `8d49214` 类型化大脑输入。
-`target/usb-session-live-20261024/flash-02/` 保存旧布局 main_app 完整回读和引导区
+`target/usb-session-live-20261024/flash-03/` 保存旧布局 main_app 完整回读和引导区
 三份逐字节一致的收据。自动启动、hello、存储、默认脑与皮肤查询正常，诊断定时器
-默认未启用；增强版允许显式设置一次120秒后的软件重启以取回故障记录。
+默认未启用；本版增加只读IN端点寄存器快照，允许显式设置一次120秒后的软件重启
+以取回故障记录。
 USB诊断与RESET保留性校准见 [N3现场记录](N3_SKIN_LIVE_20261024.md)。
 新类型化输入尚无普通镜像触摸性能结果，不能用这次启动替代下面的稳定性门槛。
 
