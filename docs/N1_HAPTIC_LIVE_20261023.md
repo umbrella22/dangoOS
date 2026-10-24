@@ -8,7 +8,14 @@ Error 与 Panic 无触感。后续已定位到可复现的新旧编码差异，�
 
 ## 当前运行镜像
 
-2026-10-24 为验证 N3 的 USB 拔线重连修复，已刷入 `c18d0ca` 对应的
+2026-10-24 已刷入`14316ff`的普通固件`target/usb-upload-yield-20261024/default.bin`，
+3,055,792 B，SHA-256 `7b7b65b0c5575e6734b332f0804ba3065c602cecac8f349b97e7416535d20fe7`。
+它包含旧IN传输复位修复、类型化大脑输入及USB包间yield，无诊断feature。
+`target/usb-session-live-20261024/flash-05/`完整应用读回、引导区前后与原备份逐字节
+一致；自动WDT重启成功，`26-default-startup`的hello、存储、默认脑error=0及皮肤
+default均正常。上传实时性、普通版USB重连与新触摸性能待测。
+
+上一轮为验证 N3 的 USB 拔线重连修复，刷入 `c18d0ca` 对应的
 `target/usb-in-reset-fix-20261024/diagnostic.bin`，3,073,376 B，SHA-256
 `4aee8d17c4a4dfde9d5067712ca88f3c85302dee763b39ec9bc2e757ab56e576`，
 仅开启 `usb-session-diagnostics`，包含 `8d49214` 类型化大脑输入。
@@ -16,11 +23,13 @@ Error 与 Panic 无触感。后续已定位到可复现的新旧编码差异，�
 三份逐字节一致的收据。自动启动、hello、存储、默认脑与皮肤查询正常，诊断定时器
 默认未启用；本版修正USBRST旧IN传输清理顺序，保留只读端点寄存器快照及显式单次
 120秒软件重启。一次无半包拔插后四项查询恢复，期间无需再次RESET；重配置端点
-EPENA=0且有禁用确认。最新`25`采集确认定时器active=0；半包和普通构建待复测。
+EPENA=0且有禁用确认。随后4096字节半包拔插自行恢复、完整重传及清理通过；
+`n3-half-reconnect-live-20261024-cleanup-state`确认default皮肤、原四个应用和timer active=0。
+`14316ff`上传包间yield候选已核验，普通构建与上传性能待复测。
 USB诊断与RESET保留性校准见 [N3现场记录](N3_SKIN_LIVE_20261024.md)。
 新类型化输入尚无普通镜像触摸性能结果，不能用这次启动替代下面的稳定性门槛。
 
-最近一次普通固件为 `target/touch-clock-lights-20261023/default.bin`，3,054,720 B，
+此前完成触摸统计的普通固件为 `target/touch-clock-lights-20261023/default.bin`，3,054,720 B，
 SHA-256 `77f145cb9e755c041ee2463ab7e093600becaf9cdadb998ab43f6073bea32414`，无诊断 feature。
 源码内容对应 `1c793c5`、`cc949c9`。`single-handle-flash-08/receipt.json` 及独立
 `root-verified.json` 确认应用完整读回一致、引导区写前 / 写后 / 原始备份逐字节相同。
