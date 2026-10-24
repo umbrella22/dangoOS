@@ -35,6 +35,7 @@
 
 pub mod descriptor;
 pub mod interaction;
+mod retry;
 pub mod signal;
 pub mod touch_key;
 
@@ -51,6 +52,7 @@ use mosaico_s31::behavior::affect::ModuleKind;
 
 use descriptor::{DescriptorError, BOARD_TYPE_CAMERA, BOARD_TYPE_INTERACT, DESCRIPTOR_LEN};
 pub use interaction::{InteractionInputs, InteractionPort};
+use retry::DescriptorRetry;
 use signal::Debounce;
 
 /// Slot probe period (official manager: 250 ms).
@@ -104,6 +106,7 @@ enum Module {
     Camera,
     Other(u8),
     Unreadable,
+    ReadFailed,
 }
 
 impl Module {
@@ -111,7 +114,7 @@ impl Module {
         match self {
             Module::Interaction => Some(ModuleKind::Interaction),
             Module::Camera => Some(ModuleKind::Camera),
-            Module::Other(_) | Module::Unreadable => None,
+            Module::Other(_) | Module::Unreadable | Module::ReadFailed => None,
         }
     }
 }
@@ -127,6 +130,7 @@ pub struct SlotChange {
 struct SlotState {
     presence: Debounce,
     module: Option<Module>,
+    retry: DescriptorRetry,
 }
 
 /// Both expansion slots.
@@ -155,6 +159,7 @@ impl Subboard {
             slots: [Slot::Left, Slot::Right].map(|_| SlotState {
                 presence: Debounce::starting_at(false),
                 module: None,
+                retry: DescriptorRetry::new(),
             }),
             left,
             right,
@@ -171,17 +176,31 @@ impl Subboard {
         for slot in Slot::ALL {
             let present = probe(slot).await;
             let change = match self.slots[slot.index()].presence.update(present) {
-                Some(true) => {
-                    let module = self.identify(slot).await;
-                    self.slots[slot.index()].module = Some(module);
-                    self.on_inserted(slot, module);
-                    module.kind()
+                Some(true) => self.identify_inserted(slot).await,
+                Some(false) => {
+                    self.slots[slot.index()].retry.reset();
+                    self.slots[slot.index()].module.take().and_then(|module| {
+                        self.on_removed(slot, module);
+                        module.kind()
+                    })
                 }
-                Some(false) => self.slots[slot.index()].module.take().and_then(|module| {
-                    self.on_removed(slot, module);
-                    module.kind()
-                }),
-                None => None,
+                None => {
+                    let state = &mut self.slots[slot.index()];
+                    if state.module == Some(Module::ReadFailed) {
+                        if let Some(attempt) = state.retry.scan(present) {
+                            info!(
+                                "{} slot: retrying EEPROM descriptor ({attempt}/{})",
+                                slot.name(),
+                                retry::MAX_RETRIES
+                            );
+                            self.identify_inserted(slot).await
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
             };
             changes[slot.index()] = change.map(|kind| SlotChange {
                 slot,
@@ -211,13 +230,33 @@ impl Subboard {
         Status(self)
     }
 
+    async fn identify_inserted(&mut self, slot: Slot) -> Option<ModuleKind> {
+        let module = self.identify(slot).await;
+        let state = &mut self.slots[slot.index()];
+        state.module = Some(module);
+        if module == Module::ReadFailed {
+            if !state.retry.read_failed() {
+                warn!(
+                    "{} slot: EEPROM retries exhausted; waiting for removal",
+                    slot.name()
+                );
+            }
+        } else {
+            state.retry.reset();
+        }
+        // The usual activation/event path is reached only after a complete
+        // valid descriptor. Failed reads never configure Interaction GPIOs.
+        self.on_inserted(slot, module);
+        module.kind()
+    }
+
     async fn identify(&mut self, slot: Slot) -> Module {
         let mut raw = [0u8; DESCRIPTOR_LEN];
         let read = shared_i2c::subboard_read_regs_async(slot.eeprom_addr(), 0x00, &mut raw).await;
         if !matches!(read, Some(Ok(()))) {
             self.descriptor_errors = self.descriptor_errors.saturating_add(1);
             warn!("{} slot: EEPROM read failed", slot.name());
-            return Module::Unreadable;
+            return Module::ReadFailed;
         }
         match descriptor::parse(&raw) {
             Ok(BOARD_TYPE_INTERACT) => Module::Interaction,
@@ -263,7 +302,7 @@ impl Subboard {
                 slot.name(),
                 descriptor::board_type_name(board_type)
             ),
-            Module::Unreadable => {}
+            Module::Unreadable | Module::ReadFailed => {}
         }
     }
 
@@ -284,7 +323,9 @@ impl Subboard {
                 drive_low(&mut self.left_addr);
                 info!("camera module removed; GPIO14 drives left A0 low again");
             }
-            Module::Other(_) | Module::Unreadable => info!("{} slot: module removed", slot.name()),
+            Module::Other(_) | Module::Unreadable | Module::ReadFailed => {
+                info!("{} slot: module removed", slot.name())
+            }
         }
     }
 
@@ -327,7 +368,7 @@ impl fmt::Display for Status<'_> {
                 }
                 Some(Module::Camera) => f.write_str("cam")?,
                 Some(Module::Other(board_type)) => write!(f, "0x{board_type:02X}")?,
-                Some(Module::Unreadable) => f.write_str("bad")?,
+                Some(Module::Unreadable | Module::ReadFailed) => f.write_str("bad")?,
             }
         }
         write!(f, " derr={}", board.descriptor_errors)

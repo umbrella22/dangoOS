@@ -13,7 +13,7 @@ trap 'rm -rf "$DIR"' EXIT
 
 SRC=crates/mosaico-s31/src/drivers
 for file in touch/protocol.rs display/packing.rs geometry.rs \
-    subboard/descriptor.rs subboard/signal.rs subboard/touch_key.rs; do
+    subboard/descriptor.rs subboard/retry.rs subboard/signal.rs subboard/touch_key.rs; do
     name="$(basename "$file" .rs)"
     rustc --edition=2021 --test "$SRC/$file" -o "$DIR/$name"
     "$DIR/$name" -q "$@"
