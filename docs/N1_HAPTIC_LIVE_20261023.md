@@ -8,12 +8,22 @@ Error 与 Panic 无触感。后续已定位到可复现的新旧编码差异，�
 
 ## 当前运行镜像
 
-2026-10-24 已刷入`14316ff`的普通固件`target/usb-upload-yield-20261024/default.bin`，
+2026-10-24 当前为 `c86811b` 的普通固件
+`target/lights-early-reset-clear-usb-first-20261024/default.bin`，3,057,568 B，
+SHA-256 `c8e4f00de7a31aec5936ffc3f54cedd0b0fc992a595beee07949365f54f9af42`，
+无诊断 feature。在前版基础上增加常驻脑运行时故障原因日志，并将启动黑帧提前到
+LCD 初始化之前。`target/usb-session-live-20261024/flash-06/` 保存完整应用读回和
+引导区一致收据；自动启动及后续物理 RESET 均有默认脑、默认皮肤查询。操作者确认
+RESET 后主页恢复时灯已熄灭、点按有效。此结果不证明 RESET 边沿或 ROM 期间断电；
+详细镜像、N4 故障验收与清理见 [N4 现场记录](N4_BRAIN_LIVE_20261024.md)。
+
+前一版是 `14316ff` 的普通固件 `target/usb-upload-yield-20261024/default.bin`，
 3,055,792 B，SHA-256 `7b7b65b0c5575e6734b332f0804ba3065c602cecac8f349b97e7416535d20fe7`。
 它包含旧IN传输复位修复、类型化大脑输入及USB包间yield，无诊断feature。
 `target/usb-session-live-20261024/flash-05/`完整应用读回、引导区前后与原备份逐字节
 一致；自动WDT重启成功，`26-default-startup`的hello、存储、默认脑error=0及皮肤
-default均正常。上传实时性、普通版USB重连与新触摸性能待测。
+default均正常。该版半包 USB 重连、完整重传及清理已完成一轮设备验收；上传时仍有
+sensor 错误／丢弃／积压，整体上传实时性未通过，新触摸性能待测。
 
 上一轮为验证 N3 的 USB 拔线重连修复，刷入 `c18d0ca` 对应的
 `target/usb-in-reset-fix-20261024/diagnostic.bin`，3,073,376 B，SHA-256

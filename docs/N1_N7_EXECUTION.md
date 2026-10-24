@@ -44,7 +44,7 @@ N7 已将数据根改为每 VM 独立上下文，默认根只在创建时复制�
 | N2 | `codex/n2-buttons-power` | `973eb77` → `9b5ee37` | 完成；306 项主机测试、预览 / release / ROM 检查通过；[收据](N2_BUTTONS_POWER.md#2026-10-23-acceptance-receipt) | 插板 / 空槽 Lua 手势、三页面 Sleep / USB 断开和 POWER 开机通过；后续清灯修复三页面实物通过，时序 / 电流待测 |
 | N3 | `codex/n3-skin-pack` | `1b4cf33` → `c45966c` | 完成；317 项主机测试、20 姿态像素等价、真实打包渲染与 release 通过；[收据](N3_SKIN_PACK.md#2026-10-23-independent-acceptance-receipt) | 换色、同 ID 替换、重启保留、五类坏包拒绝及选中删除通过；修复诊断版普通 / 半包拔插各一次自行恢复，半包后完整重传与清理通过；普通7b7b版一轮半包恢复63.428 / 118.114ms、完整重传及清理ACK通过，清理后目视由34确认；重复稳定性与客观触摸待验收，整体上传实时性未通过，见 [现场记录](N3_SKIN_LIVE_20261024.md) |
 | N7 | `codex/n7-app-uninstall` | `2cb36dd` → `09c252d` | 完成；328 项主机测试、17 项工具测试、8 个真实 LVGL 指针场景与 release 通过；[收据](N7_APP_LIFECYCLE.md#2026-10-23-independent-acceptance-receipt) | 普通7b7b截至49部分通过：顺序隔离/UI取消与卸载/USB stop与rmdata/真实重排/legacy sentinel/最终清理；来源变化、影子、冲突、物理中断及busy/停页等待测 |
-| N4 | `codex/n4-lua-brain` | `c571e2e` → `d0835e2` | 完成；341 项主机测试、4161 条原生对照、12 个外部恶意脚本进程、21 项工具测试；[收据](N4_LUA_BRAIN.md#2026-10-23-independent-acceptance-receipt) | 单次编译修复后默认脑多次启动通过；全行为 / 热重载 / 回退待测 |
+| N4 | `codex/n4-lua-brain` | `c571e2e` → `d0835e2` | 完成；341 项主机测试、4161 条原生对照、12 个外部恶意脚本进程、21 项工具测试；[收据](N4_LUA_BRAIN.md#2026-10-23-independent-acceptance-receipt) | Happy热加载/语法拒绝保留/一次重启持久化通过；组合普通版三种故障原因与回退已测，最终清理/并存/全行为待测 |
 | N5 | `codex/n5-album` | `ab1be60` → `5410697` | 完成；347 项主机测试、25 项工具测试、11 个真实 LVGL 场景、48 次往返、独立图像 / worker 验收；[收据](LUA-N5-RUNTIME.md#2026-10-23-independent-acceptance-receipt) | not-run |
 | N6 | `codex/n6-usb-ota` | `df6b6b4` → `586cfc9` | 完成；360 项主机测试、46 项工具测试、39 个镜像语料、十次 NOR 更新 / 39 故障点与迁移恢复模拟；[收据](N6_USB_OTA.md#2026-10-23-independent-acceptance-receipt) | not-run；未迁移设备 |
 
@@ -74,6 +74,14 @@ N1/N6 的震动取消修复提交为 `50ed8c7`：关闭会拒绝新请求、清�
 | `cb73dc6` | N3 绑定实际bulk IN端点的只读寄存器快照，RTC v3 | 269项库测试、普通构建命令拒绝、默认及诊断release、严格镜像、714符号和寄存器布局核验通过；完整回读与启动通过；有效重连记录显示配置后EPENA仍为1、FIFO空间充足，旧IN传输状态阻塞新写入，待修复实测 |
 | `c18d0ca` | N3 仓库内固定实际OTG依赖，USBRST先完成旧非EP0 IN禁用握手再重配 | 269项固件库、2项握手状态测试、双release、严格镜像和714符号通过；557项合并源码与归档独立核验，完整驱动Cargo主机套件受限；完整回读与引导区一致；普通 / 半包拔插各一次自行恢复，EPENA=0 / EPDISD=1；半包后端口返回至hello / skin-ls约80 / 132ms；该诊断版记录之后的普通版复测见14316ff行 |
 | `14316ff` | N3 每个USB包全部feed / effects完成后显式yield，释放执行器给其他就绪任务 | 3项skin push、269项库测试、双release、严格镜像及两次714符号通过；586项源码与归档、4项BIN / ELF及12项列出的依赖指纹独立核验；普通7b7b真机一轮半包恢复、同ID重传及清理ACK通过；上传hb/fps改善，但ierr27/berr1/drops166及lateness积压，整体实时性未通过；清理后目视由34确认，客观触摸与重复稳定性待验收，单次同步Flash延迟仍不受此修复约束 |
+
+`02ce70d` 补常驻大脑运行时回退的单次、有界错误原因日志；269 项库测、真实 VM
+故障分类／一次性日志主机探针、普通构建及 714 ROM 符号通过。`c86811b` 将 Startup
+黑帧移到 LCD／触摸等初始化之前，USB 先启动、最多等待 100 ms；9 项生命周期测试、
+普通构建和镜像检查通过。组合 `c8e4f00d` 在 flash-06 完整回读、引导区一致并自动
+启动；物理 RESET 后灯灭与触摸恢复获确认，三种延迟故障原因与回退已取得设备证据。
+RESET 边沿断电、前台并存及最终清理未由以上结果覆盖。证据与限制见
+[N4 现场记录](N4_BRAIN_LIVE_20261024.md)。
 
 `1c793c5` 与 `cc949c9` 的组合归档为 `target/touch-clock-lights-20261023/`。完整 `scripts/check.sh`
 通过 395 次测试执行（258 S31、10 FS、58 Lua、69 驱动 / 策略），两个预览、默认 release
