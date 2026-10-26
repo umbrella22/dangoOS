@@ -43,6 +43,12 @@ default output is RGB565LE, or GRAY8 for a GRAY8 source. `save_file` supports
 PNG encoding is unsupported. BIN uses the native LVGL decoder and is not an
 `image.load_file` format.
 
+Identity resize retains the decoded pixel conversion without interpolation.
+Bilinear resize computes rational weights with bounded integer arithmetic;
+nonbinary exact-half rounding cases retain the original double expression.
+This preserves the previous byte-level RGB565LE and GRAY8 results across the
+existing dimension and pixel-budget domain.
+
 ## Native LVGL bridge
 
 `mosaico-lua/src/ui.rs` carries command JSON, an optional copied pixel blob and
@@ -51,6 +57,13 @@ the per-VM storage root. `tasks/lua.rs` suspends the VM until the UI task replie
 numeric IDs validated by a registered Lua userdata metatable; they never expose
 native pointers. Display framebuffer mode and native LVGL mode are mutually
 exclusive. Workers cannot acquire either display mode.
+
+Publishing a pending command wakes the UI owner during its existing idle
+interval. A fixed deadline and a bounded command count prevent a request stream
+from extending that interval indefinitely. Input, animation and rendering run
+in the ordinary UI loop between intervals. Stop and release also wake the owner;
+the fast path observes their flags without consuming the normal teardown work.
+A single native call remains synchronous and cannot be preempted mid-call.
 
 The supported widgets are screen, object/container, label, button, canvas, image
 and message box. The facade supports geometry, alignment, basic RGB/opacity/
@@ -81,6 +94,72 @@ The embedding must retain the previous screen throughout the service lifetime.
 Leaving the Lua page, app teardown and shutdown request release through the UI
 task. Host acceptance mirrors test data into libc and littlefs backends;
 firmware uses the single VFS through libc syscall shims.
+
+### Screen reconstruction and publication
+
+Cleaning the active screen starts a reconstruction interval. The display refresh
+timer is held so the last completed framebuffer remains visible. The same
+display's running pointer read timers are paused, preventing a touch on an old
+visible control from hitting an incomplete replacement tree. System raw touch,
+edge gestures, AI shutdown and other LVGL timers continue through their existing
+paths. LVGL normally resumes the display timer on each `REFR_REQUEST`, so a
+display callback holds it again after the default handler. A paused timer by
+itself does not indicate an external pause: LVGL also pauses it after an ordinary
+refresh.
+
+```mermaid
+flowchart LR
+  A[Clean active screen] --> B[Hold refresh and pointer read timers]
+  B --> C[Apply widget requests; process system input]
+  C --> D{Publication boundary}
+  D -->|Event batch complete or script delay| E[Remove hold and request complete frame]
+  D -->|Application exit| F[Release hold and restore native screen]
+  style B fill:#fff3e0,color:#e65100
+  style E fill:#c8e6c9,color:#1a5e20
+  style F fill:#bbdefb,color:#0d47a1
+```
+
+`lvgl.process_events` sends `frame_end` after dispatching its callback batch,
+including caught callback errors and calls with zero timeout. The foreground
+runner also sends this boundary before a script delay when successful native
+requests indicate a pending reconstruction. An individual failed widget request
+leaves the interval open so Lua can recover before publication. `frame_end` is
+an idempotent no-op after deinitialization or when no interval is pending.
+
+At publication, layout is updated before pointer polling resumes, so the first
+new touch uses the committed geometry even when its timer precedes refresh.
+Input reset and `wait_release` discard contact belonging to the reconstruction
+interval. Two guarded reads consume the port's one-read short-tap
+latch and then its released state; a still-held contact must release before a new
+press is accepted. Existing enabled flags and previously paused read timers are
+preserved. Restoration checks that the saved input device, display and read timer
+still match. This contract applies to the platform's timer-driven pointer input;
+it does not intercept independent event-mode calls to `lv_indev_read`.
+
+The refresh callback stores a stable context address until removal. Service
+release restores the previous native screen and deletes the owned targets before
+restoring pointer polling. It removes the callback before freeing that context.
+The embedding must release or drop `LuaLvglService` before deleting its display.
+Host probes cover real LVGL input and publication boundaries; physical display
+continuity and rapid navigation require device acceptance.
+
+### Native display profiling
+
+The optional `native-ui-diagnostics` feature measures native Lua sessions with
+frame IDs that follow each shadow-frame lease through submit, pickup, TE wait,
+transfer and release. Measurement points use fixed storage; the UI task prints
+bounded summaries outside the measurement critical sections. Per-window
+completion counts become zero during idle, unlike the existing retained FPS
+field. Frame records keep their originating session across a late completion;
+mixed windows identify both session bounds.
+
+Handler duration includes flush callbacks; flush duration measures copying into
+the shadow frame. Transfer duration combines packing and SPI waits. Ordinary
+UI work includes its native request and handler calls, while lease duration
+overlaps work that the CPU can perform during transfer. These are wall-clock
+measurements with containment and overlap, not independent CPU costs to sum.
+The feature is disabled by default and does not change timer periods, display
+buffers or TE policy.
 
 ## Independent workers
 
@@ -148,6 +227,14 @@ close-and-CRC receipt. A stale staging file alone cannot be published. A
 same-filesystem rename preserves the old photo until commit. Disconnect,
 explicit abort and N7 clear-data invalidate staging; a failed commit never
 starts the album. Photo content is decoded by its consumer after delivery.
+
+The CLI opens the POSIX console with DTR low, preserves input buffered during
+open, then raises DTR. Photo payload writes continue until all bytes have been
+accepted. A missing or mismatched ready/file receipt leaves the device's body
+state unknown, so the CLI closes the connection without sending text cleanup.
+An explicit file rejection permits `abort`; failed transfers never issue the
+commit or optional album launch. The photo command closes its port on success
+and failure, including after `--follow` ends.
 
 ## 2026-10-23 independent acceptance receipt
 

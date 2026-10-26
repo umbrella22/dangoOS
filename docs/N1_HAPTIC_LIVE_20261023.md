@@ -8,7 +8,63 @@ Error 与 Panic 无触感。后续已定位到可复现的新旧编码差异，�
 
 ## 当前运行镜像
 
-2026-10-24 当前为 `0b1b211` 的普通固件
+2026-10-25 当前为相册 48 行绘制缓冲诊断候选，
+`target/n5-draw48-20261025/diagnostic.bin`，3,081,008 B，SHA-256
+`8c9b37f458692767216d02c0409c74cf269cd997ba6cb4b5565db9ab50aa0b92`，
+仅开启 `native-ui-diagnostics`。保留重建输入门控，内部 draw payload 增至
+46,080 B；诊断采样在 handler／work／RPC 计时之外，不代表精确内存峰值。
+`target/n5-render-live-20261025/flash-05/root-verified.json` 确认旧布局 main_app
+完整回读、引导区不变及自动启动；`20-draw48-startup` 确认实际 48 行、128 B
+对齐、默认脑／皮肤、原四应用、右槽及可用 435 块。二十图保留慢帧的 handler
+中位耗时从 95.661 ms 降为 67.705 ms，但操作者感觉差不多，整体性能仍未验收。
+相册运行期间 INTERNAL 最低观测 free 为 23,888 B，不是精确峰值或连续可分配量。
+同一固件的三列临时相册已获“比较跟手”反馈，handler 保留慢帧中位进一步降至
+55.319 ms；首屏构建顺序修复已获无白屏、启动退出正常的实物确认，两版临时
+应用均已清理。Factory Album 尚未替换；本轮不替代 N1 硬件回归。
+
+前一版为相册重建输入修复诊断固件，
+`target/n5-input-gate-20261025/diagnostic.bin`，3,078,944 B，SHA-256
+`939be8aea676fd2d35e9c83e7776634377fd408fb1dcbd30ce80f06e4324e534`，
+仅开启 `native-ui-diagnostics`。重建期间暂停该显示的 pointer read timer，完成布局
+后恢复，丢弃重建期间的点按，避免点击旧画面时命中半成品对象树。原版 Album 不变。
+`target/n5-render-live-20261025/flash-04/root-verified.json` 确认旧布局 main_app
+完整回读、引导区不变与自动启动；`13-input-gate-startup` 默认脑／皮肤、原四应用、
+右槽及可用 435 块通过。原版相册连续切图已获操作者确认修复；随后纯网格
+滚动与边缘返回确认正常、无错位及黑闪，详见 N5 现场记录。
+
+前一版为相册原生显示分段诊断固件，
+`target/n5-native-profile-20261025/diagnostic.bin`，3,077,984 B，SHA-256
+`16b03146d09fff23bf38bb0531c80b8b7b659e55d5aa1986bab584fa475cf425`，
+仅开启 `native-ui-diagnostics`，未改变显示、TE、缓冲区或原版 Album 策略。
+`target/n5-render-live-20261025/flash-03/root-verified.json` 确认旧布局 main_app
+完整回读、引导区刷前／刷后／原备份一致及自动启动；`10-profile-startup` 查询确认
+默认脑、默认皮肤、原四应用、右槽 `R=interact* derr=0` 及 data 可用 435 块。
+二十张既有测试照片已采集网格与单图混合操作及末十二个网格慢帧；不以诊断版启动
+替代 N1 硬件回归。分段结果和后续输入缺陷见 N5 现场记录。
+
+前一版为 `1314197` 加相册呈现、整数缩放及原生 UI 请求调度修复的普通固件，
+`target/n5-perf-followup-20261025/default.bin`，3,062,592 B，SHA-256
+`1cbd57c0912436f40724fa27a0b6ce4fab8c84ff672f615a834d37ae09842c6f`，
+无诊断 feature。`target/n5-render-live-20261025/flash-02/root-verified.json`
+确认旧布局 main_app 完整回读、引导区不变与自动启动；默认大脑／皮肤、原四应用、
+右槽识别及可用 435 块通过。同源实际 81×48 缩略图降至 17–25 ms，二十次尺寸
+查询降至 72–79 ms；三十组设备输出长度／CRC 与上一版一致。操作者确认无错位、
+无黑闪，但额外流畅度提升感知不明显，整体性能继续定位。用完的探针均已精确删除。
+本版未重新执行 N1 全部硬件用例；详见 [N5 现场记录](N5_ALBUM_LIVE_20261024.md)。
+
+前一版为 `1314197` 加相册呈现与图像处理修复的普通固件，
+`target/n5-render-fix-20261025/default.bin`，3,061,344 B，SHA-256
+`6143b13135303870ea541053c415885caf0755e8a0f8582ee3b9cca39eabc54b`，
+无诊断 feature。`target/n5-render-live-20261025/flash-01/root-verified.json`
+确认旧布局 main_app 完整回读、引导区刷前／刷后／原备份逐字节一致，自动重启成功。
+启动查询为默认大脑、默认皮肤和原四应用，右槽 `R=interact* derr=0`，旧布局
+双文件系统正常挂载。图像原尺寸处理三轮由 298–313 ms 降为 13–21 ms，80×48
+缩略图由 98–99 ms 降为 65–66 ms，测量应用已删除。原版二十图实屏确认不再闪黑、
+更顺畅，但帧率仍低；
+本次未重新执行 N1 全部硬件用例，历史结果仍绑定各自镜像，详见
+[N5 现场记录](N5_ALBUM_LIVE_20261024.md)。
+
+前一版为 2026-10-24 `0b1b211` 的普通固件
 `target/slot-descriptor-retry-20261024/default.bin`，3,058,496 B，SHA-256
 `dce2f5f0bfaeb56806d933b3266dc9a11df3ea3b1c309e43f05c0abe58d9ca56`，
 无诊断 feature。该版在前版基础上增加扩展板描述符传输失败后的有限重试。

@@ -5,6 +5,7 @@
 #include "lauxlib.h"
 #include "lua_image.h"
 #include "lodepng.h"
+#include "mosaico_resize.h"
 #define FRAME_MT "mosaico.image.frame"
 #define FILE_MAX (4u*1024u*1024u)
 #define PIXEL_MAX (1920u*1080u)
@@ -119,15 +120,19 @@ static int resize(lua_State*L){frame_t*f=check(L,1);luaL_checktype(L,2,LUA_TTABL
  lua_getfield(L,2,"filter");const char*filter=luaL_optstring(L,-1,"nearest");int bilinear=!strcmp(filter,"bilinear");if(!bilinear&&strcmp(filter,"nearest"))return luaL_error(L,"unknown resize filter");lua_pop(L,1);
  /* Register destination before any decode that can fail. */
  frame_t*out=push(L,w,h,fmt,(size_t)w*h*bpp(fmt));uint8_t*src;int owned,err=rgb(f,&src,&owned);if(err)return luaL_error(L,"image decode failed (%d)",err);
- for(unsigned y=0;y<h;y++)for(unsigned x=0;x<w;x++){
-  unsigned c[3];if(!bilinear){size_t i=((size_t)y*f->h/h*f->w+(size_t)x*f->w/w)*3;for(int k=0;k<3;k++)c[k]=src[i+k];}
-  else {
-   double sx=((x+0.5)*f->w/w)-0.5,sy=((y+0.5)*f->h/h)-0.5;if(sx<0)sx=0;if(sy<0)sy=0;if(sx>f->w-1)sx=f->w-1;if(sy>f->h-1)sy=f->h-1;
-   unsigned x0=sx,y0=sy,x1=x0+1<f->w?x0+1:x0,y1=y0+1<f->h?y0+1:y0;double dx=sx-x0,dy=sy-y0;
-   for(int k=0;k<3;k++)c[k]=(unsigned)(src[((size_t)y0*f->w+x0)*3+k]*(1-dx)*(1-dy)+src[((size_t)y0*f->w+x1)*3+k]*dx*(1-dy)+src[((size_t)y1*f->w+x0)*3+k]*(1-dx)*dy+src[((size_t)y1*f->w+x1)*3+k]*dx*dy+0.5);
+ /* At 1:1 the bilinear sample is exactly (x,y), with zero fractional
+    weights. Keep the same decoded RGB and output conversion, without the
+    per-pixel double arithmetic (software-emulated on the device). */
+ int identity=w==f->w&&h==f->h;
+ if(!bilinear||identity){
+  for(unsigned y=0;y<h;y++)for(unsigned x=0;x<w;x++){
+   size_t i=identity?((size_t)y*w+x)*3:((size_t)y*f->h/h*f->w+(size_t)x*f->w/w)*3;
+   pixel(out->data+((size_t)y*w+x)*bpp(fmt),fmt,src[i],src[i+1],src[i+2]);
   }
-  pixel(out->data+((size_t)y*w+x)*bpp(fmt),fmt,c[0],c[1],c[2]);
+ }else{
+  mosaico_resize_bilinear(src,f->w,f->h,out->data,w,h,fmt==LUA_IMAGE_FORMAT_GRAY8);
  }
+
  if(owned)mosaico_image_realloc(src,0);return 1;
 }
 static int save_file(lua_State*L){

@@ -85,12 +85,12 @@ class OtaDeliveryTests(unittest.TestCase):
         self.assertEqual(device.write_timeout, 20.0)
 
     def test_short_serial_writes_preserve_command_and_payload_bytes(self):
-        class PartialSerial(FakeSerial):
+        class PartialSerial(self.api.ConsoleSerial):
             def write(self, data):
                 accepted = data[:37]
                 self.writes.append(accepted)
                 return len(accepted)
-        sys.modules["serial"].Serial = PartialSerial
+        self.api.ConsoleSerial = PartialSerial
         FakeSerial.replies = self.success_replies()
         self.run_cli("ota", str(self.path))
         self.assertEqual(b"".join(FakeSerial.instances[0].writes), self.expected_stream())
@@ -158,11 +158,40 @@ class OtaDeliveryTests(unittest.TestCase):
         self.assertEqual(FakeSerial.instances[0].writes.count(b"@mosaico ota-end\n"), 1)
         self.assertTrue(FakeSerial.instances[0].closed)
 
+    def test_end_ack_is_returned_before_disconnect_while_filling_a_large_read(self):
+        class ResetAfterAckSerial(self.api.ConsoleSerial):
+            def read(self, count):
+                if self.queue and self.queue[0] == b"@ok ota-end\n" and count > len(self.queue[0]):
+                    # POSIX pyserial accumulates the ACK, waits for the rest of
+                    # count, then raises on reset without returning those bytes.
+                    self.queue = []
+                    raise OSError("USB reset while waiting to fill read")
+                return super().read(count)
+        self.api.ConsoleSerial = ResetAfterAckSerial
+        FakeSerial.replies = self.success_replies()
+        result = self.run_cli("ota", str(self.path))
+        self.assertIn("OTA activated: slot 0 -> 1", result)
+        self.assertEqual(b"".join(FakeSerial.instances[0].writes), self.expected_stream())
+
+    def test_complete_buffered_reply_is_delivered_before_reading_closed_port(self):
+        FakeSerial.replies = [OSError("USB disconnected")]
+        dev = self.api.Device("fake", False)
+        self.addCleanup(dev.ser.close)
+        dev.buf = b"[info] last telemetry\n@ok ota-end\n"
+        self.assertEqual(dev.reply(), "@ok ota-end")
+        self.assertEqual(len(dev.ser.queue), 1)
+
+    def test_incomplete_end_ack_at_disconnect_is_not_activation(self):
+        FakeSerial.replies = self.success_replies()[:-1] + [b"@ok ota-en", OSError("USB disconnected"), OSError("USB disconnected")]
+        with self.assertRaisesRegex(SystemExit, "completion is unconfirmed"):
+            self.run_cli("ota", str(self.path))
+        self.assertEqual(FakeSerial.instances[0].writes.count(b"@mosaico ota-end\n"), 1)
+
     def test_no_progress_on_payload_aborts_and_closes(self):
-        class StalledSerial(FakeSerial):
+        class StalledSerial(self.api.ConsoleSerial):
             def write(self, data):
                 return 0 if len(data) > 200 else super().write(data)
-        sys.modules["serial"].Serial = StalledSerial
+        self.api.ConsoleSerial = StalledSerial
         FakeSerial.replies = [b"@ok hello\n", b"@ok ota-begin 0 1\n", b"@ok ota-abort\n"]
         with self.assertRaisesRegex(OSError, "no progress"):
             self.run_cli("ota", str(self.path))

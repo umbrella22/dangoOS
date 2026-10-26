@@ -56,6 +56,7 @@
 use alloc::rc::Rc;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Instant, Timer};
 use log::{info, warn};
 use lvgl::sys;
@@ -67,11 +68,11 @@ use mosaico_s31::fox::entrance;
 use mosaico_s31::hub::gesture::{EdgeGestures, Route};
 use mosaico_s31::hub::registry::IconCache;
 use mosaico_s31::hub::transition::{self, Direction};
-use mosaico_s31::hub::{reaches_fox_off_home, AppId, Page};
+use mosaico_s31::hub::{AppId, Page, reaches_fox_off_home};
 use mosaico_s31::telemetry::{display as display_stats, latency};
 use mosaico_s31::ui::fox_widget::{self, FoxControl};
 use mosaico_s31::ui::splash::SplashControl;
-use mosaico_s31::ui::{theme, AppMsg, MosaicoApp, Screen, SHOW_SPLASH};
+use mosaico_s31::ui::{AppMsg, MosaicoApp, SHOW_SPLASH, Screen, theme};
 
 use super::{
     apps, buttons, haptic,
@@ -137,6 +138,27 @@ fn is_lua_page(page: Page) -> bool {
     matches!(page, Page::App(AppId::Lua(_)))
 }
 
+#[inline(always)]
+fn execute_lua_native(
+    service: &mut mosaico_s31::lua_lvgl::LuaLvglService,
+    command: mosaico_lua::ui::UiCommand,
+) -> Result<mosaico_lua::ui::UiReply, alloc::string::String> {
+    #[cfg(feature = "native-ui-diagnostics")]
+    let started = latency::now_us();
+    let result = service.execute(command);
+    #[cfg(feature = "native-ui-diagnostics")]
+    mosaico_s31::telemetry::native_ui::with(|p| {
+        let ended = latency::now_us();
+        let active = service.active() && !lua::screen_open();
+        if !p.active() && active {
+            p.set_active(true, started);
+        }
+        p.rpc(ended.saturating_sub(started));
+        p.set_active(active, ended);
+    });
+    result
+}
+
 /// Start the Lua app on `page`, if it is one that can run.
 fn start_lua_page(app: &MosaicoApp, page: Page) {
     match app.lua_entry(page) {
@@ -195,6 +217,31 @@ fn apply_apps_request(app: &mut MosaicoApp, icons: &mut IconCache, req: apps::Re
 
 /// Number of one-second UI stats intervals processed since boot.
 pub static HEARTBEATS: AtomicU32 = AtomicU32::new(0);
+
+/// Region statistics are sampled, not a historical minimum or a contiguous
+/// allocation bound. TLSF free payload and occupied block sizes do not sum to
+/// the pool span. Call only outside UI work, handler and native RPC timing.
+#[cfg(feature = "native-ui-diagnostics")]
+fn sample_native_internal_heap(phase: &str, session: u32) {
+    let at = latency::now_us();
+    let stats = esp_alloc::HEAP.stats();
+    let (mut total, mut free, mut allocated) = (0usize, 0usize, 0usize);
+    for region in stats.region_stats.iter().flatten() {
+        if region
+            .capabilities
+            .contains(esp_alloc::MemoryCapability::Internal)
+        {
+            total += region.size;
+            free += region.free;
+            allocated += region.used;
+        }
+    }
+    let sample_us = latency::now_us().saturating_sub(at);
+    info!(
+        "native-heap sampled=1 phase={} s={} at={} total={} free={} allocated={} sample_us={}",
+        phase, session, at, total, free, allocated, sample_us,
+    );
+}
 
 /// LVGL tick: monotonic milliseconds from the same clock as the input task.
 unsafe extern "C" fn tick_ms() -> u32 {
@@ -283,7 +330,22 @@ pub async fn ui_task(mut plane: PlaneUi) {
     let mut clear_on_fox = false;
     let mut slide = Slide::Idle;
 
+    #[cfg(feature = "native-ui-diagnostics")]
+    let mut heap_sample_state = (false, 0u32, Instant::now());
+    #[cfg(feature = "native-ui-diagnostics")]
+    {
+        port.report_draw_configuration();
+        sample_native_internal_heap("startup", 0);
+        // #region debug-point popup-shadow-build-marker
+        info!("{}", mosaico_s31::telemetry::popup_shadow::STARTUP_MARKER);
+        // #endregion debug-point popup-shadow-build-marker
+    }
+
     loop {
+        #[cfg(feature = "native-ui-diagnostics")]
+        let profile_loop_start = latency::now_us();
+        #[cfg(feature = "native-ui-diagnostics")]
+        mosaico_s31::telemetry::native_ui::with(|p| p.loop_start(profile_loop_start));
         // Wall-clock animation step. The loop period is a floor, not a fixed
         // timestep: a long render must slow the engine down by the same amount
         // instead of replaying it faster.
@@ -576,9 +638,20 @@ pub async fn ui_task(mut plane: PlaneUi) {
         }
         if slide == Slide::Idle {
             if let Some(command) = lua::take_lvgl_command() {
-                lua::complete_lvgl(lua_lvgl.execute(command));
+                lua::complete_lvgl(execute_lua_native(&mut lua_lvgl, command));
             }
         }
+
+        #[cfg(feature = "native-ui-diagnostics")]
+        mosaico_s31::telemetry::native_ui::with(|p| {
+            p.set_active(
+                slide == Slide::Idle
+                    && is_lua_page(app.page())
+                    && lua_lvgl.active()
+                    && !lua::screen_open(),
+                latency::now_us(),
+            )
+        });
 
         // ---- merged expression and haptics ----
         // The fox keeps living off Home (lights still react); it only buzzes
@@ -652,11 +725,19 @@ pub async fn ui_task(mut plane: PlaneUi) {
                 }
             }
         } else if !port.is_busy() {
+            #[cfg(feature = "native-ui-diagnostics")]
+            mosaico_s31::telemetry::native_ui::with(|p| p.begin_handler(latency::now_us()));
             ui.timer_handler();
+            #[cfg(feature = "native-ui-diagnostics")]
+            mosaico_s31::telemetry::native_ui::with(|p| p.end_handler(latency::now_us()));
             // Callbacks fired by the timer handler only queue messages.
             if let Err(error) = ui.drain(&mut app, DRAIN_MAX) {
                 warn!("ui_task: Ui::drain rejected: {error}");
             }
+            // #region debug-point popup-shadow-handler-finished
+            #[cfg(feature = "native-ui-diagnostics")]
+            lua_lvgl.popup_diagnostics().handler_finished();
+            // #endregion debug-point popup-shadow-handler-finished
             apps::set_ui_management_pending(app.management_busy());
             if let Some((screen, damage)) = port.take_frame() {
                 // This is the ordinary LVGL busy-state frame, never a Lua
@@ -674,10 +755,15 @@ pub async fn ui_task(mut plane: PlaneUi) {
                     touch_at_us: None,
                 });
             }
+        } else {
+            #[cfg(feature = "native-ui-diagnostics")]
+            mosaico_s31::telemetry::native_ui::with(|p| p.busy_skip());
         }
 
         if last_stats.elapsed() >= STATS_PERIOD {
             last_stats = Instant::now();
+            #[cfg(feature = "native-ui-diagnostics")]
+            mosaico_s31::telemetry::native_ui::report(latency::now_us());
             let (samples, p50, p95, max) = latency::summary();
             let heartbeat = HEARTBEATS.fetch_add(1, Ordering::Relaxed) + 1;
             #[cfg(feature = "touch-latency-diagnostics")]
@@ -707,7 +793,92 @@ pub async fn ui_task(mut plane: PlaneUi) {
             );
         }
 
-        Timer::after(UI_PERIOD).await;
+        // Reuse only this loop's existing idle interval for native Lua RPCs.
+        // Every request still runs on this sole LVGL owner. The deadline never
+        // moves, and eight requests cap work even if the Lua task floods us.
+        // Input, behavior, ticking and rendering stay in the normal loop.
+        let deadline = Instant::now() + UI_PERIOD;
+        #[cfg(feature = "native-ui-diagnostics")]
+        mosaico_s31::telemetry::native_ui::with(|p| {
+            p.work(latency::now_us().saturating_sub(profile_loop_start))
+        });
+        let mut window = mosaico_s31::lua_lvgl::RpcWindow::until(deadline.as_micros());
+        let mut return_to_main = false;
+        if slide == Slide::Idle && is_lua_page(app.page()) && !lua::screen_open() {
+            while window.available(Instant::now().as_micros()) {
+                match select(Timer::at(deadline), lua::wait_lvgl_ready()).await {
+                    Either::First(()) => break,
+                    Either::Second(()) => {
+                        // Stop/release are only observed here, never consumed.
+                        // The outer loop owns teardown and page transitions.
+                        if lua::lvgl_cleanup_pending()
+                            || buttons::shutdown_requested()
+                            || crate::ota_runtime::active()
+                        {
+                            return_to_main = true;
+                            break;
+                        }
+                        if let Some(command) = lua::take_lvgl_command() {
+                            lua::complete_lvgl(execute_lua_native(&mut lua_lvgl, command));
+                            window.completed();
+                        }
+                    }
+                }
+            }
+        }
+        if !return_to_main {
+            Timer::at(deadline).await;
+        }
+        // #region debug-point popup-shadow-sample-and-output
+        #[cfg(feature = "native-ui-diagnostics")]
+        {
+            // Diagnostics only: read the stable shadow synchronously, then emit
+            // at most one cached short line. No await, render, lease or mutation.
+            let active = slide == Slide::Idle
+                && is_lua_page(app.page())
+                && lua_lvgl.active()
+                && !lua::screen_open();
+            let started = latency::now_us();
+            let stable = if active {
+                port.diagnostic_stable_shadow()
+            } else {
+                None
+            };
+            let diagnostics = lua_lvgl.popup_diagnostics();
+            let captured = diagnostics.sample_if_ready(started, active, stable);
+            let ended = latency::now_us();
+            if captured {
+                diagnostics.set_sample_micros(ended.saturating_sub(started));
+            }
+            if let Some(line) = diagnostics.next_line(ended) {
+                info!("{line}");
+            }
+        }
+        // #endregion debug-point popup-shadow-sample-and-output
+        #[cfg(feature = "native-ui-diagnostics")]
+        {
+            // Handler/work/native RPC measurements and the existing idle
+            // window have ended. Sampling/logging still adds to loop-to-loop
+            // wall time and can overlap an asynchronous plane lease.
+            let active = mosaico_s31::telemetry::native_ui::with(|p| p.active());
+            let phase = if active != heap_sample_state.0 {
+                heap_sample_state.0 = active;
+                if active {
+                    heap_sample_state.1 += 1;
+                    Some("enter")
+                } else {
+                    Some("exit")
+                }
+            } else if active && heap_sample_state.2.elapsed() >= STATS_PERIOD {
+                Some("periodic")
+            } else {
+                None
+            };
+            if let Some(phase) = phase {
+                heap_sample_state.2 = Instant::now();
+                sample_native_internal_heap(phase, heap_sample_state.1);
+            }
+        }
     }
 }
 

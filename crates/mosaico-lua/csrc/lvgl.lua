@@ -53,6 +53,9 @@ function lvgl.process_events(timeout)
             count=count+1
         end
     end
+    -- A callback may clean and rebuild the active screen through many RPCs.
+    -- Publish after all callbacks (including caught errors), not between them.
+    call('frame_end')
     if timeout and timeout>0 then require('delay').delay_ms(timeout) end
     return count
 end

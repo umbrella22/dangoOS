@@ -33,8 +33,8 @@ use lvgl::sys;
 use crate::drivers::geometry::{DirtyRect, HEIGHT, WIDTH};
 use crate::drivers::memory::PixelMemory;
 
-/// Rows of the internal draw buffer (480 x 24 x 2 B = 22.5 KiB).
-const DRAW_ROWS: usize = 24;
+/// Rows of the internal draw buffer (480 x 48 x 2 B = 45 KiB).
+const DRAW_ROWS: usize = 48;
 
 /// Base of the PSRAM shadow frame (`WIDTH * HEIGHT` RGB565 pixels).
 static SHADOW: AtomicPtr<u16> = AtomicPtr::new(core::ptr::null_mut());
@@ -67,6 +67,8 @@ pub fn set_pointer(x: i32, y: i32, pressed: bool) {
 /// render again.
 pub struct ScreenLease {
     pixels: &'static [u16],
+    #[cfg(feature = "native-ui-diagnostics")]
+    profile_id: Option<u32>,
 }
 
 // SAFETY: the shadow is written only by LVGL's flush on the UI task, and the
@@ -77,11 +79,20 @@ impl ScreenLease {
     pub fn pixels(&self) -> &[u16] {
         self.pixels
     }
+    #[cfg(feature = "native-ui-diagnostics")]
+    pub fn profile_id(&self) -> Option<u32> {
+        self.profile_id
+    }
 }
 
 impl Drop for ScreenLease {
     fn drop(&mut self) {
         BUSY.store(false, Ordering::Release);
+        #[cfg(feature = "native-ui-diagnostics")]
+        if let Some(id) = self.profile_id {
+            let released_at = mosaico_s31::telemetry::latency::now_us();
+            mosaico_s31::telemetry::native_ui::with(|p| p.release(id, released_at));
+        }
     }
 }
 
@@ -178,6 +189,41 @@ impl DisplayPort {
         BUSY.load(Ordering::Acquire)
     }
 
+    // #region debug-point popup-shadow-stable-read
+    /// Read only after the last damage has been submitted and its lease has
+    /// completed. UI owner only; no await, LVGL call, or frame submission may
+    /// occur while this borrow is used. A concurrent plane can only read pixels.
+    #[cfg(feature = "native-ui-diagnostics")]
+    pub fn diagnostic_stable_shadow(&self) -> Option<&[u16]> {
+        if self.is_busy() || critical_section::with(|cs| DAMAGE.borrow(cs).get().is_some()) {
+            return None;
+        }
+        // SAFETY: this display owns the allocation. The sole writer is the UI
+        // task, which does not run LVGL or write_rect during the returned borrow.
+        Some(unsafe { core::slice::from_raw_parts(self._shadow.as_ptr().cast(), WIDTH * HEIGHT) })
+    }
+    // #endregion debug-point popup-shadow-stable-read
+
+    /// Report the successfully allocated configuration, outside rendering.
+    #[cfg(feature = "native-ui-diagnostics")]
+    pub fn report_draw_configuration(&self) {
+        let stride = unsafe {
+            sys::lv_draw_buf_width_to_stride(
+                WIDTH as u32,
+                sys::lv_color_format_t_LV_COLOR_FORMAT_RGB565,
+            )
+        } as usize;
+        let align = self._draw.alignment();
+        log::info!(
+            "native-buffer rows={} bytes={} stride={} align={} aligned={} caps=internal",
+            self._draw.len() / stride,
+            self._draw.len(),
+            stride,
+            align,
+            u8::from(self._draw.as_ptr() as usize % align == 0),
+        );
+    }
+
     /// Mark the whole active screen for redraw (page switch).
     pub fn invalidate_all(&mut self) {
         unsafe { sys::lv_obj_invalidate(sys::lv_screen_active()) };
@@ -191,11 +237,24 @@ impl DisplayPort {
         }
         let damage = critical_section::with(|cs| DAMAGE.borrow(cs).take())?;
         BUSY.store(true, Ordering::Release);
+        #[cfg(feature = "native-ui-diagnostics")]
+        let leased_at = mosaico_s31::telemetry::latency::now_us();
         let base = SHADOW.load(Ordering::Acquire);
         // SAFETY: `base` is the live `WIDTH * HEIGHT` shadow allocation owned
         // by `self._shadow`; LVGL does not write it while `BUSY` is set.
         let pixels = unsafe { core::slice::from_raw_parts(base, WIDTH * HEIGHT) };
-        Some((ScreenLease { pixels }, damage))
+        #[cfg(feature = "native-ui-diagnostics")]
+        let profile_id = mosaico_s31::telemetry::native_ui::with(|p| {
+            p.lease(leased_at, [damage.x0, damage.y0, damage.x1, damage.y1])
+        });
+        Some((
+            ScreenLease {
+                pixels,
+                #[cfg(feature = "native-ui-diagnostics")]
+                profile_id,
+            },
+            damage,
+        ))
     }
 
     /// Copy the page on screen into the snapshot. Refuses (returns `false`)
@@ -236,7 +295,11 @@ impl DisplayPort {
             core::slice::from_raw_parts(SNAPSHOT.load(Ordering::Acquire), WIDTH * HEIGHT)
         };
         Some((
-            ScreenLease { pixels: screen },
+            ScreenLease {
+                pixels: screen,
+                #[cfg(feature = "native-ui-diagnostics")]
+                profile_id: None,
+            },
             SnapshotLease { pixels: old },
         ))
     }
@@ -251,7 +314,14 @@ impl DisplayPort {
         // SAFETY: as in `take_frame`.
         let pixels =
             unsafe { core::slice::from_raw_parts(SHADOW.load(Ordering::Acquire), WIDTH * HEIGHT) };
-        Some((ScreenLease { pixels }, FULL))
+        Some((
+            ScreenLease {
+                pixels,
+                #[cfg(feature = "native-ui-diagnostics")]
+                profile_id: None,
+            },
+            FULL,
+        ))
     }
 
     /// Forget a press LVGL has not seen yet (touches during a slide).
@@ -348,6 +418,10 @@ unsafe extern "C" fn flush(
     area: *const sys::lv_area_t,
     pixels: *mut u8,
 ) {
+    #[cfg(feature = "native-ui-diagnostics")]
+    let profile_start = mosaico_s31::telemetry::latency::now_us();
+    #[cfg(feature = "native-ui-diagnostics")]
+    let mut profile_pixels = 0u64;
     let shadow = SHADOW.load(Ordering::Acquire);
     if !shadow.is_null() && !area.is_null() && !pixels.is_null() {
         let area = unsafe { *area };
@@ -356,6 +430,10 @@ unsafe extern "C" fn flush(
         let y1 = area.y1.clamp(0, HEIGHT as i32 - 1);
         let y2 = area.y2.clamp(0, HEIGHT as i32 - 1);
         if x1 <= x2 && y1 <= y2 {
+            #[cfg(feature = "native-ui-diagnostics")]
+            {
+                profile_pixels = (x2 - x1 + 1) as u64 * (y2 - y1 + 1) as u64;
+            }
             let area_w = (area.x2 - area.x1 + 1) as u32;
             let stride = unsafe {
                 sys::lv_draw_buf_width_to_stride(
@@ -388,6 +466,13 @@ unsafe extern "C" fn flush(
         }
     }
     unsafe { sys::lv_display_flush_ready(display) };
+    #[cfg(feature = "native-ui-diagnostics")]
+    mosaico_s31::telemetry::native_ui::with(|p| {
+        p.flush(
+            mosaico_s31::telemetry::latency::now_us().saturating_sub(profile_start),
+            profile_pixels,
+        )
+    });
 }
 
 unsafe extern "C" fn read_pointer(_indev: *mut sys::lv_indev_t, data: *mut sys::lv_indev_data_t) {

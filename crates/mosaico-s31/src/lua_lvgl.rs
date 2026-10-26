@@ -15,7 +15,7 @@ use core::{
 };
 use lvgl::sys as s;
 use mosaico_lua::ui::{UiCommand, UiReply};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 unsafe extern "C" {
     fn lv_image_cache_drop(src: *const core::ffi::c_void);
 }
@@ -53,6 +53,153 @@ unsafe extern "C" fn event(e: *mut s::lv_event_t) {
         q.push_back(event.callback);
     }
 }
+/// Tracks successful foreground UI requests so a delay-only script publishes
+/// its rebuilt tree before sleeping. Shared by the device runner and host probe.
+#[derive(Default)]
+pub struct RedrawBoundary(bool);
+impl RedrawBoundary {
+    pub fn completed(&mut self, op: &str, success: bool) {
+        if success {
+            match op {
+                "clean" => self.0 = true,
+                "frame_end" | "deinit" => self.0 = false,
+                _ => {}
+            }
+        }
+    }
+    pub fn before_sleep(&mut self, root: &str) -> Option<UiCommand> {
+        if !core::mem::take(&mut self.0) {
+            return None;
+        }
+        Some(UiCommand {
+            op: "frame_end".into(),
+            args: "[]".into(),
+            bytes: Vec::new(),
+            root: root.into(),
+        })
+    }
+}
+/// Limits native RPC work inside the UI task's existing idle interval. The
+/// deadline is fixed at creation; accepting more work can never extend it.
+pub struct RpcWindow {
+    deadline_us: u64,
+    remaining: u8,
+}
+impl RpcWindow {
+    pub fn until(deadline_us: u64) -> Self {
+        Self {
+            deadline_us,
+            remaining: 8,
+        }
+    }
+    pub fn available(&self, now_us: u64) -> bool {
+        self.remaining > 0 && now_us < self.deadline_us
+    }
+    pub fn completed(&mut self) {
+        self.remaining = self.remaining.saturating_sub(1);
+    }
+}
+// LVGL resumes its refresh timer on every invalidation. Run after the
+// display's default REFR_REQUEST handler to retain the completed framebuffer.
+struct RefreshGate {
+    display: *mut s::lv_display_t,
+    timer: *mut s::lv_timer_t,
+    pointers: Vec<Box<PointerPause>>,
+}
+struct PointerPause {
+    indev: *mut s::lv_indev_t,
+    timer: *mut s::lv_timer_t,
+    alive: Cell<bool>,
+}
+unsafe extern "C" fn pointer_deleted(e: *mut s::lv_event_t) {
+    unsafe {
+        let pointer = &*(s::lv_event_get_user_data(e) as *const PointerPause);
+        pointer.alive.set(false);
+    }
+}
+impl RefreshGate {
+    unsafe fn pause_pointers(display: *mut s::lv_display_t) -> Vec<Box<PointerPause>> {
+        let mut pointers = Vec::new();
+        unsafe {
+            let mut indev = s::lv_indev_get_next(ptr::null_mut());
+            while !indev.is_null() {
+                if s::lv_indev_get_display(indev) == display
+                    && s::lv_indev_get_type(indev) == s::lv_indev_type_t_LV_INDEV_TYPE_POINTER
+                {
+                    let timer = s::lv_indev_get_read_timer(indev);
+                    // Leave pre-existing paused timers and every enabled bit
+                    // untouched. Raw touch/edge gestures run outside LVGL.
+                    if !timer.is_null() && !s::lv_timer_get_paused(timer) {
+                        s::lv_timer_pause(timer);
+                        s::lv_indev_reset(indev, ptr::null_mut());
+                        let mut pointer = Box::new(PointerPause {
+                            indev,
+                            timer,
+                            alive: Cell::new(true),
+                        });
+                        s::lv_indev_add_event_cb(
+                            indev,
+                            Some(pointer_deleted),
+                            s::lv_event_code_t_LV_EVENT_DELETE,
+                            (&mut *pointer as *mut PointerPause).cast(),
+                        );
+                        pointers.push(pointer);
+                    }
+                }
+                indev = s::lv_indev_get_next(indev);
+            }
+        }
+        pointers
+    }
+}
+impl Drop for RefreshGate {
+    fn drop(&mut self) {
+        unsafe {
+            for pointer in &self.pointers {
+                if !pointer.alive.get() {
+                    continue;
+                }
+                // A host may remove/reassign an input device while a redraw
+                // is held. Find it without dereferencing the saved pointer.
+                let mut live = s::lv_indev_get_next(ptr::null_mut());
+                while !live.is_null() && live != pointer.indev {
+                    live = s::lv_indev_get_next(live);
+                }
+                if !live.is_null() {
+                    s::lv_indev_remove_event_cb_with_user_data(
+                        live,
+                        Some(pointer_deleted),
+                        (&**pointer as *const PointerPause).cast_mut().cast(),
+                    );
+                }
+                if live.is_null()
+                    || s::lv_indev_get_display(live) != self.display
+                    || s::lv_indev_get_type(live) != s::lv_indev_type_t_LV_INDEV_TYPE_POINTER
+                    || s::lv_indev_get_read_timer(live) != pointer.timer
+                {
+                    continue;
+                }
+                s::lv_indev_reset(live, ptr::null_mut());
+                s::lv_indev_wait_release(live);
+                // The port latches a short tap as one PRESSED read even when
+                // the finger is already up. Consume that read while guarded,
+                // then read RELEASED to admit the first genuinely new tap.
+                // A held contact remains PRESSED twice and must release.
+                // Disabled devices stay disabled: lv_indev_read is a no-op.
+                s::lv_indev_read(live);
+                s::lv_indev_read(live);
+                s::lv_timer_resume(pointer.timer);
+            }
+        }
+    }
+}
+unsafe extern "C" fn hold_refresh(e: *mut s::lv_event_t) {
+    unsafe {
+        let gate = &*(s::lv_event_get_user_data(e) as *const RefreshGate);
+        s::lv_timer_pause(gate.timer);
+    }
+}
+/// The native UI owner must release/drop this service before deleting its display.
 pub struct LuaLvglService {
     width: i32,
     height: i32,
@@ -64,6 +211,13 @@ pub struct LuaLvglService {
     root: String,
     retired: Vec<u64>,
     driver: Option<Box<DriverState>>,
+    // Hold refresh and this display's pointer read timers while its tree is
+    // incomplete. System raw input and other timers continue to run.
+    redraw: Option<Box<RefreshGate>>,
+    // #region debug-point popup-shadow-trigger
+    #[cfg(feature = "native-ui-diagnostics")]
+    popup_diagnostics: crate::telemetry::popup_shadow::Diagnostics,
+    // #endregion debug-point popup-shadow-trigger
 }
 impl LuaLvglService {
     pub fn new(width: u16, height: u16) -> Self {
@@ -78,8 +232,17 @@ impl LuaLvglService {
             root: String::new(),
             retired: Vec::new(),
             driver: None,
+            redraw: None,
+            #[cfg(feature = "native-ui-diagnostics")]
+            popup_diagnostics: crate::telemetry::popup_shadow::Diagnostics::new(),
         }
     }
+    // #region debug-point popup-shadow-access
+    #[cfg(feature = "native-ui-diagnostics")]
+    pub fn popup_diagnostics(&mut self) -> &mut crate::telemetry::popup_shadow::Diagnostics {
+        &mut self.popup_diagnostics
+    }
+    // #endregion debug-point popup-shadow-access
     pub fn active(&self) -> bool {
         self.active
     }
@@ -118,10 +281,15 @@ impl LuaLvglService {
         })
     }
     pub fn release(&mut self) {
+        // #region debug-point popup-shadow-release
+        #[cfg(feature = "native-ui-diagnostics")]
+        self.popup_diagnostics.cancel();
+        // #endregion debug-point popup-shadow-release
+        if !self.active {
+            self.finish_redraw();
+            return;
+        }
         unsafe {
-            if !self.active {
-                return;
-            }
             if !self.previous.is_null() {
                 s::lv_screen_load(self.previous);
             }
@@ -149,6 +317,51 @@ impl LuaLvglService {
             if let Some(driver) = self.driver.take() {
                 s::lv_fs_remove_drive(b'D' as _);
                 drop(driver);
+            }
+        }
+        // Keep pointer input held until the old screen is active and all
+        // owned targets have been deleted, including on error/stop teardown.
+        self.finish_redraw();
+    }
+    fn begin_redraw(&mut self) {
+        if self.redraw.is_none() {
+            unsafe {
+                let display = s::lv_display_get_default();
+                let timer = s::lv_display_get_refr_timer(display);
+                if !timer.is_null() {
+                    let mut gate = Box::new(RefreshGate {
+                        display,
+                        timer,
+                        pointers: RefreshGate::pause_pointers(display),
+                    });
+                    s::lv_display_add_event_cb(
+                        display,
+                        Some(hold_refresh),
+                        s::lv_event_code_t_LV_EVENT_REFR_REQUEST,
+                        (&mut *gate as *mut RefreshGate).cast(),
+                    );
+                    s::lv_timer_pause(timer);
+                    self.redraw = Some(gate);
+                }
+            }
+        }
+    }
+    fn finish_redraw(&mut self) {
+        if let Some(mut gate) = self.redraw.take() {
+            unsafe {
+                s::lv_display_remove_event_cb_with_user_data(
+                    gate.display,
+                    Some(hold_refresh),
+                    (&mut *gate as *mut RefreshGate).cast(),
+                );
+                // Input may be due before the resumed refresh timer. Commit
+                // final geometry before it can hit-test aligned new widgets.
+                s::lv_obj_update_layout(s::lv_screen_active());
+                // A paused refresh timer is also LVGL's normal idle state.
+                // Invalidation requests publication through its default handler.
+                s::lv_obj_invalidate(s::lv_screen_active());
+                s::lv_timer_resume(gate.timer);
+                s::lv_timer_ready(gate.timer);
             }
         }
     }
@@ -207,6 +420,14 @@ impl LuaLvglService {
             }
             if op == "deinit" {
                 self.release();
+                return Ok(json!([true]));
+            }
+            if op == "frame_end" {
+                self.finish_redraw();
+                // #region debug-point popup-shadow-publication
+                #[cfg(feature = "native-ui-diagnostics")]
+                self.popup_diagnostics.frame_end();
+                // #endregion debug-point popup-shadow-publication
                 return Ok(json!([true]));
             }
             if !self.active {
@@ -269,6 +490,13 @@ impl LuaLvglService {
                         return Err(e);
                     }
                 }
+                // #region debug-point popup-shadow-created
+                #[cfg(feature = "native-ui-diagnostics")]
+                if kind == "msgbox" {
+                    self.popup_diagnostics
+                        .action(crate::telemetry::popup_shadow::Cause::Open);
+                }
+                // #endregion debug-point popup-shadow-created
                 return Ok(json!([id]));
             }
             let id = uint(&a[0])?;
@@ -281,7 +509,10 @@ impl LuaLvglService {
                     s::lv_obj_update_layout(p);
                     Ok(json!([s::lv_obj_get_width(p), s::lv_obj_get_height(p)]))
                 }
-                "get_pos" => Ok(json!([s::lv_obj_get_x(p), s::lv_obj_get_y(p)])),
+                "get_pos" => {
+                    s::lv_obj_update_layout(p);
+                    Ok(json!([s::lv_obj_get_x(p), s::lv_obj_get_y(p)]))
+                }
                 "set_size" => {
                     let (w, h) = (coord(&a[1])?, coord(&a[2])?);
                     if w < 1 || h < 1 {
@@ -357,6 +588,9 @@ impl LuaLvglService {
                     Ok(json!([true]))
                 }
                 "clean" => {
+                    if p == s::lv_screen_active() {
+                        self.begin_redraw();
+                    }
                     s::lv_obj_clean(p);
                     self.objects.get_mut(&id).unwrap().label = ptr::null_mut();
                     Ok(json!([true]))
@@ -365,7 +599,19 @@ impl LuaLvglService {
                     if p == s::lv_screen_active() {
                         return Err("cannot delete active screen; deinit first".into());
                     }
+                    // #region debug-point popup-shadow-closed
+                    #[cfg(feature = "native-ui-diagnostics")]
+                    let popup = self.get(id)?.kind == "msgbox";
                     s::lv_obj_delete(p);
+                    #[cfg(feature = "native-ui-diagnostics")]
+                    if popup {
+                        self.popup_diagnostics.action(if op == "delete" {
+                            crate::telemetry::popup_shadow::Cause::Delete
+                        } else {
+                            crate::telemetry::popup_shadow::Cause::Close
+                        });
+                    }
+                    // #endregion debug-point popup-shadow-closed
                     Ok(json!([true]))
                 }
                 "on" => {
@@ -821,11 +1067,7 @@ fn coord(v: &Value) -> Result<i32, String> {
     i32::try_from(n).map_err(|_| "coordinate out of range".into())
 }
 fn optional_coord(v: &Value, default: i32) -> Result<i32, String> {
-    if v.is_null() {
-        Ok(default)
-    } else {
-        coord(v)
-    }
+    if v.is_null() { Ok(default) } else { coord(v) }
 }
 fn cstring(s: &str) -> Result<CString, String> {
     CString::new(s).map_err(|_| "text contains NUL".into())
@@ -876,6 +1118,144 @@ fn flex(v: &str) -> Result<s::lv_flex_align_t, String> {
         "space_evenly" => s::lv_flex_align_t_LV_FLEX_ALIGN_SPACE_EVENLY,
         _ => return Err("unsupported flex alignment".into()),
     })
+}
+
+#[cfg(all(test, feature = "native-ui-diagnostics"))]
+mod popup_diagnostic_tests {
+    use super::*;
+    use crate::telemetry::popup_shadow::{Cause, Line, SETTLE_US};
+
+    fn call(service: &mut LuaLvglService, op: &str, args: Value) -> Result<Value, String> {
+        let reply = service.execute(UiCommand {
+            op: op.into(),
+            args: args.to_string(),
+            bytes: Vec::new(),
+            root: "/tmp".into(),
+        })?;
+        Ok(serde_json::from_str::<Value>(&reply.json).unwrap()["values"].clone())
+    }
+    unsafe extern "C" fn flush(display: *mut s::lv_display_t, _: *const s::lv_area_t, _: *mut u8) {
+        unsafe { s::lv_display_flush_ready(display) };
+    }
+    fn sample(service: &mut LuaLvglService, pixels: &[u16], at: u64, seq: u32, cause: Cause) {
+        assert!(
+            !service
+                .popup_diagnostics()
+                .sample_if_ready(at, true, Some(pixels))
+        );
+        call(service, "frame_end", json!([])).unwrap();
+        unsafe { s::lv_timer_handler() };
+        service.popup_diagnostics().handler_finished();
+        assert!(
+            service
+                .popup_diagnostics()
+                .sample_if_ready(at + SETTLE_US, true, Some(pixels))
+        );
+        assert!(
+            matches!(service.popup_diagnostics().next_line(at + SETTLE_US),
+            Some(Line::Begin { seq: q, cause: c, .. }) if q == seq && c == cause)
+        );
+        for index in 1..=121 {
+            assert!(
+                service
+                    .popup_diagnostics()
+                    .next_line(at + SETTLE_US + index * 20_000)
+                    .is_some()
+            );
+        }
+        assert!(
+            service
+                .popup_diagnostics()
+                .next_line(at + SETTLE_US + 122 * 20_000)
+                .is_none()
+        );
+    }
+    #[test]
+    fn real_service_only_samples_successful_msgbox_actions_after_frame_end() {
+        let _lock = crate::test_support::lock();
+        unsafe { lvgl::deinit() };
+        lvgl::init();
+        let mut buffer = alloc::vec![0u16; 480 * 48];
+        let display = unsafe {
+            let display = s::lv_display_create(480, 480);
+            s::lv_display_set_color_format(display, s::lv_color_format_t_LV_COLOR_FORMAT_RGB565);
+            s::lv_display_set_buffers(
+                display,
+                buffer.as_mut_ptr().cast(),
+                ptr::null_mut(),
+                (buffer.len() * 2) as u32,
+                s::lv_display_render_mode_t_LV_DISPLAY_RENDER_MODE_PARTIAL,
+            );
+            s::lv_display_set_flush_cb(display, Some(flush));
+            display
+        };
+        let mut service = LuaLvglService::new(480, 480);
+        call(&mut service, "init", json!([])).unwrap();
+        let screen = call(&mut service, "create", json!(["screen", 0, {}])).unwrap()[0]
+            .as_u64()
+            .unwrap();
+        call(&mut service, "load", json!([screen])).unwrap();
+        let label = call(
+            &mut service,
+            "create",
+            json!(["label", screen, {"text":"plain"}]),
+        )
+        .unwrap()[0]
+            .as_u64()
+            .unwrap();
+        call(&mut service, "delete", json!([label])).unwrap();
+        assert!(
+            call(
+                &mut service,
+                "create",
+                json!(["msgbox", screen, {"w":"invalid"}])
+            )
+            .is_err()
+        );
+        assert!(call(&mut service, "close", json!([u64::MAX])).is_err());
+        let pixels = alloc::vec![0x1234; 480 * 480];
+        call(&mut service, "frame_end", json!([])).unwrap();
+        service.popup_diagnostics().handler_finished();
+        assert!(
+            !service
+                .popup_diagnostics()
+                .sample_if_ready(1_000_000, true, Some(&pixels))
+        );
+        assert!(service.popup_diagnostics().next_line(1_000_000).is_none());
+
+        let popup = call(
+            &mut service,
+            "create",
+            json!(["msgbox", screen, {"title":"Delete photo?"}]),
+        )
+        .unwrap()[0]
+            .as_u64()
+            .unwrap();
+        sample(&mut service, &pixels, 2_000_000, 1, Cause::Open);
+        call(&mut service, "close", json!([popup])).unwrap();
+        assert!(call(&mut service, "close", json!([popup])).is_err());
+        sample(&mut service, &pixels, 10_000_000, 2, Cause::Close);
+        let popup = call(&mut service, "create", json!(["msgbox", screen, {}])).unwrap()[0]
+            .as_u64()
+            .unwrap();
+        call(&mut service, "delete", json!([popup])).unwrap();
+        assert_eq!(
+            service.popup_diagnostics().next_line(20_000_000),
+            Some(Line::Superseded {
+                first: 3,
+                last: 3,
+                count: 1,
+                by: 4
+            })
+        );
+        sample(&mut service, &pixels, 21_000_000, 4, Cause::Delete);
+        service.release();
+        drop(service);
+        unsafe {
+            s::lv_display_delete(display);
+            lvgl::deinit();
+        }
+    }
 }
 fn event_code(v: &str) -> Result<s::lv_event_code_t, String> {
     Ok(match v {

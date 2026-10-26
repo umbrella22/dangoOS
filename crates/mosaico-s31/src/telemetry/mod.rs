@@ -6,6 +6,12 @@
 pub mod display;
 pub mod latency;
 
+#[cfg(any(test, feature = "native-ui-diagnostics"))]
+pub mod native_ui;
+
+#[cfg(any(test, feature = "native-ui-diagnostics"))]
+pub mod popup_shadow;
+
 #[cfg(feature = "touch-latency-diagnostics")]
 pub mod touch_trace;
 

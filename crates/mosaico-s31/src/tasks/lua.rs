@@ -22,13 +22,13 @@ use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
 
 use critical_section::Mutex;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Instant, Timer};
 use log::{info, warn};
 use mosaico_lua::{
-    caps, esp_err, Blit, DisplayInfo, HeapInfo, Host, Limits, RawAllocator, Request, Step,
-    TouchPoint, Vm,
+    Blit, DisplayInfo, HeapInfo, Host, Limits, RawAllocator, Request, Step, TouchPoint, Vm, caps,
+    esp_err,
 };
 use mosaico_s31::hub::registry::SHARED_LUA_DIRS;
 use mosaico_s31::hub::{LuaApp, LuaSource};
@@ -116,6 +116,7 @@ pub fn stop() {
     START.reset();
     // A frame nobody will show must not keep the script waiting.
     release_frame();
+    LVGL_READY.signal(());
 }
 
 /// True once after the app ended by itself (finished or failed).
@@ -161,6 +162,19 @@ static LVGL_REQUEST: Mutex<RefCell<Option<mosaico_lua::ui::UiCommand>>> =
 static LVGL_REPLY: Signal<CriticalSectionRawMutex, Result<mosaico_lua::ui::UiReply, String>> =
     Signal::new();
 static LVGL_RELEASE: AtomicBool = AtomicBool::new(false);
+static LVGL_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub async fn wait_lvgl_ready() {
+    LVGL_READY.wait().await;
+}
+/// Peek only: the normal UI loop remains responsible for consuming release.
+pub fn lvgl_cleanup_pending() -> bool {
+    LVGL_RELEASE.load(Ordering::Acquire) || STOP.load(Ordering::Acquire)
+}
+fn publish_lvgl_command(command: mosaico_lua::ui::UiCommand) {
+    LVGL_REPLY.reset();
+    critical_section::with(|cs| *LVGL_REQUEST.borrow_ref_mut(cs) = Some(command));
+    LVGL_READY.signal(());
+}
 pub fn take_lvgl_command() -> Option<mosaico_lua::ui::UiCommand> {
     critical_section::with(|cs| LVGL_REQUEST.borrow_ref_mut(cs).take())
 }
@@ -184,6 +198,7 @@ impl Drop for DeviceHost {
         super::lights::lua_release();
         LVGL_RELEASE.store(true, Ordering::Release);
         critical_section::with(|cs| LVGL_REQUEST.borrow_ref_mut(cs).take());
+        LVGL_READY.signal(());
     }
 }
 
@@ -406,6 +421,7 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
     let mut longest_us = 0u64;
     let mut busy_us = 0u64;
     let mut stopping = false;
+    let mut redraw_boundary = mosaico_s31::lua_lvgl::RedrawBoundary::default();
     let mut next = None;
     let outcome = loop {
         if !stopping && (STOP.load(Ordering::Acquire) || START.signaled()) {
@@ -421,10 +437,13 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
         match step {
             Step::Request(Request::Host(mosaico_lua::ui::REQUEST)) => {
                 if let Some(command) = vm.take_ui_command() {
-                    LVGL_REPLY.reset();
-                    critical_section::with(|cs| *LVGL_REQUEST.borrow_ref_mut(cs) = Some(command));
+                    let op = command.op.clone();
+                    publish_lvgl_command(command);
                     match select(LVGL_REPLY.wait(), poll_workers_until_stop(&mut vm)).await {
-                        Either::First(reply) => vm.complete_ui(reply),
+                        Either::First(reply) => {
+                            redraw_boundary.completed(&op, reply.is_ok());
+                            vm.complete_ui(reply);
+                        }
                         Either::Second(()) => {
                             critical_section::with(|cs| LVGL_REQUEST.borrow_ref_mut(cs).take());
                             vm.interrupt();
@@ -435,6 +454,21 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
             }
             Step::Request(Request::Sleep { ms }) => {
                 busy_us = 0;
+                // A script can rebuild then sleep without process_events().
+                // Commit on the UI owner before sleeping, while keeping the
+                // same stop barrier as an ordinary foreground UI request.
+                if let Some(command) = (!stopping)
+                    .then(|| redraw_boundary.before_sleep(&root))
+                    .flatten()
+                {
+                    publish_lvgl_command(command);
+                    if let Either::Second(()) =
+                        select(LVGL_REPLY.wait(), poll_workers_until_stop(&mut vm)).await
+                    {
+                        critical_section::with(|cs| LVGL_REQUEST.borrow_ref_mut(cs).take());
+                        vm.interrupt();
+                    }
+                }
                 // Wake early for a stop so leaving the page is immediate.
                 let _ = select(
                     Timer::after_millis(ms as u64),

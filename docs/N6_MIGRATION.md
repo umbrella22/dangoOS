@@ -6,8 +6,12 @@ the new data range. Existing data is preserved in the backup and is not migrated
 into the smaller filesystem. The original firmware/layout/data can be restored
 and checked byte for byte.
 
-The tools and their offline simulations are implemented. Physical backup,
-repartitioning, boot, rescue firmware and OTA acceptance are **not-run**.
+The 2026-10-26 physical migration completed with full prewrite and postwrite
+verification. The board booted slot zero, mounted the new data filesystem and
+passed the application health selftest. A subsequent normal USB OTA also passed
+the end acknowledgement, actual slot switch, early begin refusal and candidate
+selftest checks. Rescue firmware, physical recovery and the remaining acceptance
+cases are still pending.
 Actual repartitioning follows the explicit-approval requirement in
 [HANDOFF.md](HANDOFF.md#红线). `plan` is offline; `backup` is read-only on the
 device. `apply` and `restore` require explicit confirmation switches and an
@@ -152,3 +156,62 @@ partition table, data, bootloader or factory partitions.
 Firmware ownership, self-test conditions, RTC fallback limits and detailed
 protocol are specified in [N6_USB_OTA.md](N6_USB_OTA.md). Physical acceptance is
 tracked in [N1_N7_DEVICE_ACCEPTANCE.md](N1_N7_DEVICE_ACCEPTANCE.md).
+
+## 2026-10-26 backup and concrete plan
+
+The V1.2 board with MAC `1c:29:04:d0:a7:4a` was read through one esptool 5.6.0
+handle. No flash writes or resets were issued. The complete 16 MiB image and
+an independent 128 KiB boot-region read agree. Backup artifacts are under
+`/Users/ikaros/mosaico-backups/20261026-n6-before-ab/`; the complete image SHA-256
+is `52b6276585a85a1f82d93362a48e654cd309bee516ee6f190cfdefa41eff88fe`.
+
+The backup includes the delivered three-column factory Album and its icon.
+The old data filesystem was mounted read-only and exported to `legacy-export/`:
+30 files, 89,346 bytes, including four downloaded applications and nineteen
+photos. Every exported file was read back and hashed; all nineteen photo hashes
+match the retained fixtures. The plan creates an empty new data filesystem and
+does not automatically restore those exported files.
+
+`plan/` binds the current normal application `0551aa22…`, the current backup and
+the generated table `2a848786…`. A one-handle adapter runs the existing apply and
+restore implementations with an exact operation allowlist. Offline runs using
+this actual backup covered complete migration and interruption after new-data
+erase; both restored all 16 MiB exactly. These are host recovery simulations;
+the physical migration result follows below. The concrete review is
+`target/n6-live-20261026/MIGRATION-PLAN.md`; raw receipts and the adapter are in
+the same evidence directory.
+
+## 2026-10-26 physical migration
+
+The approved empty-data migration ran against the same V1.2 board through one
+esptool connection. The complete prewrite read matched the approved backup.
+After the four planned operations, a second 16 MiB read matched an independently
+constructed expected image, including the application's last erased sector.
+All bytes outside those operations remained identical. The postwrite image
+SHA-256 is `e10aa029dbc112bc9ecd5cd6bc69e99ac692f689d55af84dffba9ed17d9cc121`.
+The system partition, factory Album, bootloader, vibe_mode, ui_apps, NVS and PHY
+were preserved. Both otadata sectors and the new data range were erased before
+the automatic watchdog reset.
+
+The startup capture confirmed `/system` read-only at `0xD00000`, a newly formatted
+`/data` at `0x810000` with 1,856 KiB capacity, six factory/built-in Lua applications,
+no downloaded applications, the default brain and skin, the right interaction
+board and the 80 MHz display configuration. The application health selftest
+reported `sys=1 data=1 frame=1 vm=1 hb=31 valid=1`; a subsequent query confirmed
+`booted=0 target=1` and runtime `valid=1`.
+
+One startup discrepancy remains open: the first query already observed slot-zero
+metadata `Valid seq=1` while application health still reported `valid=0` at `hb=5`.
+The saved postwrite image proves otadata was erased before reset, and the inspected
+status path performs reads only. The writer of the early metadata has not yet
+been established. This result does not pass the planned claim that blank metadata
+is created only after application selftest. The independent runtime begin guard
+was subsequently verified on a PendingVerify OTA candidate: `ota-02` rejected
+begin at `hb=5 valid=0`, then confirmed health at `hb=31`. The blank-metadata first
+boot did not receive that probe.
+
+Evidence: `target/n6-live-20261026/apply-01/receipt.json`,
+`apply-01/independent-readback.json`, `apply-01/startup.*` and
+`migration-runtime-review.json`. Migration UI confirmation and USB OTA acceptance
+are tracked separately in the device checklist. The protected factory image's
+byte preservation does not establish that vibe_mode can boot under this layout.

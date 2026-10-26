@@ -24,13 +24,30 @@ class FakeSerial:
         self.closed = False
         self.writes = []
         self.queue = list(self.replies)
+        self.open_states = []
+        self.input_resets = 0
+        self.dtr = True
         self.instances.append(self)
+
+    def open(self):
+        self.open_states.append(self.dtr)
+        self._reset_input_buffer()
+
+    def _reset_input_buffer(self):
+        self.input_resets += 1
+        self.queue.clear()
+
+    @property
+    def in_waiting(self):
+        return len(self.queue[0]) if self.queue and isinstance(self.queue[0], bytes) else 0
 
     def read(self, count):
         item = self.queue.pop(0) if self.queue else b""
         if isinstance(item, Exception):
             raise item
-        return item
+        if len(item) > count:
+            self.queue.insert(0, item[count:])
+        return item[:count]
 
     def write(self, data):
         self.writes.append(data)
@@ -108,11 +125,12 @@ class SessionTest(unittest.TestCase):
     def test_unavailable_port_wait_zero_attempts_once(self):
         attempts = []
 
-        def unavailable(*args, **kwargs):
-            attempts.append(args)
-            raise OSError("port unavailable")
+        class UnavailableSerial(FakeSerial):
+            def open(self):
+                attempts.append(self.port)
+                raise OSError("port unavailable")
 
-        sys.modules["serial"].Serial = unavailable
+        sys.modules["serial"].Serial = UnavailableSerial
         self.assertEqual(self.run_session(), 2)
         self.assertEqual(len(attempts), 1)
         self.assertIn("session_finished=", self.log.read_text())

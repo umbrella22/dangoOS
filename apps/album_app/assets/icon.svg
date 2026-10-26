@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Album — sunlit photographs</title>
+  <defs>
+    <linearGradient id="tile" x1="80" y1="32" x2="432" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7BA9FF"/>
+      <stop offset="1" stop-color="#4568DF"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="156" y1="168" x2="338" y2="348" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D9F5F0"/>
+      <stop offset="1" stop-color="#B8E8DF"/>
+    </linearGradient>
+    <clipPath id="photo"><rect x="150" y="162" width="238" height="190" rx="16"/></clipPath>
+  </defs>
+  <rect width="512" height="512" fill="#000000"/>
+  <rect width="512" height="512" rx="146" fill="url(#tile)"/>
+  <path d="M146 30H366A116 116 0 0 1 482 146V162A132 132 0 0 0 350 48H160A132 132 0 0 0 30 160V146A116 116 0 0 1 146 30Z" fill="#FFF" opacity=".12"/>
+  <g transform="rotate(-12 220 236)">
+    <rect x="86" y="99" width="258" height="278" rx="30" fill="#233D9B" opacity=".18" transform="translate(0 15)"/>
+    <rect x="86" y="99" width="258" height="278" rx="30" fill="#CFE0FF"/>
+    <rect x="106" y="119" width="218" height="208" rx="15" fill="#8EAFE8"/>
+    <path d="M106 266L174 201Q182 193 190 201L236 245L274 211Q282 203 290 211L324 247V312Q324 327 309 327H121Q106 327 106 312Z" fill="#A9C6F6"/>
+  </g>
+  <g transform="rotate(7 266 275)">
+    <rect x="126" y="136" width="286" height="282" rx="32" fill="#233D9B" opacity=".16" transform="translate(0 14)"/>
+    <rect x="126" y="136" width="286" height="282" rx="32" fill="#FFFCF2"/>
+    <g clip-path="url(#photo)">
+      <rect x="150" y="162" width="238" height="190" fill="url(#sky)"/>
+      <circle cx="333" cy="211" r="27" fill="#F7BD55"/>
+      <path d="M128 334L214 238Q225 225 237 238L329 342V373H128Z" fill="#5DB49A"/>
+      <path d="M236 368L307 278Q320 263 334 278L413 361V385H236Z" fill="#2F827B"/>
+      <path d="M150 337Q208 311 259 338T388 335V371H150Z" fill="#78C8AC"/>
+    </g>
+    <rect x="223" y="375" width="92" height="10" rx="5" fill="#DFE4DB"/>
+  </g>
+</svg>

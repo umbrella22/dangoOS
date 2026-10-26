@@ -38,6 +38,10 @@ impl PixelMemory {
     pub fn len(&self) -> usize {
         self.layout.size()
     }
+    #[cfg(feature = "native-ui-diagnostics")]
+    pub fn alignment(&self) -> usize {
+        self.layout.align()
+    }
 }
 
 impl Drop for PixelMemory {

@@ -60,6 +60,11 @@ quiesces the foreground Lua task, releases its native UI, pauses resident UI and
 brain callbacks, discards queued input/sensor events, holds lights off and disables
 haptics for the transfer. Each bounded chunk and readback step yields to USB.
 
+Foreground quiescence terminates that VM. Abort or a rejected transfer restores
+the resident UI/brain processing and navigation; the stopped foreground frame may
+remain visible. Reopening the app starts a new VM. Foreground local state is not
+resumed in place.
+
 Chunk acknowledgement follows erase, aligned write and byte-for-byte readback.
 End performs a separate streaming SHA256 readback of the complete image and checks
 ESP magic/chip/flash settings, bounded and non-overlapping segments, an entry in a
@@ -79,8 +84,11 @@ OTA metadata follows the pinned ESP-IDF entry representation, sequence parity an
 CRC convention. Selection updates the alternate sector while retaining the current
 bootable entry. A torn invalid copy is tolerated only when another valid copy
 survives. Readback failure can occur after bytes are already persisted; failure
-does not prove selection remained unchanged. Initial blank metadata is established
-as slot-zero `Valid` by successful selftest before the first transfer is allowed.
+does not prove selection remained unchanged. The application can establish blank
+metadata as slot-zero `Valid` during successful selftest. The installed bootloader
+may have already populated it: the 2026-10-26 migration observed `Valid seq=1`
+before application confirmation. The runtime's separate confirmation flag still
+blocks transfers until its current boot passes selftest.
 
 ## Confirmation and warm-reset fallback
 
@@ -100,8 +108,10 @@ first two candidate boots may fail; the third main entry performs fallback rathe
 than attempting initialization again. Successful selftest
 confirms the candidate and disarms the record.
 
-This is an application RTC warm-reset fallback. It is not a claim of bootloader
-rollback or cold-power-loss rollback. Execution before the main recorder, failure
+The application RTC warm-reset fallback is separate from bootloader rollback.
+The factory bootloader rolled back after one candidate panic in the 2026-10-26
+device case below, before the third main-entry fallback could run. This does not
+establish cold-power-loss rollback. Execution before the main recorder, failure
 inside HAL initialization, loss of RTC retention and inability to read/write flash
 are outside the fallback boundary. Foreground Lua finalization is cooperative;
 a synchronous native finalizer that never returns can prevent the executor from
@@ -146,8 +156,10 @@ size is checked for each build rather than assuming permanent headroom.
 The “within three resets” policy counts candidate main entries: after two failed
 candidate boots, the third main entry performs fallback before PSRAM/display/VFS.
 With `ota-test-panic`, the first two candidate boots panic and the third takes the
-fallback path. This policy still requires hardware acceptance. There has been no physical bootloader rollback-option
-inspection, factory rescue boot, ten-update persistence run or panic/reset run.
+fallback path. This policy still requires hardware acceptance. The ten-update
+persistence series and one panic-triggered bootloader rollback passed on 2026-10-26
+as recorded below. The compiled bootloader option, factory rescue boot and the
+application's third-attempt fallback remain separate gates.
 Wireless transport and an HTTP source adapter are deferred with Wi-Fi support;
 the transport-independent Flash/updater core is shared by the USB integration.
 
@@ -188,7 +200,7 @@ timeouts:
   upload, CRC, offset, transport hash, readback corruption and a real legacy image.
   Thirty-nine before/partial/after I/O failure cases covered chunk operations,
   alternate metadata activation and confirmation; the previous Valid metadata
-  copy survived. A failure after persistence may still leave a selected candidate;
+copy survived. A failure after persistence may still leave a selected candidate;
   the probe does not assume failure means no bytes changed.
 - Migration simulations used the real generator, bound backup/plan checks,
   exact apply/restore comparisons and interruption at each migration write step.
@@ -223,3 +235,141 @@ No N6 device operation ran. Real USB transfer, flash timing, reset/rollback,
 bootloader configuration, factory vibe_mode, physical output quiescence and
 ten-update data persistence remain **not-run**. Earlier N1 motor failure and
 stability observations remain open in the consolidated hardware checklist.
+
+## 2026-10-26 device acceptance in progress
+
+The V1.2 board was migrated using the current normal image `0551aa22…` and the
+approved empty data layout. Complete prewrite/postwrite reads and an independent
+16 MiB comparison passed; the external legacy backup and all exported files remain
+available. Migration and initial startup evidence are in
+`target/n6-live-20261026/`, described in [N6_MIGRATION.md](N6_MIGRATION.md).
+
+The first USB update acknowledged all 748 blocks but lost the final end reply
+when the USB device reset. The CLI reported completion unconfirmed and did not
+retry the image. A separate read-only session found slot 1 running and healthy.
+The original failure is retained in `ota-01/` and `04-after-unconfirmed-end.*`.
+
+Host `Device.lines` previously requested 4096 bytes even for short replies.
+POSIX pyserial can accumulate an end reply, wait for more bytes, then raise on
+disconnect without returning the accumulated bytes. The actual pyserial reader
+reproduced this behavior with a controlled OS-read sequence. The host now drains
+complete buffered lines first and requests only currently available bytes, or
+one byte when waiting for input. A truncated reply remains unconfirmed. Two new
+regressions failed before the fix; all 54 Python tool tests passed afterward.
+The firmware image did not change.
+
+With the fixed host, `ota-02` acknowledged all 3,063,568 bytes and `@ok ota-end`
+in 48.605 seconds, then observed one USB disappearance/reappearance. Slot 0 ran
+as `PendingVerify seq=3`, while slot 1 remained `Valid seq=2`. At `hb=5 valid=0`,
+a new begin request was rejected with `boot selftest not confirmed`. No body was
+sent by this probe. Health confirmed at `hb=31`, and the final query reported
+slot 0 `Valid`, runtime `valid=1`. This establishes the normal OTA path and the
+PendingVerify guard; the initial blank-metadata timing remains separately open.
+Full receipts and per-block command/ACK records are in `ota-02/`.
+
+The homepage quiescence test used a Happy brain with six dim red LEDs and a short
+haptic pattern every two seconds. The operator confirmed outputs before begin,
+then a frozen frame, all LEDs off and stopped haptics during the transfer hold.
+UI heartbeat stayed at 346 for the 91.763-second hold. No chunk or end command was
+sent. Abort returned the updater to Idle and resumed UI heartbeat and outputs;
+the default brain was restored, and normal touch recovery was confirmed.
+Evidence is `06`–`09` in the same directory. Foreground Lua coexistence remains a
+separate gate.
+
+Ten protocol rejection cases passed in `10-rejection-cases/`: oversized and
+undersized begin, end without a transfer, wrong chunk CRC and offset, duplicate
+begin, incomplete upload, invalid image, wrong full-image transport SHA, and a
+structurally valid current image with its A/B marker removed. Every case retained
+the running slot 0 as `Valid seq=3`; none acknowledged activation. The marker
+mutant is a compatibility check, not execution of historical legacy firmware.
+These cases did not include per-file preservation checks. They overwrite the
+inactive slot; a valid descriptor alone does not establish its full-image health.
+
+In `11-partial-disconnect/`, the device acknowledged exactly 8192 bytes before a
+physical USB unplug/replug. Neither end nor reset was sent. The collector observed
+the port disappear and return, then obtained `Idle received=0 total=0` with the
+same slot 0 `Valid seq=3`. Heartbeat advanced from 957 to 959 and default brain and
+skin queries succeeded. The operator confirmed completing the physical operation;
+separate touch and animation observations were not supplied for this case.
+
+The repeated-update series starts from the independently verified seven-file
+baseline in `12-persistence-baseline.receipt.json`: three downloaded-app files,
+one photo and the factory Album's launcher, script and icon. Device evidence is
+file length and CRC32, bound to host SHA256 in the fixture manifest. The sequential
+runner in `13-ten-ota/` completed all ten rounds, with 7,480 chunk ACKs, ten exact
+end ACKs and no automatic image retry. Actual boot slots alternated 1/0 and metadata
+sequences advanced from 4 through 13. Every boot first reported PendingVerify and
+rejected begin before its health window, then reached Valid. All seventy file
+length/CRC checks matched the frozen baseline. Upload time was 47.383–48.394 seconds
+(median 48.001 seconds); the final state was slot 0 `Valid seq=13`, default brain
+and default skin. Full-series review is `13-ten-ota/root-review.json`.
+
+The separate panic candidate `ea3481ad…` was then activated in slot 1 with a complete
+end ACK. The recovered boot reported `CoreSw after panic #1` and the expected panic
+before PSRAM/display/VFS. Slot 0 remained `Valid seq=13`; slot 1 was `Aborted seq=14`.
+The recovered normal firmware passed its health window and all seven file checks.
+Evidence is `14-panic-01/root-review.json` and its retained transfer/startup logs.
+The application does not write the Aborted state; this case exercised the factory
+bootloader's rollback before the application RTC third-attempt path. The latter
+remains unexercised on this board. A matching compiled bootloader configuration
+manifest, power loss while a candidate is unconfirmed or flash is being written,
+the ACK-fence timeout and factory rescue are still separate gates.
+
+The failed candidate was subsequently replaced with ordinary image `0551aa22…`.
+`15-restore-normal/` records the full end ACK, slot 1 PendingVerify-to-Valid
+transition at sequence 16, the early begin guard and seven matching file checks.
+Slot 0 remained Valid at sequence 13. The skipped sequence follows slot parity
+after the failed sequence 14; it does not indicate an extra update.
+
+The foreground coexistence fixture ran with the custom brain and emitted Alive
+samples 0–71. The operator confirmed no periodic vibration, then physical testing
+paused before begin. This does not cover foreground OTA quiescence. The fixture
+was stopped and the default brain restored. Owned test app/data paths and the
+photo were removed; the empty test-photo subdirectory was removed separately.
+Factory Album's three file CRCs were unchanged. Cleanup evidence is
+`18b-cleanup-verification.json`. The first cleaner was excluded from the registry
+by its hidden launcher flag and did not execute; the visible replacement completed
+the bounded cleanup. Both attempts remain in the evidence directory.
+
+One final software reboot confirmed ordinary slot 1 `Valid seq=16`, default brain
+and skin, no downloaded apps, healthy right-board discovery and a completed health
+window. The capture closed normally and left no serial owner or scheduled reboot.
+`19-final-review.json` binds the series, rollback, ordinary restoration, cleanup and
+final startup receipts. Physical foreground quiescence was still unstarted at
+that checkpoint.
+
+After a fresh physical baseline, the foreground blue/Alive fixture and custom
+brain passed the coexistence case in `24-foreground-root-review.json`. Begin
+stopped the foreground VM; 8192 bytes were accepted and held for 132.233 seconds.
+Heartbeat remained 221 while the operator confirmed frozen Alive, six LEDs off
+and no vibration. A third block with a wrong CRC was rejected, returning to Idle
+on the same slot 1 `Valid seq=16`, with heartbeat advancing to 230. No end or reset
+was sent. The retained foreground frame, edge navigation and manual reopening
+were checked physically; logs captured the new VM's Alive 0–20 and return Home.
+Happy, red LEDs and periodic haptics resumed on Home. Default brain was then
+restored and the foreground fixture removed. Actual USB-disconnect recovery is
+covered separately by case 11.
+
+The confirmed-slot cold-start case passed in `29-cold-root-review.json`. Before
+power removal, shutdown logged the presented Sleep interval, black LED transfer
+and GPIO57 low assertion; the host then observed the port disappear. After the
+operator's confirmed USB removal and at least five seconds off, startup reported
+`ChipPowerOn`, slot 1 `Valid seq=16` and slot 0 `Valid seq=13`. The current boot's
+health window completed at heartbeat 31. Default brain/skin and right-board
+discovery were normal. All seven device file lengths/CRCs matched the pre-shutdown
+baseline, bound to the same host manifest. The operator confirmed normal startup,
+Settings navigation, the factory Album icon and single-photo navigation, and both
+right-board keys' light/expression responses. The trace corroborated Settings and
+Album transitions, one photo, return Home and both key effects. This case covers
+cold startup of an already Valid slot. Rail voltage and shutdown current were not
+measured; interruption before selftest or during flash writes remains separate.
+
+After the cold-start checks, the downloaded verifier, its data root and the single
+CRC-matched photo were removed. The empty test-photo directory was removed and
+the factory Album's three file CRCs were checked again. The visible cleaner was
+then removed. `33-cold-final-review.json` binds the cold/UI and cleanup evidence:
+slot 1 remains `Valid seq=16`, slot 0 remains `Valid seq=13`, the default brain and
+skin are active and the downloaded-app list is empty. The collector is closed and
+no reboot is scheduled. The removal wrapper's assertion about an echoed CLI ACK
+was incorrect; the CLI exited successfully, and independent empty-list and
+ENOENT checks confirmed removal. The failed wrapper log is retained.

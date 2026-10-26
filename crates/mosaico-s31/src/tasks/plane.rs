@@ -35,7 +35,7 @@
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::Input;
@@ -101,6 +101,13 @@ impl Frame {
             Frame::Pool(lease) => lease.pixels(),
             Frame::Screen(lease) => lease.pixels(),
             Frame::Slide { new, .. } => new.pixels(),
+        }
+    }
+    #[cfg(feature = "native-ui-diagnostics")]
+    fn profile_id(&self) -> Option<u32> {
+        match self {
+            Self::Screen(s) => s.profile_id(),
+            _ => None,
         }
     }
 }
@@ -180,6 +187,10 @@ impl PlaneUi {
                 latency::now_us(),
             )
         });
+        #[cfg(feature = "native-ui-diagnostics")]
+        if let Some(id) = job.canvas.profile_id() {
+            mosaico_s31::telemetry::native_ui::with(|p| p.submit(id, latency::now_us()));
+        }
         JOBS.signal(job);
     }
 }
@@ -250,6 +261,12 @@ async fn run_plane(
 
     loop {
         let job = display.next_job().await;
+        #[cfg(feature = "native-ui-diagnostics")]
+        let profile_id = job.canvas.profile_id();
+        #[cfg(feature = "native-ui-diagnostics")]
+        if let Some(id) = profile_id {
+            mosaico_s31::telemetry::native_ui::with(|p| p.pickup(id, latency::now_us()));
+        }
         #[cfg(feature = "touch-latency-diagnostics")]
         if let Some(tag) = job.touch_at_us {
             mosaico_s31::telemetry::touch_trace::with(|t| t.pickup(tag, latency::now_us()));
@@ -279,6 +296,10 @@ async fn run_plane(
             }
         }
 
+        #[cfg(feature = "native-ui-diagnostics")]
+        if let Some(id) = profile_id {
+            mosaico_s31::telemetry::native_ui::with(|p| p.te_end(id, latency::now_us()));
+        }
         let started = Instant::now();
         let mut chunks: u32 = 0;
         let mut completed = true;
@@ -387,6 +408,12 @@ async fn run_plane(
             y = y2 + 1;
         }
 
+        #[cfg(feature = "native-ui-diagnostics")]
+        if completed {
+            if let Some(id) = profile_id {
+                mosaico_s31::telemetry::native_ui::with(|p| p.transfer_end(id, latency::now_us()));
+            }
+        }
         super::buttons::frame_uploaded(job.shutdown_sleep, completed);
 
         let elapsed_us = started.elapsed().as_micros();

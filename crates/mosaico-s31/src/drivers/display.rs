@@ -34,10 +34,13 @@ const CHUNK_BYTES: usize = MAX_CHUNK_ROWS as usize * ROW_BYTES;
 
 /// QSPI clock.
 ///
-/// The SPI function clock on S31 is 160 MHz (BBPLL/3), so 80 MHz is a clean
-/// divide-by-two. The CO5300 QSPI write path is specified for 80 MHz; the
-/// previous 40 MHz setting left a 12 ms frame competing with a 50 ms UI
-/// cadence, and a drag frame grew to ~49 ms when the UI raster interleaved.
+/// Espressif's esp_lcd_co5300 v2.2.0 CO5300_PANEL_IO_QSPI_CONFIG defaults to
+/// 40 MHz (esp-iot-solution commit 81b343651c23169112829b8d633367c6c15abb64,
+/// components/display/lcd/esp_lcd_co5300/include/esp_lcd_co5300.h).
+/// Use 80 MHz for the project's full-frame pixel bandwidth target. The vendor
+/// default alone does not establish a maximum supported clock. The observed
+/// Album popup remnant at 80 MHz remains an unresolved visual issue;
+/// see docs/N5_ALBUM_LIVE_20261024.md for the controlled 40 MHz comparison.
 const SPI_CLOCK_HZ: u32 = 80_000_000;
 
 // ---- CO5300 命令 ----

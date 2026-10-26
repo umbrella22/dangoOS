@@ -12,6 +12,10 @@ cargo test -p mosaico-fs --offline
 # Lua runtime: vendored Lua 5.5.1 + glue, built with the host C compiler.
 cargo test -p mosaico-lua --offline
 
+# Real LVGL clean/rebuild publication and pointer transaction boundaries.
+cargo run --offline -p mosaico-s31 --example n5_render_boundary_probe
+cargo run --offline -p mosaico-s31 --example n5_native_input_probe
+
 # Pure driver modules (the bin itself has no host tests).
 ./scripts/test-drivers.sh
 

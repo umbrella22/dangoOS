@@ -185,7 +185,7 @@ fn drive_for(vm: &mut Vm, max_presents: u32, max_sleeps: usize) -> Outcome {
                     step,
                     sleeps,
                     presents,
-                }
+                };
             }
         }
     }
@@ -219,10 +219,11 @@ fn display_contract_passes() {
         "{:?}",
         s.lines
     );
-    assert!(s
-        .lines
-        .iter()
-        .any(|l| l.starts_with("[display_contract] buffers=2")));
+    assert!(
+        s.lines
+            .iter()
+            .any(|l| l.starts_with("[display_contract] buffers=2"))
+    );
     let pass = s
         .lines
         .iter()
@@ -574,10 +575,11 @@ fn hardware_probe_draws_unavailable_hardware_without_output_side_effects() {
     assert_eq!(out.step, Step::Done);
     assert_eq!(out.presents, 2);
     let s = screen(&mut vm);
-    assert!(s
-        .lines
-        .iter()
-        .any(|line| line.contains("hardware unavailable")));
+    assert!(
+        s.lines
+            .iter()
+            .any(|line| line.contains("hardware unavailable"))
+    );
     assert!(s.frame.contains(&0x07e0), "opaque green text was drawn");
     assert!(s.frame.contains(&0xffff), "opaque white title was drawn");
     assert!(!s.open, "example closes display");
@@ -628,6 +630,134 @@ fn image_png_jpeg_frames_resize_release_and_caps() {
     );
     assert_eq!(run_src(&mut vm, &source).step, Step::Done);
     assert!(vm.memory_used() < limits().memory_bytes);
+}
+
+#[test]
+fn identity_bilinear_resize_matches_conversion_and_nearest() {
+    let mut vm = vm();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/n5-images");
+    let source = alloc::format!(
+        r#"
+        local image=require('image')
+        for _,name in ipairs({{'pixels.png','alpha.png','orientation.jpg','grayscale.jpeg'}}) do
+            local original <close> = image.load_file('{}/'..name)
+            local rgb565 <close> = image.convert(original,image.RGB565)
+            local gray <close> = image.convert(original,image.GRAY8)
+            for _,frame in ipairs({{original,rgb565,gray}}) do
+                local info=frame:info()
+                for _,format in ipairs({{image.RGB565,image.GRAY8}}) do
+                    local expected <close> = image.convert(frame,format)
+                    local bilinear <close> = image.resize(frame,{{width=info.width,height=info.height,format=format,filter='bilinear'}})
+                    local nearest <close> = image.resize(frame,{{width=info.width,height=info.height,format=format,filter='nearest'}})
+                    assert(bilinear:data()==expected:data(),name..' identity differs from format conversion')
+                    assert(bilinear:data()==nearest:data(),name..' identity differs from nearest')
+                    assert(bilinear:info().width==info.width and bilinear:info().height==info.height)
+                end
+            end
+        end
+        "#,
+        dir.display()
+    );
+    assert_eq!(run_src(&mut vm, &source).step, Step::Done);
+}
+
+#[test]
+fn tiled_bilinear_matches_original_c_formula() {
+    // Compile the frozen pre-optimization expression with the same host C
+    // compiler and -O2 as build.rs. A Lua arithmetic oracle is insufficient:
+    // C may contract multiply/add operations inside its interpolation expression.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = root.join("testdata/n5-images");
+    let scratch = std::env::temp_dir().join(alloc::format!("n5-resize-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let records = scratch.join("cases.bin");
+    let executable = scratch.join("original-resize-oracle");
+    let compiler = std::env::var("CC").unwrap_or_else(|_| "cc".into());
+    let compiled = std::process::Command::new(compiler)
+        .args(["-std=gnu11", "-O2"])
+        .arg(root.join("testdata/n5-resize-oracle.c"))
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let mut vm = vm();
+    let source = alloc::format!(
+        r#"
+local image=require('image')
+local output <close> = assert(io.open('{}/cases.bin','wb'))
+for _,name in ipairs({{'pixels.png','alpha.png','orientation.jpg','grayscale.jpeg'}}) do
+ local original <close> = image.load_file('{}/'..name)
+ local packed <close> = image.convert(original,image.RGB565)
+ local gray <close> = image.convert(original,image.GRAY8)
+ local album <close> = image.resize(original,{{width=160,height=96,filter='nearest'}})
+ for _,frame in ipairs({{original,packed,gray,album}}) do
+  local rgb <close> = image.convert(frame,image.RGB888)
+  local data=rgb:data();local info=rgb:info()
+  for _,size in ipairs({{{{1,1}},{{2,3}},{{7,5}},{{31,9}},{{32,11}},{{33,7}},{{65,13}},{{80,48}},{{81,48}},{{117,73}},{{160,96}}}}) do
+   local w,h=size[1],size[2]
+   local actual <close> = image.resize(frame,{{width=w,height=h,filter='bilinear',format=image.RGB565}})
+   local actualgray <close> = image.resize(frame,{{width=w,height=h,filter='bilinear',format=image.GRAY8}})
+   assert(output:write(string.pack('<I4I4I4I4',info.width,info.height,w,h),data,actual:data(),actualgray:data()))
+  end
+ end
+end
+"#,
+        scratch.display(),
+        dir.display()
+    );
+    assert_eq!(run_src(&mut vm, &source).step, Step::Done);
+    let compared = std::process::Command::new(executable)
+        .arg(records)
+        .output()
+        .unwrap();
+    assert!(
+        compared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compared.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&compared.stdout).trim(),
+        "176 cases: exact RGB565 and GRAY8"
+    );
+    std::fs::remove_dir_all(scratch).unwrap();
+}
+
+#[test]
+fn integer_bilinear_counterexample_search() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let executable = std::env::temp_dir().join(alloc::format!(
+        "n5-integer-resize-stress-{}",
+        std::process::id()
+    ));
+    let compiler = std::env::var("CC").unwrap_or_else(|_| "cc".into());
+    let compiled = std::process::Command::new(compiler)
+        .args(["-std=gnu11", "-O2"])
+        .arg(root.join("testdata/n5-resize-stress.c"))
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let compared = std::process::Command::new(&executable).output().unwrap();
+    assert!(
+        compared.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compared.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&compared.stdout).trim(),
+        "10052 cases, 48881924 output pixels per format: exact RGB565 and GRAY8"
+    );
+    std::fs::remove_file(executable).unwrap();
 }
 
 #[test]
