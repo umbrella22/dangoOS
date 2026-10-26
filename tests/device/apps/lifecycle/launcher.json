@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "lifecycle",
+  "entry": "scripts/main.lua",
+  "display_name": "N1 Lifecycle Probe",
+  "args": {},
+  "order": 100,
+  "visible": true
+}

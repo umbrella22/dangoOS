@@ -1,31 +1,31 @@
-# Local Synopsys OTG patches
+# Synopsys OTG 本地补丁
 
-This package vendors the actual `embassy-usb-synopsys-otg` 0.4.0 source previously compiled by the ESP32-S31 firmware. `LOCAL_PROVENANCE.json` records every cached file hash and the upstream metadata commit, `664d4ead36bb24a63955ca649bcec66c6e70bf6d`. The shared Cargo cache is unchanged. The root `[patch.crates-io]` makes this dependency reproducible from the repository.
+此目录保存此前 ESP32-S31 固件实际编译的 `embassy-usb-synopsys-otg` 0.4.0 源码。`LOCAL_PROVENANCE.json` 记录每个原始缓存文件的哈希和上游元数据提交 `664d4ead36bb24a63955ca649bcec66c6e70bf6d`。共享 Cargo 缓存未修改；根目录 `[patch.crates-io]` 使依赖可从仓库复现。
 
-The cached source already contained non-EP0 OUT priming when an endpoint is enabled, plus IN SNAK on enable and FIFO flush behavior. Those changes are preserved. All original cached files other than `src/lib.rs` remain byte-identical; `src/reset_in.rs` adds the shutdown state machine and its host tests. MIT and Apache license texts come from the upstream metadata commit.
+缓存源码已包含启用非 EP0 OUT 端点时的预备接收，以及 IN 启用时的 SNAK 和 FIFO 刷新行为，这些修改保留。除 `src/lib.rs` 外，其他原始缓存源码文件逐字节不变；新增 `src/reset_in.rs` 提供关停状态机和宿主测试。README、CHANGELOG 和本说明已中文化，原始来源 JSON 哈希仍描述导入时文件，不用译文覆盖。MIT 与 Apache 许可证原文来自上述上游提交。
 
-## IN transfer shutdown before USB reset reconfiguration
+## USB 复位重新配置前停止 IN 传输
 
-A captured reconnect reached `configured(true)` while the application TX task was at `TxWait`, yet bulk IN EPENA remained set with the old transfer state. A subsequent write remained pending with enough FIFO space. This supports an old IN activation surviving reset reconfiguration. Hardware acceptance of this candidate change remains pending.
+一次重连采集显示：应用 TX 任务处于 `TxWait` 时已到达 `configured(true)`，bulk IN 的 EPENA 仍置位并保留旧传输状态；后续写入即使 FIFO 空间足够也持续等待。这支持“旧 IN 激活状态跨越复位重新配置”的假设，该候选变更的硬件验收在此记录中仍待完成。
 
-On USBRST, the bus now completes this sequence for allocated non-control IN endpoints before the existing FIFO flush and endpoint configuration:
+收到 USBRST 后，总线在原有 FIFO 刷新和端点配置前，对已分配的非控制 IN 端点执行：
 
-1. Set SNAK and wait for persistent `DIEPCTL.NAKSTS`.
-2. Recheck EPENA in a short critical section. A naturally completed transfer skips EPDIS and returns to Idle.
-3. Clear only the stale EPDISD acknowledgement, request SNAK/EPDIS, then clear USBAEP in the existing disable order.
-4. Wait for EPENA to clear and for raw `DIEPINT.EPDISD` or an IRQ-latched EPDISD acknowledgement.
-5. Run the original `init_fifo()` and `configure_endpoints()` only after all affected IN endpoints complete.
+1. 设置 SNAK，等待持续的 `DIEPCTL.NAKSTS`。
+2. 在短临界区重新检查 EPENA；自然完成的传输跳过 EPDIS 并返回 Idle。
+3. 仅清除过期 EPDISD 确认，请求 SNAK/EPDIS，再按原禁用顺序清除 USBAEP。
+4. 等待 EPENA 清除，且出现原始 `DIEPINT.EPDISD` 或 IRQ 锁存的 EPDISD 确认。
+5. 所有受影响 IN 端点完成后，才执行原有 `init_fifo()` 和 `configure_endpoints()`。
 
-The IRQ handler records EPDISD before its existing W1C acknowledgement. The poll also checks raw status because the existing interrupt mask does not enable EPDISD. A consumed or masked interrupt therefore cannot be the sole completion signal.
+IRQ 处理器在原有 W1C 确认前记录 EPDISD。轮询同时检查原始状态，因为原中断掩码未启用 EPDISD；被消费或屏蔽的中断不能成为唯一完成信号。
 
-Each hardware wait returns `Poll::Pending` and self-wakes. No new spin loop or long critical-section wait is added. There is no timeout or fallback: a missing hardware acknowledgement can leave USB reset/enumeration pending and consume polling time. Other executor tasks can still be scheduled. Existing FIFO-flush waits remain unchanged.
+每次硬件等待返回 `Poll::Pending` 并自行唤醒，没有新增自旋循环或长临界区等待。没有超时或回退：缺少硬件确认可能让 USB 复位/枚举一直等待并消耗轮询时间，其他执行器任务仍可调度。现有 FIFO 刷新等待不变。
 
-EP0, OUT handling, normal `write()`, SET_CONFIGURATION, packet contents, VBUS/DTR policy, retries and OTA behavior are unchanged. Hardware validation checks immediate command recovery after reconnect and an inactive IN endpoint at configuration. An old DIEPTSIZ value alone does not establish failure once EPENA is clear and a subsequent write overwrites it normally. A closed host port can still leave an ordinary IN transfer pending.
+EP0、OUT 处理、正常 `write()`、SET_CONFIGURATION、数据包内容、VBUS/DTR 策略、重试及 OTA 行为不变。硬件验证检查重连后立即恢复命令，以及配置时 IN 端点处于非活动状态。EPENA 清除且后续写入正常覆盖时，旧 DIEPTSIZ 值本身不能证明失败。宿主端口关闭仍可能使普通 IN 传输等待。
 
-## References and verification
+## 参考与验证
 
-- [Linux v6.12 DWC2 `dwc2_hsotg_ep_stop_xfr`](https://github.com/torvalds/linux/blob/v6.12/drivers/usb/dwc2/gadget.c#L3914): NAK effective, EPDIS, Endpoint Disabled, then FIFO flush. Its timeout and fallback policy are not imported.
-- The original driver’s isochronous IN workaround also waits for NAK effect and EPDISD before continuing.
-- The pinned ESP32-S31 PAC describes NAKSTS as the core transmitting NAK, requires EPENA to be set before requesting EPDIS, and requires Endpoint Disabled acknowledgement. EPENA clears before Endpoint Disabled or Transfer Complete.
+- [Linux v6.12 DWC2 的 `dwc2_hsotg_ep_stop_xfr`](https://github.com/torvalds/linux/blob/v6.12/drivers/usb/dwc2/gadget.c#L3914)：NAK 生效、EPDIS、Endpoint Disabled，之后刷新 FIFO。本项目未导入其超时/回退策略。
+- 原驱动的等时 IN 规避路径也先等待 NAK 生效和 EPDISD。
+- 固定版本 ESP32-S31 PAC 将 NAKSTS 描述为核心正在发送 NAK，要求请求 EPDIS 前 EPENA 已置位，并等待 Endpoint Disabled 确认。EPENA 先于 Endpoint Disabled 或 Transfer Complete 清除。
 
-Two pure state-machine host tests cover the required ordering, incomplete acknowledgement, natural completion, and repeated polling. Default and v3 diagnostic firmware builds, image validation and ROM checks pass. Device reconnect acceptance remains required. Frozen before/after sources, cache-to-vendor diff, references and both image sets are archived under `target/usb-in-reset-fix-20261024`.
+两个纯状态机宿主测试覆盖所需顺序、未完整确认、自然完成和重复轮询。默认及 v3 诊断固件构建、镜像验证和 ROM 检查通过，设备重连验收仍单独要求。冻结前后源码、缓存到 vendor 的差异、参考和两组镜像保存在 `target/usb-in-reset-fix-20261024`。

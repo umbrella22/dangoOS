@@ -1,7 +1,7 @@
 # Hub 字体
 
 `gen_hub_font.py` 把 Noto Sans SC 光栅化成 Hub 页面用的子集字体，输出到
-`crates/mosaico-s31/src/assets/hub-*.bin`，由 `ui/hub_font.rs` 读取（RFC 0006 第 2.2 节）。
+`crates/os/src/assets/hub-*.bin`，由 `ui/hub_font.rs` 读取（RFC 0006 第 2.2 节）。
 
 | 输出 | 字重 | 字号 | 内容 |
 | --- | --- | --- | --- |

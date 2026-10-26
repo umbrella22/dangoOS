@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "id": "hardware_probe",
-  "entry": "scripts/main.lua",
-  "display_name": "Hardware Probe",
-  "args": { "outputs": false, "pin": 11, "duration_ms": 30000 },
-  "order": 91,
-  "visible": true
-}

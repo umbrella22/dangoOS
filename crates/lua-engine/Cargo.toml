@@ -1,0 +1,23 @@
+[package]
+name = "lua-engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Lua 5.5 runtime for ESP-Mosaico: vendored PUC-Rio Lua, cooperative scheduling, Rust host functions"
+publish = false
+license = "MIT AND Apache-2.0"
+links = "mosaico_lua"
+build = "build.rs"
+
+[dependencies]
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+fs = { path = "../fs" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+critical-section.workspace = true
+
+[target.'cfg(not(target_os = "none"))'.dependencies]
+critical-section = { workspace = true, features = ["std"] }
+
+[build-dependencies]
+cc = "1"

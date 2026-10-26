@@ -1,69 +1,61 @@
-# ESP-Mosaico S31：狐狸团子
+# ESP-Mosaico：狐狸团子
 
-ESP-Mosaico v1.2 显示终端（ESP32-S31，CO5300 480×480 QSPI AMOLED，CST9220 触摸，
-BMI270 / BMM150，BQ27220）上的 Rust 固件。主页是“狐狸团子”：一只调色板精灵狐狸，
-表情跟着触摸、晃动、光线、磁铁、左右扩展模块和电量变化。从主页唤出应用网格，
-里面有原生应用（设置 / 传感器 / 计时器）和兼容官方格式的 Lua 5.5 应用，
-Lua 应用可以从电脑经 USB 推送并热重载。
+面向 ESP-Mosaico V1.2 的 Rust 系统，使用 ESP32-S31、CO5300 480×480 QSPI AMOLED、CST9220 触摸、BMI270 / BMM150 和 BQ27220。主页“狐狸团子”的表情随触摸、晃动、光线、磁铁、左右扩展模块和电量变化。启动器提供原生设置、传感器、计时器，以及通过文件系统加载的 Lua 5.5 应用。
 
-**接手先读 [docs/HANDOFF.md](docs/HANDOFF.md)**：现状、下一步、后续拓展和文档地图都在那里。
+**阅读与学习从[文档总入口](docs/README.md)开始。** [当前状态](docs/guides/current-status.md)记录现有边界与最近一次设备验证；[开发指南](docs/guides/development.md)提供环境、测试、构建和控制台命令。
 
-## 结构
+## 目录与职责
 
-| crate | 作用 |
+| 位置 | 职责 |
 | --- | --- |
-| `crates/mosaico-s31` | 库（`behavior` / `fox` / `hub` / `ui` / `telemetry`，host 可测）+ 固件（`drivers` / `tasks`） |
-| `crates/mosaico-lua` | Lua 5.5.1 与官方 esp-claw 模块移植层 |
-| `crates/mosaico-fs` | littlefs + VFS，`/system` 与 `/data` |
+| `crates/os` | 系统库、硬件驱动、任务调度、原生页面和 `os-fw` 固件 |
+| `crates/fs` | littlefs、VFS、`/system` 与 `/data` |
+| `crates/lua-engine` | Lua 5.5.1、esp-claw 模块与宿主适配 |
+| `apps/games`、`apps/tools` | Snake、2048、Dino、Flappy、Photo 的独立源码 |
+| `tools/app-pack` | 应用校验、完整 system 镜像构建与提取 |
+| `examples`、`tests`、`scripts` | 开发示例、回归/设备验收、检查/设备/素材工具 |
+| `docs` | 按指南、架构、硬件、素材、OTA、测试、排障、参考与历史分类的中文文档 |
 
-完整目录见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)，狐狸从 PNG 到屏幕见
-[docs/FOX_RENDER_PIPELINE.md](docs/FOX_RENDER_PIPELINE.md)。素材和 Python 管线在 `assets/fox-dango/`。
-UI 层是 [lvgl_binding_rust](https://github.com/umbrella22/lvgl_binding_rust) 的
-[`lvgl-ui`](https://github.com/umbrella22/lvgl_binding_rust/blob/master/lvgl-ui/README.md)。
+完整流程见[源码结构](docs/architecture/project-structure.md)，应用约定见 [Lua 应用开发](docs/guides/lua-apps.md)，狐狸从 PNG 到屏幕的过程见[渲染管线](docs/assets/fox-rendering.md)。UI 使用 [lvgl_binding_rust](https://github.com/umbrella22/lvgl_binding_rust) 的 lvgl-ui。
 
 ## 常用命令
 
-```bash
-./scripts/check.sh                                   # 不需要板子的全部检查（测试、预览、固件、ROM 符号）
-cargo fw --offline                                   # 固件 release 构建
-./scripts/flash-app.sh /dev/cu.usbmodemXXXX          # 下载模式下只写 main_app（0x210000）
-python3 scripts/push-app.py push examples/lua-apps/hello_push --run --follow   # 推送 Lua 应用
+所有命令从仓库根目录执行：
+
+```sh
+./scripts/check.sh                              # 统一离线检查，不连接设备
+cargo fw --offline                              # 固件 release 构建
+cargo run -p app-pack --offline -- check apps     # 校验正式应用
+cargo run -p app-pack --offline -- system apps target/system-release --size 3072000
+python3 scripts/device/console.py push examples/apps/hello --run --follow
+python3 scripts/device/console.py ota-status      # 查看运行槽、自检和备用槽
 ```
 
-细节见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+system 输出目录必须是新目录，大小与目标设备分区一致。固件镜像序列化及 OTA 命令见 [USB 更新指南](docs/ota/usb-update.md)。
 
-## 烧录红线
+## 固件与应用更新
 
-只写 `main_app`（`0x210000`）。**不要**改写 bootloader（S31 上在 `0x2000`）、分区表（`0x8000`）
-或 `0x20000` 的出厂 `vibe_mode`。
+Rust 原生应用随固件构建。五个 Lua 应用统一由 system 镜像交付，可通过 USB 下载到 `/data/apps/<id>` 单独更新并覆盖系统版本；移除下载版后恢复 `/system/apps/<id>`。照片和存档位于 `/data/appdata/<id>`，不打包进 system 镜像。
+
+固件采用 A/B 交替更新：A 运行时写 B，B 运行时写 A。写入完整校验后切换启动，候选通过健康窗口才标记 `Valid`，上一版保留在原运行槽。system/data 由两槽共用，固件回退不回退 Lua 文件和用户数据。
+
+正常升级不写引导程序、分区表或出厂分区。ROM 下载模式恢复和旧布局迁移属于独立流程，见[更新与恢复](docs/ota/README.md)；仅写槽 0 的恢复脚本不会改变 OTA 启动选择。
 
 ## 构建环境
 
-- `esp-hal`、`esp-bootloader-esp-idf`、`esp-alloc`、`esp-rtos`、`esp-storage` 固定在 esp-hal 仓库的同一个
-  Git revision（S31 支持还没进正式版），升级时一起改并真机验证。
-- `lvgl` / `lvgl-ui` 是 Git 依赖，`rev` 固定在根 `Cargo.toml`。想试本地 checkout，
-  在自己的 `.cargo/config.toml` 里加 `[patch."https://github.com/umbrella22/lvgl_binding_rust"]`，不要提交。
-- `.cargo/config.toml` 为作者的机器设置了 Espressif C 工具链（`CC_…`、`AR_…`）、`LIBCLANG_PATH`
-  和 `LVGL_SYSROOT`。Cargo 的 `[env]` 不覆盖已设置的变量，换机器时在 shell 里导出自己的值即可：
+- `esp-hal`、`esp-bootloader-esp-idf`、`esp-alloc`、`esp-rtos`、`esp-storage` 固定在 esp-hal 仓库同一提交。芯片支持与依赖升级需一起核对并实机验证。
+- `lvgl` / `lvgl-ui` 的 Git `rev` 固定在根 `Cargo.toml`。临时使用本地检出可在本机 `.cargo/config.toml` 设置 `[patch."https://github.com/umbrella22/lvgl_binding_rust"]`。
+- `.cargo/config.toml` 提供作者机器的 Espressif C 工具链、`LIBCLANG_PATH` 和 `LVGL_SYSROOT`。Cargo `[env]` 不覆盖已设置变量，其他机器可在 shell 导出自己的路径：
 
-  ```bash
-  export ESP_TOOLS=$HOME/esp-tools/riscv32-esp-elf
-  export CC_riscv32imafc_unknown_none_elf=$ESP_TOOLS/bin/riscv32-esp-elf-gcc
-  export AR_riscv32imafc_unknown_none_elf=$ESP_TOOLS/bin/riscv32-esp-elf-ar
-  export LVGL_SYSROOT=$ESP_TOOLS/riscv32-esp-elf
-  ```
+```sh
+export ESP_TOOLS=$HOME/esp-tools/riscv32-esp-elf
+export CC_riscv32imafc_unknown_none_elf=$ESP_TOOLS/bin/riscv32-esp-elf-gcc
+export AR_riscv32imafc_unknown_none_elf=$ESP_TOOLS/bin/riscv32-esp-elf-ar
+export LVGL_SYSROOT=$ESP_TOOLS/riscv32-esp-elf
+```
 
-## 控制台
+## 控制台与应用生命周期
 
-USB-OTG HS CDC-ACM（不是 USB-Serial-JTAG），运行时枚举为 `/dev/cu.usbmodemmosaico_s31_r11`。
-同一个口既出日志也收推送命令。统计行的含义见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+运行时控制台使用 USB-OTG HS CDC-ACM，在当前 macOS 环境通常枚举为 `/dev/cu.usbmodemmosaico_s31_r11`，同一端口提供日志与命令。统计含义见[开发指南](docs/guides/development.md)。
 
-## Lua 应用数据与卸载
-
-每个 Lua VM 的 `storage.get_root_dir()` 指向 `/data/appdata/<id>/`，包含应用关闭时的 finalizer。
-启动器短按打开、长按确认；下载应用可卸载本体和数据，出厂应用只能清除数据。
-删除遮蔽出厂版本的下载应用后，出厂版本会重新显示。
-USB 可用 `scripts/push-app.py rm <id>` 卸载下载应用，或 `rmdata <id>` 清除任意 Lua 应用的数据；
-成功回执表示停止并销毁 VM 后的实际文件操作已完成。
-旧版本散落在 `/data` 根下的文件无法可靠归属，保留不动；Lua 绝对路径 `io` 不是沙箱。
-恢复流程、边界和验证说明见 [N7_APP_LIFECYCLE.md](docs/N7_APP_LIFECYCLE.md)。
+启动器短按打开应用、长按确认删除或清除数据。`scripts/device/console.py rm <id>` 删除下载应用，`rmdata <id>` 清除应用数据；成功回执表示停止并销毁 VM 后的实际文件操作完成。系统应用主体受保护。归属不明的历史 `/data` 根文件不会自动删除；应用根目录约定不限制 Lua `io` 的绝对路径。完整契约见[应用生命周期](docs/architecture/app-lifecycle.md)。

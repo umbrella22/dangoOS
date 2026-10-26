@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "id": "n1_haptic_rate_probe",
-  "entry": "scripts/main.lua",
-  "display_name": "N1 Haptic Rate Probe",
-  "args": {},
-  "order": 101,
-  "visible": true
-}

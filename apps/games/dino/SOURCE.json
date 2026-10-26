@@ -1,0 +1,15 @@
+{
+  "source_project": "https://github.com/espressif/esp-mosaico-claw",
+  "source_image": "mosaico-claw-merged-binary-v0.6.0-1023-system.bin",
+  "source_image_sha256": "4f4a853b08b0bdc0104d3fea8585d7c9e3d99a3329d17406d6da1e9be057c73d",
+  "source_directory": "/apps/dino",
+  "original_files_sha256": {
+    "launcher.json": "5160e60c607c7897df63fe6cdcbb98c759e0cf75630f8ee376b223b10ba274b1",
+    "scripts/dino.lua": "a905a8e93527ed086ec336e64a1bc94f40da92b916960826f684f6d77589d088",
+    "assets/icon.jpg": "48143267cacbd71285de0d04bc85d619cff4374b9f74edf9fff4906879b92753"
+  },
+  "changes": [
+    "Directory and application id normalized",
+    "Entry script renamed to scripts/main.lua; Lua source bytes unchanged"
+  ]
+}

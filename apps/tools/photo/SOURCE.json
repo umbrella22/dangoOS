@@ -1,0 +1,10 @@
+{
+  "source_project": "https://github.com/espressif/esp-mosaico-claw",
+  "source_revision": "9ea326da1f2a017ba81f1d391862f977b355a03e",
+  "source_directory": "fatfs_image/system/apps/album_app",
+  "original_files_sha256": {
+    "launcher.json": "7a7c2951ac92d9ee1c1d35a7533d5275c41099469a90979a26d8730c6eb43733",
+    "scripts/album_app.lua": "9324845e21df28b01284e0b06c01790366fb4ef095572cf104b6dece5a74b7ac"
+  },
+  "maintenance": "Photo is maintained in this repository; its ID is photo and its entry is scripts/main.lua."
+}

@@ -1,8 +1,8 @@
 """Pack device/ (poses, parts, manifest) into firmware tables.
 
 Usage: python3 assets/fox-dango/tools/fox_pack.py
-Writes crates/mosaico-s31/src/assets/fox.bin (row RLE of palette indices) and
-crates/mosaico-s31/src/fox/data.rs (palette and image tables). Run after
+Writes crates/os/src/assets/fox.bin (row RLE of palette indices) and
+crates/os/src/fox/data.rs (palette and image tables). Run after
 fox_parts.py; both outputs are committed, so the firmware build needs no Python.
 
 RLE: every image row is a sequence of (count 1..=255, index) byte pairs that
@@ -20,7 +20,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 DEV = ROOT / 'device'
-CRATE_SRC = ROOT.parent.parent / 'crates' / 'mosaico-s31' / 'src'
+CRATE_SRC = ROOT.parent.parent / 'crates' / 'os' / 'src'
 OUT = CRATE_SRC / 'fox'          # data.rs (Rust tables)
 BLOB_OUT = CRATE_SRC / 'assets'  # fox.bin (binary resources)
 TRANSPARENT = 255

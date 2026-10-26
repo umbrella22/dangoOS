@@ -37,6 +37,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c583acf993cf4245c4acb0a2cc2ab1f9cc097de73411bb6d3647ff6af2b1013d"
 
 [[package]]
+name = "app-pack"
+version = "0.2.0"
+dependencies = [
+ "fs",
+ "lua-engine",
+ "os",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "as-slice"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1075,6 +1086,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
+name = "fs"
+version = "0.2.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "fugit"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1343,6 +1361,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lua-engine"
+version = "0.2.0"
+dependencies = [
+ "cc",
+ "critical-section",
+ "fs",
+ "serde_json",
+]
+
+[[package]]
 name = "lvgl"
 version = "0.7.0"
 source = "git+https://github.com/umbrella22/lvgl_binding_rust?rev=cad031112d4d176a415e8029d9bc3963da364381#cad031112d4d176a415e8029d9bc3963da364381"
@@ -1424,50 +1452,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
-name = "mosaico-fs"
-version = "0.2.0"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "mosaico-lua"
-version = "0.2.0"
-dependencies = [
- "cc",
- "critical-section",
- "mosaico-fs",
- "serde_json",
-]
-
-[[package]]
-name = "mosaico-s31"
-version = "0.2.0"
-dependencies = [
- "critical-section",
- "embassy-executor",
- "embassy-futures",
- "embassy-sync 0.8.0",
- "embassy-time",
- "embassy-usb",
- "esp-alloc",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "esp-rtos",
- "esp-storage",
- "esp32s31",
- "log",
- "lvgl",
- "lvgl-ui",
- "md-5",
- "mosaico-fs",
- "mosaico-lua",
- "serde_json",
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "nb"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1515,6 +1499,33 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "os"
+version = "0.2.0"
+dependencies = [
+ "critical-section",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb",
+ "esp-alloc",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-rtos",
+ "esp-storage",
+ "esp32s31",
+ "fs",
+ "log",
+ "lua-engine",
+ "lvgl",
+ "lvgl-ui",
+ "md-5",
+ "serde_json",
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "paste"

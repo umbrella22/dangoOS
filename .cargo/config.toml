@@ -1,8 +1,8 @@
 # The host remains Cargo's default target. Firmware aliases select the MCU explicitly.
 [alias]
 # Firmware build: cargo fw  (flash + monitor: cargo fw-run, needs a board)
-fw = "build -p mosaico-s31 --release --target riscv32imafc-unknown-none-elf"
-fw-run = "run -p mosaico-s31 --release --target riscv32imafc-unknown-none-elf"
+fw = "build -p os --bin os-fw --features firmware --release --target riscv32imafc-unknown-none-elf"
+fw-run = "run -p os --bin os-fw --features firmware --release --target riscv32imafc-unknown-none-elf"
 
 [target.riscv32imafc-unknown-none-elf]
 runner = "espflash flash --monitor --chip esp32s31"
@@ -17,7 +17,7 @@ ESP_ALLOC_CONFIG_HEAP_ALGORITHM = "TLSF"
 # The paths below are the author's machine. Cargo does not override variables
 # that are already set, so other machines export their own (see README,
 # "Build environment").
-# mosaico-s31: LVGL 9.6 的 C 源码需要真正的 riscv32 C 编译器（Apple clang 无
+# os: LVGL 9.6 的 C 源码需要真正的 riscv32 C 编译器（Apple clang 无
 # riscv32 target）。Espressif 的 riscv32-esp-elf 工具链装在 ~/esp-tools/，
 # bindgen 的 libclang 用 Homebrew LLVM（含 riscv32 支持）。
 CC_riscv32imafc_unknown_none_elf = "/Users/ikaros/esp-tools/riscv32-esp-elf/bin/riscv32-esp-elf-gcc"

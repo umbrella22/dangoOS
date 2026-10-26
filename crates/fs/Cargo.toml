@@ -1,0 +1,15 @@
+[package]
+name = "fs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "File systems for ESP-Mosaico: vendored littlefs, mount table, and the POSIX layer newlib uses"
+publish = false
+license = "MIT AND BSD-3-Clause"
+links = "mosaico_fs"
+build = "build.rs"
+
+[dependencies]
+
+[build-dependencies]
+cc = "1"

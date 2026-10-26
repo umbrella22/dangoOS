@@ -3,7 +3,7 @@
 
 Scans the hub sources for the characters they actually display, rasterizes
 them from Noto Sans SC at each size and writes one `hub-<name>.bin` per font
-into crates/mosaico-s31/src/assets/. The firmware reads these with
+into crates/os/src/assets/. The firmware reads these with
 `ui::hub_font` (an `lv_font_t` whose callbacks are written in Rust).
 
 Usage:
@@ -36,7 +36,7 @@ import struct
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-CRATE = ROOT / "crates" / "mosaico-s31"
+CRATE = ROOT / "crates" / "os"
 OUT = CRATE / "src" / "assets"
 # Every file whose string literals reach the screen through a hub font.
 SOURCES = [CRATE / "src" / "hub", CRATE / "src" / "ui" / "hub_view.rs"]

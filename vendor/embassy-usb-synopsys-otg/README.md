@@ -1,16 +1,12 @@
-# Embassy USB driver for the Synopsys USB OTG core
+# Synopsys USB OTG 核心的 Embassy USB 驱动
 
-This crate implements [`embassy-usb-driver`](https://crates.io/crates/embassy-usb-driver) for Synopsys USB OTG devices.
+此 crate 为 Synopsys USB OTG 设备实现 [`embassy-usb-driver`](https://crates.io/crates/embassy-usb-driver)。
 
-It contains the "core" of the driver that is common across all chips using
-the Synopsys OTG IP, but it doesn't contain chip-specific initialization such
-as clock setup and GPIO muxing. You most likely don't want to use this crate
-directly, but use it through a HAL that does the initialization for you.
+它包含所有使用 Synopsys OTG IP 的芯片共用的驱动核心，不包含时钟设置、GPIO 复用等芯片专属初始化。通常通过负责初始化的 HAL 使用它。
 
-List of HALs integrating this driver:
+集成此驱动的 HAL 包括：
 
-- [`embassy-stm32`](https://crates.io/crates/embassy-stm32), for STMicroelectronics STM32 chips.
-- [`esp-hal`](https://crates.io/crates/esp-hal), for Espressif ESP32 chips.
+- [`embassy-stm32`](https://crates.io/crates/embassy-stm32)：STMicroelectronics STM32 芯片。
+- [`esp-hal`](https://crates.io/crates/esp-hal)：乐鑫 ESP32 芯片。
 
-If you wish to integrate this crate into your device's HAL, you will need to add the
-device-specific initialization. See the above crates for examples on how to do it.
+将此 crate 集成到其他设备 HAL 时，需要补充设备专属初始化，上述 HAL 可作为示例。本仓库的本地修改与验证边界见[补丁说明](PATCHES.md)。此 README 为本地中文译文，许可证和原始来源记录保留。

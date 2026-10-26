@@ -1,0 +1,15 @@
+{
+  "source_project": "https://github.com/espressif/esp-mosaico-claw",
+  "source_image": "mosaico-claw-merged-binary-v0.6.0-1023-system.bin",
+  "source_image_sha256": "4f4a853b08b0bdc0104d3fea8585d7c9e3d99a3329d17406d6da1e9be057c73d",
+  "source_directory": "/apps/flappybird",
+  "original_files_sha256": {
+    "launcher.json": "67f561fcad005e5556a11c08bef0ab68731fefab1bbf0401ba23ae047ca0b3e8",
+    "scripts/flappybird.lua": "ccd462a29e0cbbbfa297f0c115c3d2e1ddadeace0dbb23622c86fc1bf75e55bc",
+    "assets/icon.jpg": "c26208a51afc68518e9a9b96d58de4330ba7badb24a0fa86b70fd208a0c1d9f0"
+  },
+  "changes": [
+    "Directory and application id normalized",
+    "Entry script renamed to scripts/main.lua; Lua source bytes unchanged"
+  ]
+}
