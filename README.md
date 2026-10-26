@@ -2,8 +2,6 @@
 
 面向 ESP-Mosaico V1.2 的 Rust 系统，使用 ESP32-S31、CO5300 480×480 QSPI AMOLED、CST9220 触摸、BMI270 / BMM150 和 BQ27220。主页“狐狸团子”的表情随触摸、晃动、光线、磁铁、左右扩展模块和电量变化。启动器提供原生设置、传感器、计时器，以及通过文件系统加载的 Lua 5.5 应用。
 
-**阅读与学习从[文档总入口](docs/README.md)开始。** [当前状态](docs/guides/current-status.md)记录现有边界与最近一次设备验证；[开发指南](docs/guides/development.md)提供环境、测试、构建和控制台命令。
-
 ## 目录与职责
 
 | 位置 | 职责 |
@@ -14,9 +12,6 @@
 | `apps/games`、`apps/tools` | Snake、2048、Dino、Flappy、Photo 的独立源码 |
 | `tools/app-pack` | 应用校验、完整 system 镜像构建与提取 |
 | `examples`、`tests`、`scripts` | 开发示例、回归/设备验收、检查/设备/素材工具 |
-| `docs` | 按指南、架构、硬件、素材、OTA、测试、排障、参考与历史分类的中文文档 |
-
-完整流程见[源码结构](docs/architecture/project-structure.md)，应用约定见 [Lua 应用开发](docs/guides/lua-apps.md)，狐狸从 PNG 到屏幕的过程见[渲染管线](docs/assets/fox-rendering.md)。UI 使用 [lvgl_binding_rust](https://github.com/umbrella22/lvgl_binding_rust) 的 lvgl-ui。
 
 ## 常用命令
 
@@ -58,4 +53,4 @@ export LVGL_SYSROOT=$ESP_TOOLS/riscv32-esp-elf
 
 运行时控制台使用 USB-OTG HS CDC-ACM，在当前 macOS 环境通常枚举为 `/dev/cu.usbmodemmosaico_s31_r11`，同一端口提供日志与命令。统计含义见[开发指南](docs/guides/development.md)。
 
-启动器短按打开应用、长按确认删除或清除数据。`scripts/device/console.py rm <id>` 删除下载应用，`rmdata <id>` 清除应用数据；成功回执表示停止并销毁 VM 后的实际文件操作完成。系统应用主体受保护。归属不明的历史 `/data` 根文件不会自动删除；应用根目录约定不限制 Lua `io` 的绝对路径。完整契约见[应用生命周期](docs/architecture/app-lifecycle.md)。
+启动器短按打开应用、长按确认删除或清除数据。`scripts/device/console.py rm <id>` 删除下载应用，`rmdata <id>` 清除应用数据；成功回执表示停止并销毁 VM 后的实际文件操作完成。系统应用主体受保护。归属不明的历史 `/data` 根文件不会自动删除；应用根目录约定不限制 Lua `io` 的绝对路径。
