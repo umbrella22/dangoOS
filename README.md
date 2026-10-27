@@ -45,14 +45,17 @@ GitHub [Releases](https://github.com/umbrella22/dangoOS/releases) 提供 `*-ota.
 
 - `esp-hal`、`esp-bootloader-esp-idf`、`esp-alloc`、`esp-rtos`、`esp-storage` 固定在 esp-hal 仓库同一提交。芯片支持与依赖升级需一起核对并实机验证。
 - `rs_lvgl` / `rs_lvgl_ui` 直接使用 crates.io 发布包名，版本要求为 `0.2.0`，精确版本由 `Cargo.lock` 锁定。控件与字体按需启用，升级时一起核对。临时使用本地检出可在本机 `.cargo/config.toml` 的 `[patch.crates-io]` 下配置包名与路径，详见[开发指南](docs/guides/development.md)。
-- `.cargo/config.toml` 提供作者机器的 Espressif C 工具链、`LIBCLANG_PATH` 和 `LVGL_SYSROOT`。Cargo `[env]` 不覆盖已设置变量，其他机器可在 shell 导出自己的路径：
+- `.cargo/config.toml` 提供作者机器的 Espressif C 工具链、`LIBCLANG_PATH` 和 RISC-V bindgen 头文件路径。Cargo `[env]` 不覆盖已设置变量，其他机器可在 shell 导出自己的路径：
 
 ```sh
 export ESP_TOOLS=$HOME/esp-tools/riscv32-esp-elf
 export CC_riscv32imafc_unknown_none_elf=$ESP_TOOLS/bin/riscv32-esp-elf-gcc
 export AR_riscv32imafc_unknown_none_elf=$ESP_TOOLS/bin/riscv32-esp-elf-ar
-export LVGL_SYSROOT=$ESP_TOOLS/riscv32-esp-elf
+export BINDGEN_EXTRA_CLANG_ARGS_riscv32imafc_unknown_none_elf="-I$ESP_TOOLS/riscv32-esp-elf/include"
 ```
+
+Linux 使用主机 libclang（CI 为 LLVM 18）。newlib 路径仅传给 RISC-V 目标；
+主机测试及构建依赖使用系统 libc 头文件，已有 shell 中的全局 `LVGL_SYSROOT` 需取消。
 
 ## 控制台与应用生命周期
 

@@ -51,7 +51,8 @@ def main():
         "CC_riscv32imafc_unknown_none_elf": str(compiler / "riscv32-esp-elf-gcc"),
         "AR_riscv32imafc_unknown_none_elf": str(compiler / "riscv32-esp-elf-ar"),
         "NM": str(compiler / "riscv32-esp-elf-nm"),
-        "LVGL_SYSROOT": str(root / "riscv32-esp-elf" / "riscv32-esp-elf"),
+        "BINDGEN_EXTRA_CLANG_ARGS_riscv32imafc_unknown_none_elf":
+            f'-I{root / "riscv32-esp-elf" / "riscv32-esp-elf" / "include"}',
         "LIBCLANG_PATH": "/usr/lib/llvm-18/lib",
     }
     with Path(os.environ["GITHUB_ENV"]).open("a") as output:
