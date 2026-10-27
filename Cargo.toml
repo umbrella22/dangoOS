@@ -10,15 +10,24 @@ edition = "2021"
 authors = ["umbrella22", "Claude", "GLM"]
 
 [workspace.dependencies]
-# LVGL bindings: pinned Git revision of https://github.com/umbrella22/lvgl_binding_rust
-# (Cargo.lock records it too; bump `rev` in both lines together).
-lvgl = { git = "https://github.com/umbrella22/lvgl_binding_rust", rev = "cad031112d4d176a415e8029d9bc3963da364381", default-features = false, features = [
+# Published LVGL bindings; keep the existing crate aliases for consumers.
+# Upgrade both packages together; Cargo.lock records the resolved versions.
+lvgl = { package = "rs_lvgl", version = "0.2.0", default-features = false, features = [
     "alloc",
     "unsafe_no_autoinit",
 ] }
-lvgl-ui = { git = "https://github.com/umbrella22/lvgl_binding_rust", rev = "cad031112d4d176a415e8029d9bc3963da364381", default-features = false, features = [
+lvgl-ui = { package = "rs_lvgl_ui", version = "0.2.0", default-features = false, features = [
     "alloc",
     "no-autoinit",
+    # Native hub controls, Lua images/dialogs and the fox/splash canvases.
+    "widget-arc",
+    "widget-bar",
+    "widget-canvas",
+    "widget-image",
+    "widget-msgbox",
+    "widget-slider",
+    "widget-switch",
+    "font-montserrat-48",
 ] }
 log = "0.4"
 critical-section = "1"

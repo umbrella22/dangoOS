@@ -15,8 +15,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use lvgl_ui::{
-    symbol, Align, Color, FlexAlign, Font, GridTrack, ImageSource, Key, Node, Part, Size, State,
-    Style, TextAlign,
+    symbol, Align, Color, FlexAlign, Font, GridTrack, ImageSource, Key, Part, Size, State, Style,
+    TextAlign, View,
 };
 
 use super::hub_font::{HUB_20, HUB_24, HUB_30, HUB_DIGITS_64};
@@ -70,13 +70,13 @@ fn font_icon() -> Font {
     unsafe { Font::from_raw(core::ptr::addr_of!(lvgl::sys::lv_font_montserrat_48)) }
 }
 
-fn text(content: impl Into<String>, font: Font, color: Color) -> Node<AppMsg> {
-    Node::label(content).style(Style::neutral().font(font).fg(color))
+fn text(content: impl Into<String>, font: Font, color: Color) -> View<AppMsg> {
+    lvgl_ui::label(content).style(Style::neutral().font(font).fg(color))
 }
 
 /// A full-screen page: black field, centred title, home indicator.
-fn page(key: &'static str, title: &'static str, body: Node<AppMsg>) -> Node<AppMsg> {
-    Node::obj()
+fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -> View<AppMsg> {
+    lvgl_ui::obj()
         .key(Key::Named(key))
         .scrollable(false)
         .style(
@@ -95,8 +95,8 @@ fn page(key: &'static str, title: &'static str, body: Node<AppMsg>) -> Node<AppM
 }
 
 /// The pill at the bottom edge: "swipe up from here".
-fn home_indicator() -> Node<AppMsg> {
-    Node::obj().key(Key::Named("home-pill")).style(
+fn home_indicator() -> View<AppMsg> {
+    lvgl_ui::obj().key(Key::Named("home-pill")).style(
         Style::neutral()
             .bg(WEAK)
             .radius(3)
@@ -108,15 +108,18 @@ fn home_indicator() -> Node<AppMsg> {
 }
 
 /// The content column under the title.
-fn content(key: &'static str) -> Node<AppMsg> {
-    Node::column().key(Key::Named(key)).scrollable(false).style(
-        Style::neutral()
-            .width(Size::Px(COLUMN_W))
-            .height(Size::Content)
-            .gap(8)
-            .align(Align::TopMid)
-            .offset(0, CONTENT_Y),
-    )
+fn content(key: &'static str) -> View<AppMsg> {
+    lvgl_ui::column([])
+        .key(Key::Named(key))
+        .scrollable(false)
+        .style(
+            Style::neutral()
+                .width(Size::Px(COLUMN_W))
+                .height(Size::Content)
+                .gap(8)
+                .align(Align::TopMid)
+                .offset(0, CONTENT_Y),
+        )
 }
 
 fn card() -> Style {
@@ -124,8 +127,8 @@ fn card() -> Style {
 }
 
 /// A 68 px row: label on the left, `trailing` on the right.
-fn row(key: &'static str, label: &'static str, trailing: Node<AppMsg>) -> Node<AppMsg> {
-    Node::row()
+fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>) -> View<AppMsg> {
+    lvgl_ui::row([])
         .key(Key::Named(key))
         .scrollable(false)
         .style(
@@ -140,8 +143,8 @@ fn row(key: &'static str, label: &'static str, trailing: Node<AppMsg>) -> Node<A
         .child(trailing)
 }
 
-fn switch(key: &'static str, on: bool, msg: fn(bool) -> AppMsg) -> Node<AppMsg> {
-    Node::switch(on)
+fn switch(key: &'static str, on: bool, msg: fn(bool) -> AppMsg) -> View<AppMsg> {
+    lvgl_ui::switch(on)
         .key(Key::Named(key))
         .style(
             Style::default()
@@ -212,8 +215,8 @@ fn tile(
     name: &str,
     dim: bool,
     identity: Option<crate::hub::uninstall::Identity>,
-) -> Node<AppMsg> {
-    let square = Node::obj()
+) -> View<AppMsg> {
+    let square = lvgl_ui::obj()
         .key(Key::Named("icon"))
         .scrollable(false)
         // Plain objects are clickable by default; the tap must land on the
@@ -224,7 +227,7 @@ fn tile(
         TileFace::Letter(letter, color) => (color, text(letter, font_30(), TEXT)),
         TileFace::Icon(icon) => (
             BG,
-            Node::image(ImageSource::Rgb565 {
+            lvgl_ui::image(ImageSource::Rgb565 {
                 width: icon.width,
                 height: icon.height,
                 data: icon.rgb565,
@@ -246,7 +249,7 @@ fn tile(
                 .key(Key::Named("glyph"))
                 .style(Style::default().align(Align::Center)),
         );
-    Node::column()
+    lvgl_ui::column([])
         .key(key)
         .scrollable(false)
         .clickable(true)
@@ -308,8 +311,8 @@ const LETTER_COLORS: [Color; 4] = [
 
 /// The app grid: the native apps, then the registry's Lua apps, three per
 /// row. Beyond two rows the grid scrolls.
-pub fn launcher(registry: &Registry) -> Node<AppMsg> {
-    let mut tiles: Vec<Node<AppMsg>> = NATIVE_TILES
+pub fn launcher(registry: &Registry) -> View<AppMsg> {
+    let mut tiles: Vec<View<AppMsg>> = NATIVE_TILES
         .iter()
         .map(|t| {
             tile(
@@ -349,7 +352,7 @@ pub fn launcher(registry: &Registry) -> Node<AppMsg> {
     let mut tiles = tiles.into_iter();
     for r in 0..row_count {
         rows.push(
-            Node::row()
+            lvgl_ui::row([])
                 .key(Key::Id(r as u64))
                 .scrollable(false)
                 .style(
@@ -361,7 +364,7 @@ pub fn launcher(registry: &Registry) -> Node<AppMsg> {
                 .children(tiles.by_ref().take(TILES_PER_ROW)),
         );
     }
-    let grid = Node::column().key(Key::Named("tiles"));
+    let grid = lvgl_ui::column([]).key(Key::Named("tiles"));
     let grid = if row_count <= FIXED_ROWS {
         grid.scrollable(false).style(
             Style::neutral()
@@ -384,7 +387,7 @@ pub fn launcher(registry: &Registry) -> Node<AppMsg> {
         )
     };
 
-    Node::obj()
+    lvgl_ui::obj()
         .key(Key::Named("launcher"))
         .scrollable(false)
         .style(
@@ -410,7 +413,7 @@ pub fn launcher(registry: &Registry) -> Node<AppMsg> {
 /// A Lua app's page. The script draws the whole screen once it opens the
 /// display (the UI task then stops rendering LVGL here); until then this
 /// shows the name and a hint, or why the app cannot run.
-pub fn lua_app(entry: Option<&AppEntry>) -> Node<AppMsg> {
+pub fn lua_app(entry: Option<&AppEntry>) -> View<AppMsg> {
     let (key, title, status) = match entry {
         Some(e) if e.runnable() => (
             lua_key(&e.app.id),
@@ -428,7 +431,7 @@ pub fn lua_app(entry: Option<&AppEntry>) -> Node<AppMsg> {
             String::from("应用已移除"),
         ),
     };
-    Node::obj()
+    lvgl_ui::obj()
         .key(key)
         .scrollable(false)
         .style(
@@ -453,8 +456,8 @@ pub fn lua_app(entry: Option<&AppEntry>) -> Node<AppMsg> {
 // ---------------------------------------------------------------- settings
 
 /// Settings: brightness, lights, haptics, about.
-pub fn settings(settings: &Settings, uptime_s: u64, free_kib: u32) -> Node<AppMsg> {
-    let brightness = Node::column()
+pub fn settings(settings: &Settings, uptime_s: u64, free_kib: u32) -> View<AppMsg> {
+    let brightness = lvgl_ui::column([])
         .key(Key::Named("brightness"))
         .scrollable(false)
         .style(
@@ -464,7 +467,7 @@ pub fn settings(settings: &Settings, uptime_s: u64, free_kib: u32) -> Node<AppMs
                 .gap(18),
         )
         .child(
-            Node::row()
+            lvgl_ui::row([])
                 .key(Key::Named("head"))
                 .scrollable(false)
                 .style(
@@ -480,7 +483,7 @@ pub fn settings(settings: &Settings, uptime_s: u64, free_kib: u32) -> Node<AppMs
                 ),
         )
         .child(
-            Node::slider(
+            lvgl_ui::slider(
                 Settings::MIN_BRIGHTNESS as i32,
                 100,
                 settings.brightness as i32,
@@ -540,8 +543,8 @@ fn sensor_card(
     title: &'static str,
     lines: [String; 2],
     bar: Option<(u8, Color)>,
-) -> Node<AppMsg> {
-    let mut card_node = Node::column()
+) -> View<AppMsg> {
+    let mut card_node = lvgl_ui::column([])
         .key(Key::Named(key))
         .scrollable(false)
         .style(
@@ -561,7 +564,7 @@ fn sensor_card(
     match bar {
         Some((value, color)) => {
             card_node = card_node.child(
-                Node::bar(0, 100, value as i32)
+                lvgl_ui::bar(0, 100, value as i32)
                     .key(Key::Named("bar"))
                     .style(
                         Style::default()
@@ -594,7 +597,7 @@ fn slot_name(slot: SlotState) -> &'static str {
 }
 
 /// Sensors: a 2x3 grid of live values.
-pub fn sensors(snapshot: &SystemSnapshot) -> Node<AppMsg> {
+pub fn sensors(snapshot: &SystemSnapshot) -> View<AppMsg> {
     let tilt = match (snapshot.tilt_deg(), snapshot.accel_mg) {
         (Some(deg), Some([x, y, z])) => [
             format!("倾角 {}°", deg),
@@ -642,13 +645,17 @@ pub fn sensors(snapshot: &SystemSnapshot) -> Node<AppMsg> {
             None,
         ),
     ];
-    let grid = Node::grid(
+    let grid = lvgl_ui::grid(
         [GridTrack::Px(196), GridTrack::Px(196)],
         [
             GridTrack::Px(SENSOR_CARD_H),
             GridTrack::Px(SENSOR_CARD_H),
             GridTrack::Px(SENSOR_CARD_H),
         ],
+        cards
+            .into_iter()
+            .enumerate()
+            .map(|(i, card)| card.grid_cell((i % 2) as u16, (i / 2) as u16, 1, 1)),
     )
     .key(Key::Named("grid"))
     .scrollable(false)
@@ -659,12 +666,6 @@ pub fn sensors(snapshot: &SystemSnapshot) -> Node<AppMsg> {
             .gap(8)
             .align(Align::TopMid)
             .offset(0, SENSOR_Y),
-    )
-    .children(
-        cards
-            .into_iter()
-            .enumerate()
-            .map(|(i, card)| card.grid_cell((i % 2) as u16, (i / 2) as u16, 1, 1)),
     );
 
     page(AppId::Sensors.key(), AppId::Sensors.title(), grid)
@@ -672,8 +673,8 @@ pub fn sensors(snapshot: &SystemSnapshot) -> Node<AppMsg> {
 
 // ------------------------------------------------------------------- timer
 
-fn chip(index: usize, minutes: u32, selected: bool, enabled: bool) -> Node<AppMsg> {
-    let mut node = Node::obj()
+fn chip(index: usize, minutes: u32, selected: bool, enabled: bool) -> View<AppMsg> {
+    let mut node = lvgl_ui::obj()
         .key(Key::Id(index as u64))
         .scrollable(false)
         .clickable(enabled)
@@ -696,8 +697,8 @@ fn chip(index: usize, minutes: u32, selected: bool, enabled: bool) -> Node<AppMs
     node
 }
 
-fn pill_button(key: &'static str, label: &'static str, color: Color, msg: AppMsg) -> Node<AppMsg> {
-    Node::obj()
+fn pill_button(key: &'static str, label: &'static str, color: Color, msg: AppMsg) -> View<AppMsg> {
+    lvgl_ui::obj()
         .key(Key::Named(key))
         .scrollable(false)
         .clickable(true)
@@ -717,7 +718,7 @@ fn pill_button(key: &'static str, label: &'static str, color: Color, msg: AppMsg
 }
 
 /// Timer: ring, clock, presets, start/pause and reset.
-pub fn timer(hub: &Hub) -> Node<AppMsg> {
+pub fn timer(hub: &Hub) -> View<AppMsg> {
     let countdown = &hub.countdown;
     let now = hub.now_ms;
     let phase = countdown.phase();
@@ -731,7 +732,7 @@ pub fn timer(hub: &Hub) -> Node<AppMsg> {
     let editable = matches!(phase, Phase::Ready | Phase::Done);
 
     let permille = countdown.remaining_permille(now).min(1000) as i32;
-    let ring = Node::obj()
+    let ring = lvgl_ui::obj()
         .key(Key::Named("ring"))
         .scrollable(false)
         .style(
@@ -742,7 +743,7 @@ pub fn timer(hub: &Hub) -> Node<AppMsg> {
                 .offset(0, 80),
         )
         .child(
-            Node::arc(0, 1000, permille)
+            lvgl_ui::arc(0, 1000, permille)
                 .key(Key::Named("arc"))
                 .clickable(false)
                 .style(
@@ -759,7 +760,7 @@ pub fn timer(hub: &Hub) -> Node<AppMsg> {
                 .part_style(Part::Knob, Style::default().bg_opacity(0).pad(0)),
         )
         .child(
-            Node::column()
+            lvgl_ui::column([])
                 .key(Key::Named("face"))
                 .scrollable(false)
                 .style(
@@ -777,7 +778,7 @@ pub fn timer(hub: &Hub) -> Node<AppMsg> {
                 .child(text(status, font_20(), MUTED).key(Key::Named("status"))),
         );
 
-    let chips = Node::row()
+    let chips = lvgl_ui::row([])
         .key(Key::Named("presets"))
         .scrollable(false)
         .style(
@@ -795,7 +796,7 @@ pub fn timer(hub: &Hub) -> Node<AppMsg> {
                 .map(|(i, &m)| chip(i, m, i == countdown.preset(), editable)),
         );
 
-    let controls = Node::row()
+    let controls = lvgl_ui::row([])
         .key(Key::Named("controls"))
         .scrollable(false)
         .style(
@@ -809,7 +810,7 @@ pub fn timer(hub: &Hub) -> Node<AppMsg> {
         .child(pill_button("primary", primary, ACCENT, AppMsg::TimerToggle))
         .child(pill_button("reset", "重置", CARD_HI, AppMsg::TimerReset));
 
-    Node::obj()
+    lvgl_ui::obj()
         .key(Key::Named(AppId::Timer.key()))
         .scrollable(false)
         .style(
@@ -830,7 +831,7 @@ pub fn timer(hub: &Hub) -> Node<AppMsg> {
 }
 
 /// The view for one app.
-pub fn app(hub: &Hub, registry: &Registry, app: AppId) -> Node<AppMsg> {
+pub fn app(hub: &Hub, registry: &Registry, app: AppId) -> View<AppMsg> {
     match app {
         AppId::Settings => settings(&hub.settings, hub.about.uptime_s, hub.about.free_kib),
         AppId::Sensors => sensors(&hub.snapshot),
@@ -846,7 +847,7 @@ pub fn launcher_managed(
     confirmation: Option<crate::hub::uninstall::Identity>,
     busy: bool,
     toast: Option<&str>,
-) -> Node<AppMsg> {
+) -> View<AppMsg> {
     let mut root = launcher(registry);
     if let Some(identity) = confirmation {
         let name = registry
@@ -859,7 +860,7 @@ pub fn launcher_managed(
         } else {
             alloc::format!("清除 {name} 数据？\n出厂应用将保留。")
         };
-        let dialog = Node::column()
+        let dialog = lvgl_ui::column([])
             .key(Key::Named("manage-dialog"))
             .clickable(true)
             .scrollable(false)
@@ -872,7 +873,7 @@ pub fn launcher_managed(
             )
             .child(text(prompt, font_24(), TEXT).style(Style::default().width(Size::Px(320))))
             .child(
-                Node::obj()
+                lvgl_ui::obj()
                     .clickable(true)
                     .scrollable(false)
                     .style(card().width(Size::Px(300)).height(Size::Px(56)))
@@ -885,7 +886,7 @@ pub fn launcher_managed(
                     ),
             )
             .child(
-                Node::obj()
+                lvgl_ui::obj()
                     .clickable(true)
                     .scrollable(false)
                     .style(card().width(Size::Px(300)).height(Size::Px(56)))
@@ -898,7 +899,7 @@ pub fn launcher_managed(
                     ),
             );
         root = root.child(
-            Node::obj()
+            lvgl_ui::obj()
                 .key(Key::Named("manage-overlay"))
                 .clickable(true)
                 .scrollable(false)

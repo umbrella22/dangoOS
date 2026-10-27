@@ -32,7 +32,7 @@ use alloc::rc::Rc;
 use alloc::string::String;
 use core::cell::Cell;
 
-use lvgl_ui::{App, Color, Key, Node, Style, Theme};
+use lvgl_ui::{App, Color, Key, Style, Theme, View};
 
 use crate::behavior::Expression;
 use crate::fox::entrance;
@@ -342,15 +342,15 @@ impl App for MosaicoApp {
         }
     }
 
-    fn view(&self, theme: &Theme) -> Node<AppMsg> {
+    fn view(&self, theme: &Theme) -> View<AppMsg> {
         match self.screen.get() {
             // The splash has no touch target: the wordmark and the drop must
             // play out on their own, so a finger on the glass changes nothing.
-            Screen::Splash => Node::obj()
+            Screen::Splash => lvgl_ui::obj()
                 .key(Key::Named("splash-root"))
                 .style(Style::screen(theme))
                 .child(
-                    Node::custom(SplashWidget::new(Rc::clone(&self.splash)))
+                    lvgl_ui::custom(SplashWidget::new(Rc::clone(&self.splash)))
                         .key(Key::Named("splash-widget")),
                 ),
             Screen::Fox => match self.hub.page {
@@ -368,12 +368,12 @@ impl App for MosaicoApp {
 }
 
 impl MosaicoApp {
-    fn fox_view(&self, theme: &Theme) -> Node<AppMsg> {
-        Node::obj()
+    fn fox_view(&self, theme: &Theme) -> View<AppMsg> {
+        lvgl_ui::obj()
             .key(Key::Named("fox-root"))
             .style(Style::screen(theme))
             .child(
-                Node::custom(FoxWidget::new(Rc::clone(&self.control)))
+                lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)))
                     .key(Key::Named("fox-widget")),
             )
     }

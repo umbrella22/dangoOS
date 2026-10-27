@@ -16,7 +16,7 @@
 | `examples`、`tests`、`scripts` | 开发示例、回归/设备验收、检查/设备/素材工具 |
 | `docs` | 按指南、架构、硬件、素材、OTA、测试、排障、参考与历史分类的中文文档 |
 
-完整流程见[源码结构](docs/architecture/project-structure.md)，应用约定见 [Lua 应用开发](docs/guides/lua-apps.md)，狐狸从 PNG 到屏幕的过程见[渲染管线](docs/assets/fox-rendering.md)。UI 使用 [lvgl_binding_rust](https://github.com/umbrella22/lvgl_binding_rust) 的 lvgl-ui。
+完整流程见[源码结构](docs/architecture/project-structure.md)，应用约定见 [Lua 应用开发](docs/guides/lua-apps.md)，狐狸从 PNG 到屏幕的过程见[渲染管线](docs/assets/fox-rendering.md)。UI 使用 crates.io 发布的 [rs_lvgl](https://crates.io/crates/rs_lvgl) 和 [rs_lvgl_ui](https://crates.io/crates/rs_lvgl_ui)。
 
 ## 常用命令
 
@@ -44,7 +44,7 @@ Rust 原生应用随固件构建。五个 Lua 应用统一由 system 镜像交�
 ## 构建环境
 
 - `esp-hal`、`esp-bootloader-esp-idf`、`esp-alloc`、`esp-rtos`、`esp-storage` 固定在 esp-hal 仓库同一提交。芯片支持与依赖升级需一起核对并实机验证。
-- `lvgl` / `lvgl-ui` 的 Git `rev` 固定在根 `Cargo.toml`。临时使用本地检出可在本机 `.cargo/config.toml` 设置 `[patch."https://github.com/umbrella22/lvgl_binding_rust"]`。
+- `lvgl` / `lvgl-ui` 分别是 crates.io 包 `rs_lvgl` / `rs_lvgl_ui` 的依赖别名，版本要求为 `0.2.0`，精确版本由 `Cargo.lock` 锁定。控件与字体按需启用，升级时一起核对。临时使用本地检出可在本机 `.cargo/config.toml` 的 `[patch.crates-io]` 下配置实际包名与路径，详见[开发指南](docs/guides/development.md)。
 - `.cargo/config.toml` 提供作者机器的 Espressif C 工具链、`LIBCLANG_PATH` 和 `LVGL_SYSROOT`。Cargo `[env]` 不覆盖已设置变量，其他机器可在 shell 导出自己的路径：
 
 ```sh

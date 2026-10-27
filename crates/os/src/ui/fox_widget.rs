@@ -2,7 +2,7 @@
 //!
 //! The widget renders 352x336 RGB565 frames with [`FoxRenderer`] into a
 //! two-slot [`CanvasPool`] at a bounded cadence. Application code drives the
-//! mounted instance through a shared [`FoxControl`]: `Node::custom` keeps the
+//! mounted instance through a shared [`FoxControl`]: `lvgl_ui::custom` keeps the
 //! mounted widget when a later `App::view` builds a new descriptor, so the
 //! handle is how the expression and pose change without a remount.
 //!
@@ -655,8 +655,8 @@ mod tests {
         impl lvgl_ui::App for App {
             type Msg = ();
             fn update(&mut self, (): ()) {}
-            fn view(&self, _theme: &lvgl_ui::Theme) -> lvgl_ui::Node<()> {
-                lvgl_ui::Node::custom(FoxWidget::new(Rc::clone(&self.control)))
+            fn view(&self, _theme: &lvgl_ui::Theme) -> lvgl_ui::View<()> {
+                lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)))
             }
         }
         let app = App {

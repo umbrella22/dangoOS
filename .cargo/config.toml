@@ -28,6 +28,6 @@ AR_riscv32imafc_unknown_none_elf = "/Users/ikaros/esp-tools/riscv32-esp-elf/bin/
 # LVGL 9.6 头文件时会把 lv_anim_t 等结构体错误地产出为不透明类型，而 Apple
 # libclang 完整且同样支持 riscv32 target 的解析）。
 LIBCLANG_PATH = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib"
-# 传给 lvgl-sys/build.rs：bindgen 解析头文件时的 newlib 头文件路径
+# 传给 rs_lvgl_sys/build.rs：bindgen 解析头文件时的 newlib 头文件路径
 # （等价于 `riscv32-esp-elf-gcc -print-sysroot` 的输出）。
 LVGL_SYSROOT = "/Users/ikaros/esp-tools/riscv32-esp-elf/riscv32-esp-elf"
