@@ -48,3 +48,13 @@ git push origin vX.Y.Z
 
 tag、workspace 版本和应用 descriptor 必须一致。已公开 Release 的重跑只校验已有附件；
 附件与新构建不一致时拒绝覆盖。草稿 Release 可以补传同一 tag 的附件并重新回读验证。
+
+发布器通过 `gh release view` 查询草稿；GitHub 的 REST 按 tag 查询接口仅返回已公开版本。
+恢复中断的发布时，可以下载该 tag 工作流的 `firmware-release` artifact，独立运行发布器：
+
+```sh
+gh run download RUN_ID --name firmware-release --dir target/release-recovery
+python3 scripts/release/publish.py target/release-recovery --repo umbrella22/dangoOS
+```
+
+发布器核对 manifest 中的源码提交与远程 tag。恢复使用原构建附件，tag 指向保持固定。
