@@ -14,7 +14,7 @@ use core::{
     ptr,
 };
 use lua_engine::ui::{UiCommand, UiReply};
-use lvgl::sys as s;
+use rs_lvgl::sys as s;
 use serde_json::{json, Value};
 unsafe extern "C" {
     fn lv_image_cache_drop(src: *const core::ffi::c_void);
@@ -1169,8 +1169,8 @@ mod popup_diagnostic_tests {
     #[test]
     fn real_service_only_samples_successful_msgbox_actions_after_frame_end() {
         let _lock = crate::test_support::lock();
-        unsafe { lvgl::deinit() };
-        lvgl::init();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
         let mut buffer = alloc::vec![0u16; 480 * 48];
         let display = unsafe {
             let display = s::lv_display_create(480, 480);
@@ -1245,7 +1245,7 @@ mod popup_diagnostic_tests {
         drop(service);
         unsafe {
             s::lv_display_delete(display);
-            lvgl::deinit();
+            rs_lvgl::deinit();
         }
     }
 }

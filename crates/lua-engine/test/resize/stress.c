@@ -2,7 +2,7 @@
  * Host builds exercise large dimensions and 10,000 seeded random cases.
  * -DMOSAICO_BAREMETAL uses bounded small cases plus 65535-wide/tall axes,
  * static buffers and a Spike HTIF exit, with no libc or operating system. */
-#include "../csrc/mosaico_resize.h"
+#include "../../csrc/mosaico_resize.h"
 #ifndef MOSAICO_BAREMETAL
 #include <stdio.h>
 #endif

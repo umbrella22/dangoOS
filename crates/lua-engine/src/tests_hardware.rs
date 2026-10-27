@@ -104,10 +104,8 @@ fn sleep(vm: &mut Vm) {
 #[test]
 fn official_board_sensor_examples_run_unchanged() {
     for source in [
-        include_str!("../vendor/esp-claw/hardware-contracts/imu/test/imu_read.lua"),
-        include_str!(
-            "../vendor/esp-claw/hardware-contracts/magnetometer/test/magnetometer_read.lua"
-        ),
+        include_str!("../test/hardware/imu/imu_read.lua"),
+        include_str!("../test/hardware/magnetometer/magnetometer_read.lua"),
     ] {
         let mut vm = vm(Board::present(), source);
         vm.set_args_json(r#"{"samples":2,"interval_ms":1}"#)
@@ -381,7 +379,7 @@ fn button_queue_overflow_is_explicit_and_dispatch_recovers_after_callback_error(
 fn official_button_script_runs_with_board_gpio_argument() {
     let mut vm = vm(
         Board::present(),
-        include_str!("../vendor/esp-claw/hardware-contracts/button/test/button_events.lua"),
+        include_str!("../test/hardware/button/button_events.lua"),
     );
     vm.set_args_json(r#"{"pin":11,"duration_ms":10,"poll_ms":1}"#)
         .unwrap();
@@ -396,8 +394,7 @@ fn official_button_script_runs_with_board_gpio_argument() {
 
 #[test]
 fn official_led_script_requires_the_explicit_six_pixel_board_adaptation() {
-    let source =
-        include_str!("../vendor/esp-claw/hardware-contracts/led_strip/test/led_strip_rainbow.lua");
+    let source = include_str!("../test/hardware/led_strip/led_strip_rainbow.lua");
     let mut original = vm(Board::present(), source);
     loop {
         match original.resume() {

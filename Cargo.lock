@@ -38,7 +38,7 @@ checksum = "c583acf993cf4245c4acb0a2cc2ab1f9cc097de73411bb6d3647ff6af2b1013d"
 
 [[package]]
 name = "app-pack"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "fs",
  "lua-engine",
@@ -1087,7 +1087,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fs"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cc",
 ]
@@ -1362,7 +1362,7 @@ dependencies = [
 
 [[package]]
 name = "lua-engine"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cc",
  "critical-section",
@@ -1452,7 +1452,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "os"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "critical-section",
  "embassy-executor",

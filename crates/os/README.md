@@ -52,7 +52,7 @@ Embassy 任务。完整目录见 [源码结构](../../docs/architecture/project-
 - Embassy 依赖包含 `embassy-executor 0.10`、`embassy-time 0.5`、`embassy-usb 0.6`、
   `embassy-futures 0.1`、`embassy-sync 0.8`。
 - ESP 依赖位于 `[target.'cfg(target_os = "none")'.dependencies]`。
-  `lvgl`、`lvgl-ui`、`log`、`lua-engine` 和 `fs` 是普通依赖，因此库可以在主机构建。
+  `rs_lvgl`、`rs_lvgl_ui`、`log`、`lua-engine` 和 `fs` 是普通依赖，因此库可以在主机构建。
 
 ## 构建、测试与更新
 

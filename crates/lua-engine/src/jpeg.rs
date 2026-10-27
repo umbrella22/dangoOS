@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn decodes_a_baseline_jpeg_and_rejects_garbage() {
         // 16x8 baseline JPEG: left half red, right half blue (made with PIL).
-        let jpg = include_bytes!("../testdata/red_blue_16x8.jpg");
+        let jpg = include_bytes!("../test/images/red_blue_16x8.jpg");
         let img = super::decode(jpg).unwrap();
         assert_eq!((img.width, img.height), (16, 8));
         let px = |x: usize, y: usize| &img.pixels[(y * 16 + x) * 3..][..3];

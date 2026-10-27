@@ -2,7 +2,7 @@
 //!
 //! The widget renders 352x336 RGB565 frames with [`FoxRenderer`] into a
 //! two-slot [`CanvasPool`] at a bounded cadence. Application code drives the
-//! mounted instance through a shared [`FoxControl`]: `lvgl_ui::custom` keeps the
+//! mounted instance through a shared [`FoxControl`]: `rs_lvgl_ui::custom` keeps the
 //! mounted widget when a later `App::view` builds a new descriptor, so the
 //! handle is how the expression and pose change without a remount.
 //!
@@ -26,8 +26,8 @@ use alloc::rc::Rc;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use lvgl::sys as lvgl_sys;
-use lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
+use rs_lvgl::sys as lvgl_sys;
+use rs_lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
 
 use super::canvas_pool::{CanvasPool, ReadLease};
 use crate::behavior::Expression;
@@ -241,7 +241,7 @@ impl FoxControl {
     }
 
     /// Show a new expression. The mounted widget switches pose on the next
-    /// [`lvgl_ui::Ui::tick`]; no remount and no `App::view` call happen.
+    /// [`rs_lvgl_ui::Ui::tick`]; no remount and no `App::view` call happen.
     pub fn set_expression(&self, expression: Expression) {
         self.expression.set(expression);
     }
@@ -642,27 +642,27 @@ impl CustomWidget for FoxWidget {
 
 #[cfg(test)]
 mod tests {
-    use lvgl::Display;
+    use rs_lvgl::Display;
 
     use super::*;
     use crate::test_support;
 
     /// Mount the widget on a 480x480 memory display and return the live UI.
-    fn mount<'a>(control: &Rc<FoxControl>, display: &'a Display) -> lvgl_ui::Ui<()> {
+    fn mount<'a>(control: &Rc<FoxControl>, display: &'a Display) -> rs_lvgl_ui::Ui<()> {
         struct App {
             control: Rc<FoxControl>,
         }
-        impl lvgl_ui::App for App {
+        impl rs_lvgl_ui::App for App {
             type Msg = ();
             fn update(&mut self, (): ()) {}
-            fn view(&self, _theme: &lvgl_ui::Theme) -> lvgl_ui::View<()> {
-                lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)))
+            fn view(&self, _theme: &rs_lvgl_ui::Theme) -> rs_lvgl_ui::View<()> {
+                rs_lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)))
             }
         }
         let app = App {
             control: Rc::clone(control),
         };
-        let mut ui = lvgl_ui::Ui::new(display, lvgl_ui::Theme::dark()).expect("Ui::new");
+        let mut ui = rs_lvgl_ui::Ui::new(display, rs_lvgl_ui::Theme::dark()).expect("Ui::new");
         ui.mount(&app).expect("mount");
         ui
     }
@@ -670,8 +670,8 @@ mod tests {
     #[test]
     fn resident_lua_selects_pose_while_rust_renderer_keeps_animating_and_expires_it() {
         let _guard = test_support::lock();
-        unsafe { lvgl::deinit() };
-        lvgl::init();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
         let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
         let control = FoxControl::new(Expression::Idle);
         let mut runtime = crate::behavior::Runtime::new(0, Rc::clone(&control));
@@ -698,7 +698,7 @@ mod tests {
         drop(ui);
         unsafe {
             display.delete();
-            lvgl::deinit();
+            rs_lvgl::deinit();
         }
     }
 
@@ -707,8 +707,8 @@ mod tests {
         let _guard = test_support::lock();
 
         // SAFETY: the test lock is the only LVGL user in this test binary.
-        unsafe { lvgl::deinit() };
-        lvgl::init();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
         let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).expect("display");
         let control = FoxControl::new(Expression::Idle);
         let mut ui = mount(&control, &display);
@@ -736,14 +736,14 @@ mod tests {
         // SAFETY: the UI is unmounted and this test is the last LVGL user.
         unsafe { display.delete() };
         // SAFETY: the display is gone.
-        unsafe { lvgl::deinit() };
+        unsafe { rs_lvgl::deinit() };
     }
 
     #[test]
     fn shutdown_receipt_rejects_the_old_face_during_the_sleep_swap() {
         let _guard = test_support::lock();
-        unsafe { lvgl::deinit() };
-        lvgl::init();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
         let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
         let control = FoxControl::new(Expression::Idle);
         let mut ui = mount(&control, &display);
@@ -769,15 +769,15 @@ mod tests {
         drop(ui);
         unsafe {
             display.delete();
-            lvgl::deinit()
+            rs_lvgl::deinit()
         };
     }
 
     #[test]
     fn default_brain_touch_ages_after_drains_and_publishes_an_urgent_frame() {
         let _guard = test_support::lock();
-        unsafe { lvgl::deinit() };
-        lvgl::init();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
         let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
         let control = FoxControl::new(Expression::Idle);
         control.set_plane_mode(true);
@@ -825,7 +825,7 @@ mod tests {
         drop(ui);
         unsafe {
             display.delete();
-            lvgl::deinit();
+            rs_lvgl::deinit();
         }
     }
 
@@ -834,8 +834,8 @@ mod tests {
         let _guard = test_support::lock();
 
         // SAFETY: the test lock is the only LVGL user in this test binary.
-        unsafe { lvgl::deinit() };
-        lvgl::init();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
         let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).expect("display");
         let control = FoxControl::new(Expression::Idle);
         let mut ui = mount(&control, &display);
@@ -878,7 +878,7 @@ mod tests {
         // SAFETY: the UI is unmounted and this test is the last LVGL user.
         unsafe { display.delete() };
         // SAFETY: the display is gone.
-        unsafe { lvgl::deinit() };
+        unsafe { rs_lvgl::deinit() };
     }
 
     #[test]
@@ -886,8 +886,8 @@ mod tests {
         let _guard = test_support::lock();
 
         // SAFETY: the test lock is the only LVGL user in this test binary.
-        unsafe { lvgl::deinit() };
-        lvgl::init();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
         let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).expect("display");
         let control = FoxControl::new(Expression::Idle);
         let mut ui = mount(&control, &display);
@@ -911,6 +911,6 @@ mod tests {
         // SAFETY: the UI is unmounted and this test is the last LVGL user.
         unsafe { display.delete() };
         // SAFETY: the display is gone.
-        unsafe { lvgl::deinit() };
+        unsafe { rs_lvgl::deinit() };
     }
 }

@@ -1,6 +1,10 @@
 # Lua 电量计模块
 
-> 上游 esp-claw API 资料的本地中文译文。此处包含上游外接硬件能力；ESP-Mosaico 使用板载快照适配，实际支持范围以 [Lua 硬件接口指南](../../../../../../docs/guides/lua-hardware.md) 为准。上游驱动不参与本项目构建。
+本目录的 `lib_fuel_gauge.lua` 和 `fuel_gauge_read.lua` 仅作上游接口参考，不参与固件构建，
+也不由自动测试执行。板载快照适配使用 `csrc/hardware/fuel_gauge.lua`，对应回归测试在
+`src/tests_hardware.rs` 中单独构造脚本。
+
+> 上游 esp-claw API 资料的本地中文译文。此处包含上游外接硬件能力；ESP-Mosaico 使用板载快照适配，实际支持范围以 [Lua 硬件接口指南](../../../../../docs/guides/lua-hardware.md) 为准。上游驱动不参与本项目构建。
 
 上游模块通过已有 `i2c` 模块读取电池电压、电流和电量。支持 **BQ27220**、**MAX17048**；后者只有电压和 SOC，没有电流。
 

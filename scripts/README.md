@@ -8,6 +8,7 @@
 | `check/drivers.sh` | 独立 Rust 驱动测试 |
 | `check/rom-symbols.sh` | 构建产物与芯片 ROM 的 C 符号冲突检查 |
 | `check/ota-corpus.py` | 从固件生成 OTA 校验的异常镜像测试语料 |
+| [release/](release/README.md) | tag 发布、固定版本工具链、OTA 与全量安装包生成及附件回读校验 |
 | `device/console.py` | 应用、照片、皮肤、行为脚本和 OTA 的 USB 控制台操作 |
 | `device/session.py` | 有时限的控制台会话和日志采集 |
 | `device/flash.sh` | 明确选择 slot 0 的 ROM 恢复操作 |

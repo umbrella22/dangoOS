@@ -2,8 +2,8 @@
 //! The unmodified Album builds a new view through multiple such requests.
 use lua_engine::ui::{UiCommand, UiReply};
 use lua_engine::{Host, Limits, Request, Step, Vm};
-use lvgl::{sys as s, Display};
 use os::lua_lvgl::LuaLvglService;
+use rs_lvgl::{sys as s, Display};
 use serde_json::{json, Value};
 use std::{
     cell::RefCell,
@@ -20,7 +20,7 @@ unsafe extern "C" fn input(_: *mut s::lv_indev_t, d: *mut s::lv_indev_data_t) {
     }
 }
 fn tick() {
-    lvgl::tick_inc(Duration::from_millis(20));
+    rs_lvgl::tick_inc(Duration::from_millis(20));
     unsafe {
         s::lv_timer_handler();
     }
@@ -53,9 +53,9 @@ impl Host for Console {
 #[test]
 fn render_boundary() {
     unsafe {
-        lvgl::deinit();
+        rs_lvgl::deinit();
     }
-    lvgl::init();
+    rs_lvgl::init();
     let frames = Rc::new(RefCell::new((0usize, vec![0u8; 80 * 80 * 3])));
     let copy = frames.clone();
     let display = Display::register::<_, { 80 * 8 }>(80, 80, move |r| {
@@ -380,7 +380,7 @@ fn render_boundary() {
     drop(service);
     drop(display);
     unsafe {
-        lvgl::deinit();
+        rs_lvgl::deinit();
     }
     println!("PASS actual Lua callback error and zero-timeout event boundary");
 }

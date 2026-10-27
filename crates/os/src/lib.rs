@@ -35,8 +35,8 @@ pub use ui::{next_ai_state, AppMsg, MosaicoApp, Screen, AI_STATES};
 
 /// Process-wide LVGL test lock.
 ///
-/// LVGL is a global singleton: two tests that call `lvgl::init` /
-/// `lvgl::deinit` concurrently corrupt its state and crash. Every host test
+/// LVGL is a global singleton: two tests that call `rs_lvgl::init` /
+/// `rs_lvgl::deinit` concurrently corrupt its state and crash. Every host test
 /// that touches LVGL takes this one lock, so `cargo test` may use any thread
 /// count.
 #[cfg(test)]

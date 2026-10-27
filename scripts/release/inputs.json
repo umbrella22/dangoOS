@@ -1,0 +1,41 @@
+{
+  "official": {
+    "version": "0.6.0",
+    "build_date": "2026-10-23",
+    "url": "https://mosaico.ai/api/v1/firmware/2/download",
+    "bytes": 16703488,
+    "sha256": "bd17cec9b0ef166f29549da8ecd8163fb0181a6908d7bba654ff75b250a0bbba",
+    "components": {
+      "bootloader": {
+        "offset": 8192,
+        "bytes": 21984,
+        "sha256": "142bd570559b3e60989b1b97b1aec692870b6f60d8a3006230086dc8e1f3edf6",
+        "name": "mosaico_boot_v2",
+        "idf_version": "v6.2-dev-2221-g7b9cc1ac79f-dirt",
+        "build_datetime": "Oct 21 2026 19:45:22"
+      },
+      "vibe_mode": {
+        "offset": 131072,
+        "bytes": 1835008,
+        "sha256": "13c7af3286726f14a12b7056b3cdec270df0a0186120347cd8950bec7190da8e"
+      },
+      "ui_apps": {
+        "offset": 10354688,
+        "bytes": 3276800,
+        "sha256": "279b1cb6d3a8a86c8f7ea73dac154fc0ff3b7585cf925ff66bdb243b5e2261a6"
+      }
+    }
+  },
+  "tools": {
+    "gcc": {
+      "version": "esp-15.3.0_20260914",
+      "url": "https://github.com/espressif/crosstool-NG/releases/download/esp-15.3.0_20260914/riscv32-esp-elf-15.3.0_20260914-x86_64-linux-gnu.tar.xz",
+      "sha256": "5f2b1037c16ace2442733a0d69e6b1cd212c9c3ecb4b0975d01f07143027eb8b"
+    },
+    "espflash": {
+      "version": "4.6.0",
+      "url": "https://github.com/esp-rs/espflash/releases/download/v4.6.0/espflash-x86_64-unknown-linux-gnu.zip",
+      "sha256": "c4fcfa32ddc3155608f003a230e6f3c184eff9641ec9cfa8eb54f1b515d403e7"
+    }
+  }
+}

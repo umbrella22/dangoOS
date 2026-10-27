@@ -12,8 +12,8 @@
 use core::ffi::c_void;
 use core::ptr;
 
-use lvgl::sys as lvgl_sys;
-use lvgl_ui::Font;
+use rs_lvgl::sys as lvgl_sys;
+use rs_lvgl_ui::Font;
 
 const HEADER: usize = 16;
 const ENTRY: usize = 16;
@@ -118,7 +118,7 @@ pub struct StaticFont(lvgl_sys::lv_font_t);
 unsafe impl Sync for StaticFont {}
 
 impl StaticFont {
-    /// The `lvgl-ui` handle.
+    /// The `rs_lvgl_ui` handle.
     pub fn font(&'static self) -> Font {
         // SAFETY: `self` is a fully initialized static descriptor.
         unsafe { Font::from_raw(&self.0) }

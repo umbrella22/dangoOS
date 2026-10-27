@@ -8,7 +8,7 @@
 | ------------------------------ | --------------------------------------------------- |
 | `crates/os`                    | 系统库、硬件驱动、任务调度、原生页面和 `os-fw` 固件 |
 | `crates/fs`                    | littlefs、VFS、`/system` 与 `/data`                 |
-| `crates/lua-engine`            | Lua 5.5.1、esp-claw 模块与宿主适配                  |
+| [crates/lua-engine](crates/lua-engine/README.md) | Lua 5.5.1、esp-claw 模块与宿主适配 |
 | `apps/games`、`apps/tools`     | Snake、2048、Dino、Flappy、Photo 的独立源码         |
 | `tools/app-pack`               | 应用校验、完整 system 镜像构建与提取                |
 | `examples`、`tests`、`scripts` | 开发示例、回归/设备验收、检查/设备/素材工具         |
@@ -36,10 +36,15 @@ Rust 原生应用随固件构建。五个 Lua 应用统一由 system 镜像交�
 
 正常升级不写引导程序、分区表或出厂分区。ROM 下载模式恢复和旧布局迁移属于独立流程，见[更新与恢复](docs/ota/README.md)；仅写槽 0 的恢复脚本不会改变 OTA 启动选择。
 
+GitHub [Releases](https://github.com/umbrella22/dangoOS/releases) 提供 `*-ota.zip` 和 `*-full.zip`，
+以及对应的独立 BIN、安装说明、manifest 和 SHA-256 清单。OTA 包用于已有 A/B 布局的日常升级；
+全量包从地址 `0x0` 写入完整 16 MiB，会重建分区并清除用户数据。发布由匹配工程版本的 tag
+触发，流程与本地验证入口见 [固件发布](scripts/release/README.md)。
+
 ## 构建环境
 
 - `esp-hal`、`esp-bootloader-esp-idf`、`esp-alloc`、`esp-rtos`、`esp-storage` 固定在 esp-hal 仓库同一提交。芯片支持与依赖升级需一起核对并实机验证。
-- `lvgl` / `lvgl-ui` 分别是 crates.io 包 `rs_lvgl` / `rs_lvgl_ui` 的依赖别名，版本要求为 `0.2.0`，精确版本由 `Cargo.lock` 锁定。控件与字体按需启用，升级时一起核对。临时使用本地检出可在本机 `.cargo/config.toml` 的 `[patch.crates-io]` 下配置实际包名与路径，详见[开发指南](docs/guides/development.md)。
+- `rs_lvgl` / `rs_lvgl_ui` 直接使用 crates.io 发布包名，版本要求为 `0.2.0`，精确版本由 `Cargo.lock` 锁定。控件与字体按需启用，升级时一起核对。临时使用本地检出可在本机 `.cargo/config.toml` 的 `[patch.crates-io]` 下配置包名与路径，详见[开发指南](docs/guides/development.md)。
 - `.cargo/config.toml` 提供作者机器的 Espressif C 工具链、`LIBCLANG_PATH` 和 `LVGL_SYSROOT`。Cargo `[env]` 不覆盖已设置变量，其他机器可在 shell 导出自己的路径：
 
 ```sh

@@ -1,7 +1,7 @@
 //! Real LVGL timer-pointer tests for native clean/rebuild transactions.
 use lua_engine::ui::UiCommand;
-use lvgl::{sys as s, Display};
 use os::lua_lvgl::LuaLvglService;
+use rs_lvgl::{sys as s, Display};
 use serde_json::{json, Value};
 use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -43,7 +43,7 @@ fn call(service: &mut LuaLvglService, op: &str, args: Value) -> Value {
     serde_json::from_str::<Value>(&reply.json).unwrap()["values"].clone()
 }
 fn tick() {
-    lvgl::tick_inc(Duration::from_millis(40));
+    rs_lvgl::tick_inc(Duration::from_millis(40));
     unsafe {
         s::lv_timer_handler();
     }
@@ -71,9 +71,9 @@ fn events(service: &mut LuaLvglService) -> Value {
 #[test]
 fn native_input() {
     unsafe {
-        lvgl::deinit();
+        rs_lvgl::deinit();
     }
-    lvgl::init();
+    rs_lvgl::init();
     let display = Display::register::<_, { 80 * 8 }>(80, 80, |_| {}).unwrap();
     let original = unsafe { s::lv_screen_active() };
     let indev = unsafe {
@@ -245,6 +245,6 @@ fn native_input() {
     drop(other);
     drop(display);
     unsafe {
-        lvgl::deinit();
+        rs_lvgl::deinit();
     }
 }

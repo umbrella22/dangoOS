@@ -14,8 +14,8 @@ use alloc::rc::Rc;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use lvgl::sys as lvgl_sys;
-use lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
+use rs_lvgl::sys as lvgl_sys;
+use rs_lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
 
 use super::{SPLASH_HEIGHT, SPLASH_PIXELS, SPLASH_WIDTH, TOTAL_MS};
 

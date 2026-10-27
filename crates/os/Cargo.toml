@@ -35,8 +35,8 @@ serde_json = { version = "1", default-features = false, features = ["alloc"] }
 # Host-buildable UI dependencies: the library and integration tests build
 # with the plain host toolchain; the ESP HAL/RTOS dependencies stay target
 # gated.
-lvgl.workspace = true
-lvgl-ui.workspace = true
+rs_lvgl.workspace = true
+rs_lvgl_ui.workspace = true
 lua-engine = { path = "../lua-engine" }
 fs = { path = "../fs" }
 

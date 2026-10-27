@@ -28,7 +28,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
 use critical_section::Mutex;
-use lvgl::sys;
+use rs_lvgl::sys;
 
 use crate::drivers::geometry::{DirtyRect, HEIGHT, WIDTH};
 use crate::drivers::memory::PixelMemory;

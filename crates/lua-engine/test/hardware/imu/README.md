@@ -1,6 +1,6 @@
 # Lua IMU 模块
 
-> 上游 esp-claw API 资料的本地中文译文。此处包含上游外接硬件能力；ESP-Mosaico 使用板载快照适配，实际支持范围以 [Lua 硬件接口指南](../../../../../../docs/guides/lua-hardware.md) 为准。上游驱动不参与本项目构建。
+> 上游 esp-claw API 资料的本地中文译文。此处包含上游外接硬件能力；ESP-Mosaico 使用板载快照适配，实际支持范围以 [Lua 硬件接口指南](../../../../../docs/guides/lua-hardware.md) 为准。上游驱动不参与本项目构建。
 
 `imu` 读取受支持 IMU 的原始加速度、角速度、温度和中断状态。上游可用芯片包括 BMI270、ICM42670、MPU6050，取决于固件配置。
 

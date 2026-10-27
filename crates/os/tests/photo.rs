@@ -1,8 +1,8 @@
 //! Run the repository Photo app against real LVGL, native pointer input and
 //! actual image decoders. Host libc files are mirrored into LittleFS for D: BIN.
 use lua_engine::{Host, Limits, RawAllocator, Request, Step, Vm};
-use lvgl::{sys, Display};
 use os::lua_lvgl::LuaLvglService;
+use rs_lvgl::{sys, Display};
 use std::{
     alloc::Layout,
     cell::RefCell,
@@ -71,7 +71,7 @@ impl Harness {
     fn run(&mut self, ms: u32) {
         for _ in 0..ms.div_ceil(10) {
             NOW.fetch_add(10_000, Ordering::Relaxed);
-            lvgl::tick_inc(Duration::from_millis(10));
+            rs_lvgl::tick_inc(Duration::from_millis(10));
             unsafe {
                 sys::lv_timer_handler();
             }
@@ -239,8 +239,7 @@ fn populate(root: &Path, fixtures: &Path) {
 fn photo_navigation_deletion_and_cleanup() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let source = fs::read(workspace.join("apps/tools/photo/scripts/main.lua")).unwrap();
-    let fixtures =
-        fs::canonicalize(workspace.join("crates/lua-engine/testdata/n5-images")).unwrap();
+    let fixtures = fs::canonicalize(workspace.join("crates/lua-engine/test/images")).unwrap();
     let out = std::env::temp_dir().join(format!(
         "photo-test-{}-{}",
         std::process::id(),
@@ -254,9 +253,9 @@ fn photo_navigation_deletion_and_cleanup() {
     let data = out.join("photo-data");
     populate(&data, &fixtures);
     unsafe {
-        lvgl::deinit();
+        rs_lvgl::deinit();
     }
-    lvgl::init();
+    rs_lvgl::init();
     let pixels = Rc::new(RefCell::new(vec![0u8; 480 * 480 * 3]));
     let flush = Rc::clone(&pixels);
     let display = Display::register::<_, { 480 * 48 }>(480, 480, move |region| {

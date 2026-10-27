@@ -5,18 +5,18 @@ resolver = "2"
 exclude = ["vendor/embassy-usb-synopsys-otg"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["umbrella22", "Claude", "GLM"]
 
 [workspace.dependencies]
-# Published LVGL bindings; keep the existing crate aliases for consumers.
+# Published LVGL bindings, used directly by their package names.
 # Upgrade both packages together; Cargo.lock records the resolved versions.
-lvgl = { package = "rs_lvgl", version = "0.2.0", default-features = false, features = [
+rs_lvgl = { version = "0.2.0", default-features = false, features = [
     "alloc",
     "unsafe_no_autoinit",
 ] }
-lvgl-ui = { package = "rs_lvgl_ui", version = "0.2.0", default-features = false, features = [
+rs_lvgl_ui = { version = "0.2.0", default-features = false, features = [
     "alloc",
     "no-autoinit",
     # Native hub controls, Lua images/dialogs and the fox/splash canvases.

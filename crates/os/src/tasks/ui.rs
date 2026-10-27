@@ -59,8 +59,6 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Instant, Timer};
 use log::{info, warn};
-use lvgl::sys;
-use lvgl_ui::Ui;
 use os::behavior::affect::HapticPattern;
 use os::behavior::personality::PointerSample;
 use os::behavior::{Expression, Runtime};
@@ -73,6 +71,8 @@ use os::telemetry::{display as display_stats, latency};
 use os::ui::fox_widget::{self, FoxControl};
 use os::ui::splash::SplashControl;
 use os::ui::{theme, AppMsg, MosaicoApp, Screen, SHOW_SPLASH};
+use rs_lvgl::sys;
+use rs_lvgl_ui::Ui;
 
 use super::{
     apps, buttons, haptic,
@@ -250,7 +250,7 @@ unsafe extern "C" fn tick_ms() -> u32 {
 
 #[embassy_executor::task]
 pub async fn ui_task(mut plane: PlaneUi) {
-    lvgl::init();
+    rs_lvgl::init();
     unsafe { sys::lv_tick_set_cb(Some(tick_ms)) };
 
     // The fox never renders through LVGL; hub pages do (see the module docs).
@@ -261,7 +261,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
     // also runs on the host, so the firmware installs the device clock here.
     fox_widget::install_mono_us(latency::now_us);
 
-    let display = lvgl::Display::default();
+    let display = rs_lvgl::Display::default();
     let mut ui = Ui::new(&display, theme()).expect("LVGL UI creation failed");
     let control = FoxControl::new(Expression::Idle);
     // Must precede the mount: the widget hides its native canvas and leaves

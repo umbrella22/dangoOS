@@ -1,6 +1,6 @@
 # Lua 灯带模块
 
-> 上游 esp-claw API 资料的本地中文译文。此处包含上游外接硬件能力；ESP-Mosaico 使用板载快照适配，实际支持范围以 [Lua 硬件接口指南](../../../../../../docs/guides/lua-hardware.md) 为准。上游驱动不参与本项目构建。
+> 上游 esp-claw API 资料的本地中文译文。此处包含上游外接硬件能力；ESP-Mosaico 使用板载快照适配，实际支持范围以 [Lua 硬件接口指南](../../../../../docs/guides/lua-hardware.md) 为准。上游驱动不参与本项目构建。
 
 `led_strip` 提供 WS2812 等灯带的像素设置和刷新接口。
 

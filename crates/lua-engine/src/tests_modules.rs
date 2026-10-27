@@ -207,7 +207,7 @@ fn display_contract_passes() {
     let before = platform_bytes();
     let mut vm = vm();
     vm.set_args_json(r#"{"cycles": 20}"#).unwrap();
-    let src = include_str!("../vendor/esp-claw/lua_module_display/test/display_contract.lua");
+    let src = include_str!("../test/display/display_contract.lua");
     vm.load("display_contract.lua", src.as_bytes()).unwrap();
     let out = drive(&mut vm, u32::MAX);
     let s = screen(&mut vm);
@@ -586,7 +586,7 @@ fn hardware_probe_draws_unavailable_hardware_without_output_side_effects() {
 #[test]
 fn image_png_jpeg_frames_resize_release_and_caps() {
     let mut vm = vm();
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/n5-images");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test/images");
     let source = alloc::format!(
         r#"
         local image=require('image')
@@ -633,7 +633,7 @@ fn image_png_jpeg_frames_resize_release_and_caps() {
 #[test]
 fn identity_bilinear_resize_matches_conversion_and_nearest() {
     let mut vm = vm();
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/n5-images");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test/images");
     let source = alloc::format!(
         r#"
         local image=require('image')
@@ -665,15 +665,15 @@ fn tiled_bilinear_matches_original_c_formula() {
     // compiler and -O2 as build.rs. A Lua arithmetic oracle is insufficient:
     // C may contract multiply/add operations inside its interpolation expression.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dir = root.join("testdata/n5-images");
-    let scratch = std::env::temp_dir().join(alloc::format!("n5-resize-{}", std::process::id()));
+    let dir = root.join("test/images");
+    let scratch = std::env::temp_dir().join(alloc::format!("lua-resize-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).unwrap();
     let records = scratch.join("cases.bin");
     let executable = scratch.join("original-resize-oracle");
     let compiler = std::env::var("CC").unwrap_or_else(|_| "cc".into());
     let compiled = std::process::Command::new(compiler)
         .args(["-std=gnu11", "-O2"])
-        .arg(root.join("testdata/n5-resize-oracle.c"))
+        .arg(root.join("test/resize/oracle.c"))
         .arg("-o")
         .arg(&executable)
         .output()
@@ -728,14 +728,12 @@ end
 #[test]
 fn integer_bilinear_counterexample_search() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let executable = std::env::temp_dir().join(alloc::format!(
-        "n5-integer-resize-stress-{}",
-        std::process::id()
-    ));
+    let executable =
+        std::env::temp_dir().join(alloc::format!("lua-resize-stress-{}", std::process::id()));
     let compiler = std::env::var("CC").unwrap_or_else(|_| "cc".into());
     let compiled = std::process::Command::new(compiler)
         .args(["-std=gnu11", "-O2"])
-        .arg(root.join("testdata/n5-resize-stress.c"))
+        .arg(root.join("test/resize/stress.c"))
         .arg("-o")
         .arg(&executable)
         .output()
@@ -760,7 +758,7 @@ fn integer_bilinear_counterexample_search() {
 
 #[test]
 fn independent_workers_upstream_thread_contract() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/n5-thread");
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test/threads");
     for case in [
         "api",
         "run_args",
@@ -817,7 +815,7 @@ fn independent_workers_upstream_thread_contract() {
 
 #[test]
 fn workers_are_isolated_bounded_and_parent_interrupt_releases_group() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/n5-thread");
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test/threads");
     let path = base.join("hostile_worker.lua");
     let mut vm = vm();
     vm.set_args_json(&serde_json::json!({"path":path.to_str().unwrap()}).to_string())

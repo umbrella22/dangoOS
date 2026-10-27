@@ -9,7 +9,7 @@
 | `tools/app-pack/src/tests.rs` | `cargo test -p app-pack --offline` | 完整应用集、system 镜像、更新覆盖与卸载回退 |
 
 `tests/host/support.py` 提供共享的 USB 模拟与 CLI 加载辅助。
-引擎图像和线程样本留在 `crates/lua-engine/testdata`，作为对应组件的测试输入。
+引擎的图像、缩放、线程、显示和硬件测试资料统一放在 [crates/lua-engine/test](../crates/lua-engine/test/README.md)，其中 `reference/` 保存仅供接口对照的上游资料。
 正式应用、开发示例与设备探针分别位于 `apps`、`examples/apps`、`tests/device/apps`。
 
 统一离线检查入口为 `scripts/check.sh`。设备探针的完成日志与真实硬件验收分别记录，

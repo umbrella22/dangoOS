@@ -15,3 +15,6 @@ PNG 透明像素与黑色背景合成，通道计算公式为 `(channel * alpha 
 cargo test -p lua-engine --offline
 cargo test -p os --test photo --offline
 ```
+
+`red_blue_16x8.jpg` 是使用 Pillow 生成的 16×8 红蓝分区 JPEG，由 `src/jpeg.rs` 的单元
+测试验证颜色方向和截断输入处理。其余样本的来源记录覆盖范围以对应 JSON 的文件清单为准。

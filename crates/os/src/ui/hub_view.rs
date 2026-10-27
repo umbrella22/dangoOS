@@ -14,7 +14,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use lvgl_ui::{
+use rs_lvgl_ui::{
     symbol, Align, Color, FlexAlign, Font, GridTrack, ImageSource, Key, Part, Size, State, Style,
     TextAlign, View,
 };
@@ -29,7 +29,7 @@ use crate::hub::{AppId, Hub, Settings};
 
 /// Design tokens.
 pub mod tokens {
-    use lvgl_ui::Color;
+    use rs_lvgl_ui::Color;
 
     pub const BG: Color = Color::rgb(0x00, 0x00, 0x00);
     pub const CARD: Color = Color::rgb(0x18, 0x18, 0x19);
@@ -67,16 +67,16 @@ fn font_digits() -> Font {
 }
 fn font_icon() -> Font {
     // SAFETY: a static LVGL font enabled by the vendored configuration.
-    unsafe { Font::from_raw(core::ptr::addr_of!(lvgl::sys::lv_font_montserrat_48)) }
+    unsafe { Font::from_raw(core::ptr::addr_of!(rs_lvgl::sys::lv_font_montserrat_48)) }
 }
 
 fn text(content: impl Into<String>, font: Font, color: Color) -> View<AppMsg> {
-    lvgl_ui::label(content).style(Style::neutral().font(font).fg(color))
+    rs_lvgl_ui::label(content).style(Style::neutral().font(font).fg(color))
 }
 
 /// A full-screen page: black field, centred title, home indicator.
 fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -> View<AppMsg> {
-    lvgl_ui::obj()
+    rs_lvgl_ui::obj()
         .key(Key::Named(key))
         .scrollable(false)
         .style(
@@ -96,7 +96,7 @@ fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -> View<AppM
 
 /// The pill at the bottom edge: "swipe up from here".
 fn home_indicator() -> View<AppMsg> {
-    lvgl_ui::obj().key(Key::Named("home-pill")).style(
+    rs_lvgl_ui::obj().key(Key::Named("home-pill")).style(
         Style::neutral()
             .bg(WEAK)
             .radius(3)
@@ -109,7 +109,7 @@ fn home_indicator() -> View<AppMsg> {
 
 /// The content column under the title.
 fn content(key: &'static str) -> View<AppMsg> {
-    lvgl_ui::column([])
+    rs_lvgl_ui::column([])
         .key(Key::Named(key))
         .scrollable(false)
         .style(
@@ -128,7 +128,7 @@ fn card() -> Style {
 
 /// A 68 px row: label on the left, `trailing` on the right.
 fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>) -> View<AppMsg> {
-    lvgl_ui::row([])
+    rs_lvgl_ui::row([])
         .key(Key::Named(key))
         .scrollable(false)
         .style(
@@ -144,7 +144,7 @@ fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>) -> View<A
 }
 
 fn switch(key: &'static str, on: bool, msg: fn(bool) -> AppMsg) -> View<AppMsg> {
-    lvgl_ui::switch(on)
+    rs_lvgl_ui::switch(on)
         .key(Key::Named(key))
         .style(
             Style::default()
@@ -216,7 +216,7 @@ fn tile(
     dim: bool,
     identity: Option<crate::hub::uninstall::Identity>,
 ) -> View<AppMsg> {
-    let square = lvgl_ui::obj()
+    let square = rs_lvgl_ui::obj()
         .key(Key::Named("icon"))
         .scrollable(false)
         // Plain objects are clickable by default; the tap must land on the
@@ -227,7 +227,7 @@ fn tile(
         TileFace::Letter(letter, color) => (color, text(letter, font_30(), TEXT)),
         TileFace::Icon(icon) => (
             BG,
-            lvgl_ui::image(ImageSource::Rgb565 {
+            rs_lvgl_ui::image(ImageSource::Rgb565 {
                 width: icon.width,
                 height: icon.height,
                 data: icon.rgb565,
@@ -249,16 +249,18 @@ fn tile(
                 .key(Key::Named("glyph"))
                 .style(Style::default().align(Align::Center)),
         );
-    lvgl_ui::column([])
+    rs_lvgl_ui::column([])
         .key(key)
         .scrollable(false)
         .clickable(true)
         .on_event(move |event| match event {
-            lvgl_ui::Event::ShortClicked => {
+            rs_lvgl_ui::Event::ShortClicked => {
                 Some(identity.map(AppMsg::OpenLua).unwrap_or(AppMsg::Open(app)))
             }
-            lvgl_ui::Event::LongPressed => identity.map(AppMsg::ManageAsk),
-            lvgl_ui::Event::PressLost | lvgl_ui::Event::ScrollBegin => Some(AppMsg::ManageCancel),
+            rs_lvgl_ui::Event::LongPressed => identity.map(AppMsg::ManageAsk),
+            rs_lvgl_ui::Event::PressLost | rs_lvgl_ui::Event::ScrollBegin => {
+                Some(AppMsg::ManageCancel)
+            }
             _ => None,
         })
         .style(
@@ -352,7 +354,7 @@ pub fn launcher(registry: &Registry) -> View<AppMsg> {
     let mut tiles = tiles.into_iter();
     for r in 0..row_count {
         rows.push(
-            lvgl_ui::row([])
+            rs_lvgl_ui::row([])
                 .key(Key::Id(r as u64))
                 .scrollable(false)
                 .style(
@@ -364,7 +366,7 @@ pub fn launcher(registry: &Registry) -> View<AppMsg> {
                 .children(tiles.by_ref().take(TILES_PER_ROW)),
         );
     }
-    let grid = lvgl_ui::column([]).key(Key::Named("tiles"));
+    let grid = rs_lvgl_ui::column([]).key(Key::Named("tiles"));
     let grid = if row_count <= FIXED_ROWS {
         grid.scrollable(false).style(
             Style::neutral()
@@ -387,7 +389,7 @@ pub fn launcher(registry: &Registry) -> View<AppMsg> {
         )
     };
 
-    lvgl_ui::obj()
+    rs_lvgl_ui::obj()
         .key(Key::Named("launcher"))
         .scrollable(false)
         .style(
@@ -431,7 +433,7 @@ pub fn lua_app(entry: Option<&AppEntry>) -> View<AppMsg> {
             String::from("应用已移除"),
         ),
     };
-    lvgl_ui::obj()
+    rs_lvgl_ui::obj()
         .key(key)
         .scrollable(false)
         .style(
@@ -457,7 +459,7 @@ pub fn lua_app(entry: Option<&AppEntry>) -> View<AppMsg> {
 
 /// Settings: brightness, lights, haptics, about.
 pub fn settings(settings: &Settings, uptime_s: u64, free_kib: u32) -> View<AppMsg> {
-    let brightness = lvgl_ui::column([])
+    let brightness = rs_lvgl_ui::column([])
         .key(Key::Named("brightness"))
         .scrollable(false)
         .style(
@@ -467,7 +469,7 @@ pub fn settings(settings: &Settings, uptime_s: u64, free_kib: u32) -> View<AppMs
                 .gap(18),
         )
         .child(
-            lvgl_ui::row([])
+            rs_lvgl_ui::row([])
                 .key(Key::Named("head"))
                 .scrollable(false)
                 .style(
@@ -483,7 +485,7 @@ pub fn settings(settings: &Settings, uptime_s: u64, free_kib: u32) -> View<AppMs
                 ),
         )
         .child(
-            lvgl_ui::slider(
+            rs_lvgl_ui::slider(
                 Settings::MIN_BRIGHTNESS as i32,
                 100,
                 settings.brightness as i32,
@@ -544,7 +546,7 @@ fn sensor_card(
     lines: [String; 2],
     bar: Option<(u8, Color)>,
 ) -> View<AppMsg> {
-    let mut card_node = lvgl_ui::column([])
+    let mut card_node = rs_lvgl_ui::column([])
         .key(Key::Named(key))
         .scrollable(false)
         .style(
@@ -564,7 +566,7 @@ fn sensor_card(
     match bar {
         Some((value, color)) => {
             card_node = card_node.child(
-                lvgl_ui::bar(0, 100, value as i32)
+                rs_lvgl_ui::bar(0, 100, value as i32)
                     .key(Key::Named("bar"))
                     .style(
                         Style::default()
@@ -645,7 +647,7 @@ pub fn sensors(snapshot: &SystemSnapshot) -> View<AppMsg> {
             None,
         ),
     ];
-    let grid = lvgl_ui::grid(
+    let grid = rs_lvgl_ui::grid(
         [GridTrack::Px(196), GridTrack::Px(196)],
         [
             GridTrack::Px(SENSOR_CARD_H),
@@ -674,7 +676,7 @@ pub fn sensors(snapshot: &SystemSnapshot) -> View<AppMsg> {
 // ------------------------------------------------------------------- timer
 
 fn chip(index: usize, minutes: u32, selected: bool, enabled: bool) -> View<AppMsg> {
-    let mut node = lvgl_ui::obj()
+    let mut node = rs_lvgl_ui::obj()
         .key(Key::Id(index as u64))
         .scrollable(false)
         .clickable(enabled)
@@ -698,7 +700,7 @@ fn chip(index: usize, minutes: u32, selected: bool, enabled: bool) -> View<AppMs
 }
 
 fn pill_button(key: &'static str, label: &'static str, color: Color, msg: AppMsg) -> View<AppMsg> {
-    lvgl_ui::obj()
+    rs_lvgl_ui::obj()
         .key(Key::Named(key))
         .scrollable(false)
         .clickable(true)
@@ -732,7 +734,7 @@ pub fn timer(hub: &Hub) -> View<AppMsg> {
     let editable = matches!(phase, Phase::Ready | Phase::Done);
 
     let permille = countdown.remaining_permille(now).min(1000) as i32;
-    let ring = lvgl_ui::obj()
+    let ring = rs_lvgl_ui::obj()
         .key(Key::Named("ring"))
         .scrollable(false)
         .style(
@@ -743,7 +745,7 @@ pub fn timer(hub: &Hub) -> View<AppMsg> {
                 .offset(0, 80),
         )
         .child(
-            lvgl_ui::arc(0, 1000, permille)
+            rs_lvgl_ui::arc(0, 1000, permille)
                 .key(Key::Named("arc"))
                 .clickable(false)
                 .style(
@@ -760,7 +762,7 @@ pub fn timer(hub: &Hub) -> View<AppMsg> {
                 .part_style(Part::Knob, Style::default().bg_opacity(0).pad(0)),
         )
         .child(
-            lvgl_ui::column([])
+            rs_lvgl_ui::column([])
                 .key(Key::Named("face"))
                 .scrollable(false)
                 .style(
@@ -778,7 +780,7 @@ pub fn timer(hub: &Hub) -> View<AppMsg> {
                 .child(text(status, font_20(), MUTED).key(Key::Named("status"))),
         );
 
-    let chips = lvgl_ui::row([])
+    let chips = rs_lvgl_ui::row([])
         .key(Key::Named("presets"))
         .scrollable(false)
         .style(
@@ -796,7 +798,7 @@ pub fn timer(hub: &Hub) -> View<AppMsg> {
                 .map(|(i, &m)| chip(i, m, i == countdown.preset(), editable)),
         );
 
-    let controls = lvgl_ui::row([])
+    let controls = rs_lvgl_ui::row([])
         .key(Key::Named("controls"))
         .scrollable(false)
         .style(
@@ -810,7 +812,7 @@ pub fn timer(hub: &Hub) -> View<AppMsg> {
         .child(pill_button("primary", primary, ACCENT, AppMsg::TimerToggle))
         .child(pill_button("reset", "重置", CARD_HI, AppMsg::TimerReset));
 
-    lvgl_ui::obj()
+    rs_lvgl_ui::obj()
         .key(Key::Named(AppId::Timer.key()))
         .scrollable(false)
         .style(
@@ -860,7 +862,7 @@ pub fn launcher_managed(
         } else {
             alloc::format!("清除 {name} 数据？\n出厂应用将保留。")
         };
-        let dialog = lvgl_ui::column([])
+        let dialog = rs_lvgl_ui::column([])
             .key(Key::Named("manage-dialog"))
             .clickable(true)
             .scrollable(false)
@@ -873,7 +875,7 @@ pub fn launcher_managed(
             )
             .child(text(prompt, font_24(), TEXT).style(Style::default().width(Size::Px(320))))
             .child(
-                lvgl_ui::obj()
+                rs_lvgl_ui::obj()
                     .clickable(true)
                     .scrollable(false)
                     .style(card().width(Size::Px(300)).height(Size::Px(56)))
@@ -886,7 +888,7 @@ pub fn launcher_managed(
                     ),
             )
             .child(
-                lvgl_ui::obj()
+                rs_lvgl_ui::obj()
                     .clickable(true)
                     .scrollable(false)
                     .style(card().width(Size::Px(300)).height(Size::Px(56)))
@@ -899,7 +901,7 @@ pub fn launcher_managed(
                     ),
             );
         root = root.child(
-            lvgl_ui::obj()
+            rs_lvgl_ui::obj()
                 .key(Key::Named("manage-overlay"))
                 .clickable(true)
                 .scrollable(false)

@@ -32,7 +32,7 @@ use alloc::rc::Rc;
 use alloc::string::String;
 use core::cell::Cell;
 
-use lvgl_ui::{App, Color, Key, Style, Theme, View};
+use rs_lvgl_ui::{App, Color, Key, Style, Theme, View};
 
 use crate::behavior::Expression;
 use crate::fox::entrance;
@@ -346,11 +346,11 @@ impl App for MosaicoApp {
         match self.screen.get() {
             // The splash has no touch target: the wordmark and the drop must
             // play out on their own, so a finger on the glass changes nothing.
-            Screen::Splash => lvgl_ui::obj()
+            Screen::Splash => rs_lvgl_ui::obj()
                 .key(Key::Named("splash-root"))
                 .style(Style::screen(theme))
                 .child(
-                    lvgl_ui::custom(SplashWidget::new(Rc::clone(&self.splash)))
+                    rs_lvgl_ui::custom(SplashWidget::new(Rc::clone(&self.splash)))
                         .key(Key::Named("splash-widget")),
                 ),
             Screen::Fox => match self.hub.page {
@@ -369,11 +369,11 @@ impl App for MosaicoApp {
 
 impl MosaicoApp {
     fn fox_view(&self, theme: &Theme) -> View<AppMsg> {
-        lvgl_ui::obj()
+        rs_lvgl_ui::obj()
             .key(Key::Named("fox-root"))
             .style(Style::screen(theme))
             .child(
-                lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)))
+                rs_lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)))
                     .key(Key::Named("fox-widget")),
             )
     }
@@ -389,7 +389,7 @@ pub fn theme() -> Theme {
 
 #[cfg(test)]
 mod tests {
-    use lvgl::Display;
+    use rs_lvgl::Display;
 
     use super::*;
     use crate::test_support;
@@ -399,11 +399,11 @@ mod tests {
         let _guard = test_support::lock();
 
         // SAFETY: the test lock is the only LVGL user in this test binary.
-        unsafe { lvgl::deinit() };
-        lvgl::init();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
         let display = Display::register::<_, { 64 * 64 }>(64, 64, |_| {}).expect("memory display");
 
-        let mut ui = lvgl_ui::Ui::new(&display, theme()).expect("Ui::new");
+        let mut ui = rs_lvgl_ui::Ui::new(&display, theme()).expect("Ui::new");
         let control = FoxControl::new(Expression::Idle);
         let splash = SplashControl::new();
         let mut app = MosaicoApp::new(Rc::clone(&control), Rc::clone(&splash));
@@ -454,7 +454,7 @@ mod tests {
         // SAFETY: the UI is unmounted; no LVGL object for this display remains.
         unsafe { display.delete() };
         // SAFETY: the display is gone and this test is the last LVGL user.
-        unsafe { lvgl::deinit() };
+        unsafe { rs_lvgl::deinit() };
     }
 
     #[test]
@@ -491,30 +491,30 @@ mod tests {
     static TOUCH_DOWN: AtomicBool = AtomicBool::new(false);
 
     unsafe extern "C" fn read_touch(
-        _indev: *mut lvgl::sys::lv_indev_t,
-        data: *mut lvgl::sys::lv_indev_data_t,
+        _indev: *mut rs_lvgl::sys::lv_indev_t,
+        data: *mut rs_lvgl::sys::lv_indev_data_t,
     ) {
         let data = unsafe { &mut *data };
         data.point.x = TOUCH_X.load(Ordering::Relaxed);
         data.point.y = TOUCH_Y.load(Ordering::Relaxed);
         data.state = if TOUCH_DOWN.load(Ordering::Relaxed) {
-            lvgl::sys::lv_indev_state_t_LV_INDEV_STATE_PRESSED
+            rs_lvgl::sys::lv_indev_state_t_LV_INDEV_STATE_PRESSED
         } else {
-            lvgl::sys::lv_indev_state_t_LV_INDEV_STATE_RELEASED
+            rs_lvgl::sys::lv_indev_state_t_LV_INDEV_STATE_RELEASED
         };
     }
 
-    fn run(ui: &mut lvgl_ui::Ui<AppMsg>, app: &mut MosaicoApp, ms: u32) {
+    fn run(ui: &mut rs_lvgl_ui::Ui<AppMsg>, app: &mut MosaicoApp, ms: u32) {
         let mut t = 0;
         while t < ms {
-            lvgl::tick_inc(core::time::Duration::from_millis(10));
+            rs_lvgl::tick_inc(core::time::Duration::from_millis(10));
             ui.timer_handler();
             ui.drain(app, 16).expect("drain");
             t += 10;
         }
     }
 
-    fn tap(ui: &mut lvgl_ui::Ui<AppMsg>, app: &mut MosaicoApp, x: i32, y: i32) {
+    fn tap(ui: &mut rs_lvgl_ui::Ui<AppMsg>, app: &mut MosaicoApp, x: i32, y: i32) {
         TOUCH_X.store(x, Ordering::Relaxed);
         TOUCH_Y.store(y, Ordering::Relaxed);
         TOUCH_DOWN.store(true, Ordering::Relaxed);
@@ -527,19 +527,22 @@ mod tests {
     fn a_tap_anywhere_on_a_launcher_tile_opens_its_app() {
         let _guard = test_support::lock();
         // SAFETY: the test lock is the only LVGL user in this test binary.
-        unsafe { lvgl::deinit() };
-        lvgl::init();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
         let display =
             Display::register::<_, { 480 * 48 }>(480, 480, |_| {}).expect("memory display");
         // SAFETY: LVGL is initialized and only this thread uses it.
         let indev = unsafe {
-            let indev = lvgl::sys::lv_indev_create();
-            lvgl::sys::lv_indev_set_type(indev, lvgl::sys::lv_indev_type_t_LV_INDEV_TYPE_POINTER);
-            lvgl::sys::lv_indev_set_read_cb(indev, Some(read_touch));
+            let indev = rs_lvgl::sys::lv_indev_create();
+            rs_lvgl::sys::lv_indev_set_type(
+                indev,
+                rs_lvgl::sys::lv_indev_type_t_LV_INDEV_TYPE_POINTER,
+            );
+            rs_lvgl::sys::lv_indev_set_read_cb(indev, Some(read_touch));
             indev
         };
 
-        let mut ui = lvgl_ui::Ui::new(&display, theme()).expect("Ui::new");
+        let mut ui = rs_lvgl_ui::Ui::new(&display, theme()).expect("Ui::new");
         let control = FoxControl::new(Expression::Idle);
         let splash = SplashControl::new();
         let mut app = MosaicoApp::new(Rc::clone(&control), Rc::clone(&splash));
@@ -646,9 +649,9 @@ mod tests {
         drop(ui);
         // SAFETY: nothing references the input device or the display anymore.
         unsafe {
-            lvgl::sys::lv_indev_delete(indev);
+            rs_lvgl::sys::lv_indev_delete(indev);
             display.delete();
-            lvgl::deinit();
+            rs_lvgl::deinit();
         }
     }
 }
