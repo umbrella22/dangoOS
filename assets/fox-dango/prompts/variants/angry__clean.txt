@@ -1,2 +1,0 @@
-# edit of source/angry.png
-Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Remove only the red cross-shaped anger mark; draw the silver hair that is behind it. Nothing else changes.

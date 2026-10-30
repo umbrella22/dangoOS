@@ -4,7 +4,7 @@
 
 团子会对轻点、抚摸、晃动和周围环境作出反应，也会用表情告诉你正在充电、连接网络或播放音乐。从底部上滑打开应用，再次上滑回到团子；从左边缘右滑返回上一级。
 
-[下载固件](https://github.com/umbrella22/dangoOS/releases) · [内置应用](apps/README.md) · [安装与发布](scripts/release/README.md)
+[下载固件](https://github.com/umbrella22/dangoOS/releases) · [内置应用](apps/README.md) · [安装与发布](scripts/release/README.md) · [更新日志](CHANGELOG.md)
 
 ## 四个团子，随时切换
 

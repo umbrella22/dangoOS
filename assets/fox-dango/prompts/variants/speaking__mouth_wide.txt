@@ -1,2 +1,0 @@
-# edit of source/speaking.png
-Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Change only the mouth: it is opened wider into a rounded 'ah' shape showing the tongue, as when saying a vowel. Nothing else changes. Do not add any text or new elements.

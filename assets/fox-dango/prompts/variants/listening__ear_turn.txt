@@ -1,2 +1,0 @@
-# edit of source/listening.png
-Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Change only the ear on the viewer's right: it turns slightly sideways and tilts outward as if catching a sound. The other ear stays exactly the same. Nothing else changes. Do not add any text or new elements.

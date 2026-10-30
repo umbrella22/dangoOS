@@ -1,2 +1,0 @@
-# edit of source/peering.png
-Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Change only the eyes: both eyes are closed in a natural mid-blink, drawn as closed eyelid lines with the same dark red lashes, in exactly the same place and at the same angle as the open eyes. Nothing else changes. Do not add any text or new elements.

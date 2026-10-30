@@ -1,2 +1,0 @@
-# edit of source/peering.png
-Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Change only the pupils and highlights: the big dark dilated pupils look toward the viewer's left; the eye outlines, lashes and iris colors stay the same. Nothing else changes. Do not add any text or new elements.

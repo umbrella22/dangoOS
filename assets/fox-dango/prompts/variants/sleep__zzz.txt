@@ -1,2 +1,0 @@
-# edit of source/sleep.png
-Keep this image exactly identical: same character, pose, position, size, hair, ears, paws, colors, outlines and pure black background, pixel for pixel. Add only three small pale blue-grey letter Z shapes floating up to the upper right of the head, growing from small to larger, in the same flat cel-shaded style with dark outlines, over the black background, not touching the character. Nothing else changes.
