@@ -9,6 +9,25 @@
     scripts/device/console.py brain-push <script.lua> | brain-reload | brain-default | brain-status
     scripts/device/console.py photo-push <image> [--name subdir/name.jpg] [--run]
     scripts/device/console.py ota <firmware.bin> | ota-status | ota-abort
+    scripts/device/console.py update-status | update-check | update-install | update-cancel
+    scripts/device/console.py update-url <https-manifest-url>  # explicit development install
+    scripts/device/console.py nand-info | power-status | screen-on
+    scripts/device/console.py nand-read <page>
+    scripts/device/console.py nand-status | nand-format
+    scripts/device/console.py nand-test <write|verify|cleanup>
+    scripts/device/console.py nand-bench <write|read|cleanup>
+    scripts/device/console.py wifi-status | wifi-on | wifi-scan | wifi-disconnect | wifi-off
+    scripts/device/console.py wifi-connect <SSID>  # WPA2, local password prompt
+    scripts/device/console.py wifi-probe <host> [--tcp-port 80]  # HTTP diagnostic
+    scripts/device/console.py bt-status | bt-on | bt-off
+    scripts/device/console.py audio-status | audio-stop
+    scripts/device/console.py audio-volume <0..100> | audio-mute <0|1>
+    scripts/device/console.py audio-tone <100..4000> [--duration-ms 1000]
+    scripts/device/console.py audio-play </data/file.wav>
+    scripts/device/console.py audio-record </data/file.wav> [--duration-ms 1000]
+    scripts/device/console.py audio-loopback </data/file.wav>
+    scripts/device/console.py screen-off <seconds:1..60>
+    scripts/device/console.py imu-irq <off|int1|int2> | imu-irq-status
 
 <app-dir> holds launcher.json and the files it names; everything except
 dotfiles is sent. The firmware stages the files, swaps them in as
@@ -21,12 +40,15 @@ so close any other monitor first.
 
 import argparse
 import glob
+import getpass
+import ipaddress
 import json
 import os
 import re
 import sys
 import time
 import zlib
+from urllib.parse import urlsplit
 
 try:
     import serial
@@ -85,7 +107,7 @@ class Device:
         for line in self.lines(time.monotonic() + timeout):
             if line.startswith("@ok") or line.startswith("@err"):
                 return line
-            if self.echo or line.startswith("@ota-slot "):
+            if self.echo or line.startswith(("@ota-slot ", "@power-wake ", "@power-panel ", "@nand-bench ", "@wifi-ap ")):
                 print(line)
         raise SystemExit("no reply from the device (is the port right, is the firmware new enough?)")
 
@@ -99,8 +121,11 @@ class Device:
     def write_all(self, data):
         offset = 0
         while offset < len(data):
-            written = self.ser.write(data[offset:])
-            if not isinstance(written, int) or not 0 < written <= len(data) - offset:
+            # NAND file writes apply USB backpressure. Bound each OS write so
+            # its timeout measures one chunk rather than an entire skin.
+            chunk = data[offset:offset + 4096]
+            written = self.ser.write(chunk)
+            if not isinstance(written, int) or not 0 < written <= len(chunk):
                 raise OSError("serial write made no progress")
             offset += written
 
@@ -155,7 +180,7 @@ def push(dev, root, run):
                 data = f.read()
             dev.command(f"file {rel} {len(data)} {zlib.crc32(data):08x}")
             if data:
-                dev.ser.write(data)
+                dev.write_all(data)
                 line = dev.reply(timeout=30.0)
                 if not line.startswith("@ok"):
                     raise SystemExit(f"{rel}: {line}")
@@ -185,7 +210,7 @@ def push_skin(dev, root, select):
                 data = f.read()
             dev.command(f"file {rel} {len(data)} {zlib.crc32(data):08x}")
             if data:
-                dev.ser.write(data)
+                dev.write_all(data)
                 line = dev.reply(timeout=30.0)
                 if not line.startswith("@ok"):
                     raise SystemExit(f"{rel}: {line}")
@@ -297,7 +322,7 @@ def push_ota(dev, data, info):
     begun = False
     ending = False
     try:
-        line = dev.command(f"ota-begin {len(data)} {info['sha256']}", timeout=30.0)
+        line = dev.command(f"ota-begin {len(data)} {info['sha256']}", timeout=60.0)
         begun = True
         match = re.fullmatch(r"@ok ota-begin ([01]) ([01])", line)
         if not match or match[1] == match[2]:
@@ -328,9 +353,86 @@ def push_ota(dev, data, info):
     print("Reboot requested. After reconnection, ota-status must report Valid after the 30-second self-test.")
 
 
+def response_fields(text):
+    return dict(word.split("=", 1) for word in text.split() if "=" in word)
+
+
+def screen_off(dev, seconds):
+    """Keep CDC connected for the bounded lease and always request restoration."""
+    try:
+        print(dev.command(f"screen-off {seconds}", timeout=10.0))
+        deadline = time.monotonic() + seconds + 3.0
+        last_state = None
+        while time.monotonic() < deadline:
+            status = dev.command("power-status")
+            state = response_fields(status).get("state")
+            if state != last_state:
+                print(status)
+                last_state = state
+            if state == "active":
+                return
+            if state == "fault":
+                raise SystemExit("Panel restore failed; inspect power-status and retry screen-on.")
+            time.sleep(0.2)
+        raise SystemExit("Screen standby lease exceeded; requesting screen-on.")
+    finally:
+        # Also runs on Ctrl-C. The firmware separately restores on disconnect.
+        print(dev.command("screen-on", timeout=10.0))
+
+
+def configure_imu_irq(dev, route):
+    request = dev.command(f"imu-irq {route}")
+    print(request)
+    revision = response_fields(request).get("rev")
+    if revision is None:
+        raise SystemExit("IMU request has no revision; configuration is unconfirmed.")
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        status = dev.command("imu-irq-status")
+        fields = response_fields(status)
+        wanted, _, applied = fields.get("rev", "").partition("/")
+        if wanted != revision:
+            raise SystemExit("IMU request was superseded; inspect imu-irq-status.")
+        if applied == revision:
+            print(status)
+            if fields.get("applied") != str({"off": 0, "int1": 1, "int2": 2}[route]):
+                raise SystemExit("IMU interrupt configuration failed; polling fallback remains active.")
+            return
+        time.sleep(0.05)
+    raise SystemExit("IMU configuration timed out; inspect imu-irq-status before assuming it applied.")
+
+
+def wifi_connect_command(ssid, password):
+    """Encode credentials without placing the password in argv or error text."""
+    network = ssid.encode("utf-8")
+    key = password.encode("utf-8")
+    if not 1 <= len(network) <= 32:
+        raise ValueError("SSID requires 1..32 UTF-8 bytes")
+    if not 8 <= len(key) <= 63 or any(not 32 <= byte <= 126 for byte in key):
+        raise ValueError("WPA2 password requires 8..63 printable ASCII bytes")
+    return f"wifi-connect {network.hex()} {key.hex()}"
+
+
+def update_url_command(value):
+    if not value.startswith("https://") or any(ord(c) <= 32 or ord(c) >= 127 for c in value) or any(c in value for c in "#\\"):
+        raise ValueError("update-url requires an HTTPS URL without credentials or control characters")
+    url = urlsplit(value)
+    if url.username is not None or url.password is not None or not url.hostname or len(url.hostname) > 253 or not re.fullmatch(r"[A-Za-z0-9.-]+", url.hostname) or url.port == 0:
+        raise ValueError("invalid update host or port")
+    command = f"update-url {value}"
+    if len((PREFIX + command).encode()) > 320:
+        raise ValueError("update URL exceeds the console command capacity")
+    return command
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "ota", "ota-status", "ota-abort"])
+    camera = ("camera-status", "camera-probe", "camera-start", "camera-stop", "camera-capture")
+    audio = ("audio-status", "audio-stop", "audio-tone", "audio-play", "audio-record", "audio-loopback", "audio-volume", "audio-mute")
+    wireless = ("wifi-status", "wifi-on", "wifi-scan", "wifi-connect", "wifi-disconnect", "wifi-off", "wifi-probe", "wifi-saved", "wifi-saved-connect", "wifi-forget", "wifi-auto", "bt-status", "bt-on", "bt-off")
+    updates = ("update-status", "update-check", "update-install", "update-cancel", "update-url")
+    updates += ("update-proxy",)
+    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "ota", "ota-status", "ota-abort", "nand-info", "nand-read", "nand-status", "nand-format", "nand-test", "nand-bench", "power-status", "screen-off", "screen-on", "imu-irq", "imu-irq-status", *wireless, *camera, *updates, *audio])
     ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id, brain script or photo file")
     ap.add_argument("--name", help="photo path relative to Album photos (photo-push only)")
     ap.add_argument("--select", action="store_true", help="select after skin-push")
@@ -338,11 +440,23 @@ def main():
     ap.add_argument("--follow", action="store_true", help="keep printing the device log")
     ap.add_argument("--port", help="console port (default: the first /dev/cu.usbmodem*)")
     ap.add_argument("--verbose", "-v", action="store_true", help="print device log lines while waiting")
+    ap.add_argument("--tcp-port", type=int, help="HTTP diagnostic port (wifi-probe only, default 80)")
+    ap.add_argument("--duration-ms", type=int, default=1000, help="audio-tone or audio-record duration in milliseconds")
     args = ap.parse_args()
 
-    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "ota")
+    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "ota", "screen-off", "imu-irq", "nand-read", "nand-test", "nand-bench", "wifi-connect", "wifi-probe", "wifi-saved-connect", "wifi-forget", "wifi-auto", "update-url", "update-proxy", "audio-tone", "audio-play", "audio-record", "audio-loopback", "audio-volume", "audio-mute")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
+    if args.action == "screen-off" and (not re.fullmatch(r"[0-9]+", args.target) or not 1 <= int(args.target) <= 60):
+        ap.error("screen-off requires 1..60 seconds")
+    if args.action == "nand-read" and (not re.fullmatch(r"[0-9]+", args.target) or not 0 <= int(args.target) <= 0xffffffff):
+        ap.error("nand-read requires a u32 page index")
+    if args.action == "nand-test" and args.target not in ("write", "verify", "cleanup"):
+        ap.error("nand-test requires write, verify or cleanup")
+    if args.action == "nand-bench" and args.target not in ("write", "read", "cleanup"):
+        ap.error("nand-bench requires write, read or cleanup")
+    if args.action == "imu-irq" and args.target not in ("off", "int1", "int2"):
+        ap.error("imu-irq requires off, int1 or int2")
 
     if args.select and args.action != "skin-push":
         ap.error("--select requires skin-push")
@@ -352,10 +466,106 @@ def main():
         ap.error("--name requires photo-push")
     if args.action == "ota" and (args.run or args.follow):
         ap.error("ota reboots the device; use ota-status after reconnection instead of --run/--follow")
+    if args.tcp_port is not None and (args.action != "wifi-probe" or not 1 <= args.tcp_port <= 65535):
+        ap.error("--tcp-port requires wifi-probe and port 1..65535")
+    if args.action == "wifi-probe" and (len(args.target) > 253 or not re.fullmatch(r"[A-Za-z0-9.-]+", args.target)):
+        ap.error("wifi-probe expects a DNS host or IPv4 address")
+    wifi_command = None
+    if args.action == "wifi-connect":
+        try:
+            wifi_command = wifi_connect_command(args.target, getpass.getpass("WPA2 password (saved on device after successful connection): "))
+        except ValueError as error:
+            ap.error(str(error))
+    elif args.action in ("wifi-saved-connect", "wifi-forget"):
+        network = args.target.encode("utf-8")
+        if not 1 <= len(network) <= 32:
+            ap.error("SSID requires 1..32 UTF-8 bytes")
+        wifi_command = f"{args.action} {network.hex()}"
+    elif args.action == "wifi-auto":
+        if args.target not in ("on", "off"):
+            ap.error("wifi-auto requires on or off")
+        wifi_command = f"wifi-auto {args.target}"
     brain_data = read_brain(args.target) if args.action == "brain-push" else None
     photo = read_photo(args.target, args.name) if args.action == "photo-push" else None
     ota = read_ota(args.target) if args.action == "ota" else None
+    update_command = args.action
+    if args.action == "update-url":
+        try:
+            update_command = update_url_command(args.target)
+        except ValueError as error:
+            ap.error(str(error))
+    if args.action == "update-proxy":
+        try:
+            if args.target != "off":
+                host, port = args.target.rsplit(":", 1)
+                address = ipaddress.IPv4Address(host)
+                if address.is_unspecified or address.is_multicast or host == "255.255.255.255" or not port.isascii() or not port.isdigit() or not 1 <= int(port) <= 65535:
+                    raise ValueError("invalid HTTP proxy endpoint")
+            update_command = f"update-proxy {args.target}"
+        except ValueError:
+            ap.error("update-proxy requires IPv4:port or off (HTTP, no authentication)")
     dev = Device(args.port or default_port(), args.verbose)
+    if args.action in updates:
+        try:
+            print(dev.command(update_command))
+            if args.follow:
+                dev.follow()
+        finally:
+            dev.ser.close()
+        return
+    if args.action in camera:
+        try:
+            print(dev.command(args.action, timeout=30.0))
+            if args.follow:
+                dev.follow()
+        finally:
+            dev.ser.close()
+        return
+    if args.action in audio:
+        try:
+            command=args.action
+            if args.target is not None:
+                if any(c.isspace() for c in args.target):
+                    ap.error("audio target cannot contain whitespace")
+                command += f" {args.target}"
+            if args.action in ("audio-tone", "audio-record"):
+                command += f" {args.duration_ms}"
+            print(dev.command(command, timeout=45.0))
+            if args.follow:
+                dev.follow()
+        finally:
+            dev.ser.close()
+        return
+    if args.action in wireless:
+        try:
+            command = wifi_command or (f"wifi-probe {args.target} {args.tcp_port or 80}" if args.action == "wifi-probe" else args.action)
+            print(dev.command(command, timeout=60.0))
+            if args.follow:
+                dev.follow()
+        finally:
+            dev.ser.close()
+        return
+    if args.action in ("nand-info", "nand-read", "nand-status", "nand-format", "nand-test", "nand-bench", "power-status", "screen-on", "screen-off", "imu-irq", "imu-irq-status"):
+        try:
+            if args.action == "screen-off":
+                screen_off(dev, int(args.target))
+            elif args.action == "imu-irq":
+                configure_imu_irq(dev, args.target)
+            elif args.action == "nand-read":
+                print(dev.command(f"nand-read {int(args.target)}", timeout=10.0))
+            elif args.action == "nand-test":
+                print(dev.command(f"nand-test {args.target}", timeout=60.0))
+            elif args.action == "nand-bench":
+                print(dev.command(f"nand-bench {args.target}", timeout=120.0))
+            elif args.action == "nand-format":
+                print(dev.command("nand-format", timeout=60.0))
+            else:
+                print(dev.command(args.action, timeout=10.0))
+            if args.follow:
+                dev.follow()
+        finally:
+            dev.ser.close()
+        return
     if args.action == "ota":
         try:
             push_ota(dev, *ota)
@@ -381,7 +591,10 @@ def main():
     elif args.action in ("brain-reload", "brain-default", "brain-status"):
         print(dev.command(args.action, timeout=30.0))
     elif args.action == "skin-push":
-        push_skin(dev, args.target, args.select)
+        try:
+            push_skin(dev, args.target, args.select)
+        finally:
+            dev.ser.close()
     elif args.action in ("skin-select", "skin-rm"):
         print(dev.command(f"{args.action} {args.target}", timeout=30.0))
     elif args.action == "skin-ls":

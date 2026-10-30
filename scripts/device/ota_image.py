@@ -3,14 +3,14 @@ import hashlib
 import struct
 from pathlib import Path
 
-SLOT_BYTES = 0x300000
-AB_LAYOUT_MARKER = b"MOSAICO_S31_AB_LAYOUT_V1\0"
+SLOT_BYTES = 0x600000
+AB_LAYOUT_MARKER = b"MOSAICO_S31_AB_LAYOUT_V2_6M_NAND\0"
 MEMORY = ((0x40000000, 0x54000000), (0x2F000000, 0x2F080000), (0x2E000000, 0x2E008000))
 
 
 def validate_image(data):
     if not 24 <= len(data) <= SLOT_BYTES:
-        raise ValueError("image must fit the 3 MiB application slot")
+        raise ValueError("image must fit the 6 MiB application slot")
     if data[0] != 0xE9 or not 1 <= data[1] <= 16:
         raise ValueError("invalid ESP image header or segment count")
     if struct.unpack_from("<H", data, 12)[0] != 32:

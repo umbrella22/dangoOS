@@ -10,6 +10,23 @@ use alloc::string::String;
 use critical_section::Mutex;
 use log::{info, warn};
 use os::hub::registry::{IconCache, Registry};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
+static SCAN: Channel<CriticalSectionRawMutex, bool, 1> = Channel::new();
+static SCANNED: Channel<CriticalSectionRawMutex, Registry, 1> = Channel::new();
+pub fn request_scan(boot: bool) { SCAN.try_send(boot).expect("one registry scan in flight"); }
+pub fn take_scanned() -> Option<Registry> { SCANNED.try_receive().ok() }
+
+/// Registry traversal and JPEG decoding belong to services. The UI keeps
+/// rendering while a complete owned registry is prepared; no LVGL calls here.
+#[embassy_executor::task]
+pub async fn scan_task() {
+    let mut icons = IconCache::new();
+    loop {
+        let boot = SCAN.receive().await;
+        let registry = if boot { scan_at_boot(&mut icons) } else { scan(&mut icons) };
+        SCANNED.send(registry).await;
+    }
+}
 
 /// What to do with the running app after an optional rescan.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,6 +53,7 @@ static PENDING: Mutex<RefCell<Request>> = Mutex::new(RefCell::new(Request {
 }));
 
 pub fn request(reload: bool, action: Option<Action>) {
+    super::power::wake();
     critical_section::with(|cs| {
         let mut p = PENDING.borrow_ref_mut(cs);
         p.reload |= reload;
@@ -43,6 +61,13 @@ pub fn request(reload: bool, action: Option<Action>) {
             p.action = action;
         }
     });
+}
+
+pub fn has_request() -> bool {
+    critical_section::with(|cs| {
+        let pending = PENDING.borrow_ref(cs);
+        pending.reload || pending.action.is_some()
+    })
 }
 
 pub fn take_request() -> Option<Request> {
@@ -133,9 +158,10 @@ pub fn acknowledge_management_refresh() {
 }
 /// A second owner gets busy. The start barrier remains held through UI rescan.
 pub async fn manage(op: os::hub::uninstall::Operation) -> Result<(), String> {
+    if super::update::busy() { return Err("系统更新进行中".into()); }
     critical_section::with(|cs| MANAGING.borrow_ref_mut(cs).acquire()).map_err(String::from)?;
     super::lua::quiesce().await;
-    let result = ::fs::global::with(|vfs| Ok(os::hub::uninstall::execute(vfs, op)))
+    let result = crate::service_executor::run(move || ::fs::global::with(|vfs| Ok(os::hub::uninstall::execute(vfs, op)))).await
         .map_err(|e| alloc::format!("{e}"))
         .and_then(|r| r);
     critical_section::with(|cs| MANAGING.borrow_ref_mut(cs).completed());

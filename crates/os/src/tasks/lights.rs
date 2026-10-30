@@ -136,6 +136,10 @@ static AMBIENT: AtomicU8 = AtomicU8::new(u8::MAX);
 static ATTACHED: AtomicBool = AtomicBool::new(false);
 /// Settings switch: when false the ring shows black (RFC 0006).
 static ENABLED: AtomicBool = AtomicBool::new(true);
+static SUSPENDED: AtomicBool = AtomicBool::new(false);
+pub fn set_suspended(suspended: bool) {
+    SUSPENDED.store(suspended, Ordering::Release);
+}
 /// Key presses: low byte counts left presses, next byte right presses.
 static SPARKS: AtomicU32 = AtomicU32::new(0);
 /// Who drives the strip, see [`Owner`].
@@ -328,7 +332,11 @@ pub async fn lights_task(mut channel: LightChannel) {
             }),
             _ => [Rgb::OFF; LED_COUNT],
         };
-        if !allows_color || !ENABLED.load(Ordering::Relaxed) || crate::ota_runtime::active() {
+        if !allows_color
+            || !ENABLED.load(Ordering::Relaxed)
+            || crate::ota_runtime::active()
+            || SUSPENDED.load(Ordering::Acquire)
+        {
             frame.iter_mut().for_each(|led| *led = Default::default());
         }
         let attached = ATTACHED.load(Ordering::Relaxed);
@@ -347,7 +355,10 @@ pub async fn lights_task(mut channel: LightChannel) {
         if !attached && clear.is_none() {
             continue;
         }
-        if clear.is_none() && sent == Some(frame) && now.saturating_sub(sent_at) < REFRESH_MS {
+        if clear.is_none()
+            && sent == Some(frame)
+            && (SUSPENDED.load(Ordering::Acquire) || now.saturating_sub(sent_at) < REFRESH_MS)
+        {
             continue;
         }
 

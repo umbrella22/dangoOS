@@ -1,6 +1,6 @@
 //! The hub's CJK bitmap fonts (RFC 0006 section 2.2).
 //!
-//! `assets/fonts/gen_hub_font.py` rasterizes the characters the hub sources
+//! `scripts/assets/gen_hub_font.py` rasterizes the characters the hub sources
 //! use from Noto Sans SC into `src/assets/hub-*.bin` (4 bpp, format in the
 //! script's docstring). This module wraps each file in a static `lv_font_t`
 //! whose glyph callbacks are written here, so no C font file and no LVGL font
@@ -322,6 +322,12 @@ mod tests {
     fn every_hub_string_has_glyphs() {
         let sources = [
             include_str!("hub_view.rs"),
+            include_str!("settings_view.rs"),
+            include_str!("mod.rs"),
+            include_str!("../hub/settings.rs"),
+            include_str!("../tasks/ui.rs"),
+            include_str!("../radio.rs"),
+            include_str!("../camera.rs"),
             include_str!("../hub/mod.rs"),
             include_str!("../hub/countdown.rs"),
             include_str!("../hub/snapshot.rs"),
@@ -337,11 +343,30 @@ mod tests {
                     for font in [&HUB_20, &HUB_24, &HUB_30] {
                         assert!(
                             has_glyph(font, ch),
-                            "{ch} is missing: rerun assets/fonts/gen_hub_font.py"
+                            "{ch} is missing: rerun scripts/assets/gen_hub_font.py"
                         );
                     }
                 }
             }
         }
+    }
+
+    #[test]
+    fn filesystem_app_titles_have_cjk_glyphs_in_every_text_size() {
+        fn check_titles(root: &std::path::Path) {
+            for entry in std::fs::read_dir(root).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() { check_titles(&path); }
+                else if path.file_name().is_some_and(|name| name == "launcher.json") {
+                    let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                    for ch in manifest["display_name"].as_str().unwrap().chars().filter(|c| !c.is_ascii()) {
+                        for font in [&HUB_20, &HUB_24, &HUB_30] {
+                            assert!(has_glyph(font, ch), "{ch} in {} has no glyph", path.display());
+                        }
+                    }
+                }
+            }
+        }
+        check_titles(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps"));
     }
 }

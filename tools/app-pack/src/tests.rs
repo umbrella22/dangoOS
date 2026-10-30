@@ -5,7 +5,7 @@ fn apps() -> Vec<Package> {
 }
 
 #[test]
-fn fresh_system_contains_exactly_repository_apps_and_rebuilds_identically() {
+fn fresh_system_contains_repository_apps_and_default_art_and_rebuilds_identically() {
     let packages = apps();
     assert_eq!(
         packages.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
@@ -22,13 +22,19 @@ fn fresh_system_contains_exactly_repository_apps_and_rebuilds_identically() {
         let manifest: Value = serde_json::from_slice(bytes).unwrap();
         assert_eq!(manifest["entry"], "scripts/main.lua");
     }
-    let (image, report) = build_system(4096 * 750, &packages).unwrap();
-    assert_eq!(image.len(), 4096 * 750);
+    let (image, report) = build_system(0x1f0000, &packages).unwrap();
+    assert_eq!(image.len(), 0x1f0000);
     assert_eq!(report["applications"].as_array().unwrap().len(), 5);
     let tree = snapshot(&image).unwrap();
     assert!(tree
         .keys()
-        .all(|path| path == "/apps" || path.starts_with("/apps/")));
+        .all(|path| path == "/apps" || path.starts_with("/apps/") || path == "/skins" || path == "/skins/default.bin"));
+    let Entry::File(default) = &tree["/skins/default.bin"] else { panic!() };
+    let loaded = os::fox::skin::Skin::parse(default.clone()).unwrap();
+    assert_eq!(loaded.blob(), os::fox::data::BLOB);
+    for pose in os::fox::FoxPose::ALL {
+        assert_eq!(loaded.pose(pose).base.off, pose.data().base.off);
+    }
     assert!(tree.contains_key("/apps/snake/scripts/main.lua"));
     assert!(tree.contains_key("/apps/2048/scripts/main.lua"));
     let (again, _) = build_system(image.len(), &packages).unwrap();

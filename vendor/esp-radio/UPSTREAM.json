@@ -1,0 +1,399 @@
+{
+  "repository": "https://github.com/esp-rs/esp-hal",
+  "revision": "33f9b0f7c36ac47edbd015808b5399090fc1f9b6",
+  "package": "esp-radio",
+  "files_before_patch": [
+    {
+      "path": ".clippy.toml",
+      "sha256": "63e1fce0c54b61279f3b21e42e73be2e8bcf02355dab63661fdc7dc10a39c101"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "4a64f57d0399a452aa6f96428eece3ecee23b787e2e52b6373c82630b5046608"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "595c3a62d3d5754a42a5f79cc32598416f1e4cfb423521486e5ccf065bf2d30b"
+    },
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "2bf4fe1a37e545c3b4f7bfaa2326c99f153af32ef8d112fbaa4bff7fb2a575bd"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "7b2165c6740592038d887d51d56d122b0b563337a7756b424f19eecc7a936ef1"
+    },
+    {
+      "path": "MIGRATING-0.17.0.md",
+      "sha256": "ae86db668dec0e1b5426186519415799e003f59095fc001688929da313cbb31d"
+    },
+    {
+      "path": "MIGRATING-0.18.0.md",
+      "sha256": "f02a52e5b28556a08f86c125003886a9b426a36d0a4153777ca0c02fea20b75d"
+    },
+    {
+      "path": "README.md",
+      "sha256": "e5bdf69ce9c85e801e638f5a0dd46b4f4f5704ab69bcfb9254da5a31823bc440"
+    },
+    {
+      "path": "build.rs",
+      "sha256": "12f3d793a9b22c41d4f048b10487c70ba23f811d6e8fdec167ea68b61930bd71"
+    },
+    {
+      "path": "esp_config.yml",
+      "sha256": "b3de377d76bb116fd3c2e53409bfe3d40450cc6127a4daed6f15718911c896cb"
+    },
+    {
+      "path": "ld/esp32_provides.x",
+      "sha256": "25c9b1593619ed00e72b4a631836a9394edbb08953b62ffbea38808acc868ea6"
+    },
+    {
+      "path": "ld/esp32c2_provides.x",
+      "sha256": "a9cf42c3142bf6566a4a607946e711239a5539d7c2fde042fbf2550c4ac474d6"
+    },
+    {
+      "path": "ld/esp32c3_provides.x",
+      "sha256": "268b07e7f9f82e18326377c82807e38172627c1a21e4228e10ff195f6b080b25"
+    },
+    {
+      "path": "ld/esp32c5_provides.x",
+      "sha256": "74486bbdaad15e4490a32bfaf24773e03985a26ddf27fc51051c2d89a3d1992d"
+    },
+    {
+      "path": "ld/esp32c61_provides.x",
+      "sha256": "74486bbdaad15e4490a32bfaf24773e03985a26ddf27fc51051c2d89a3d1992d"
+    },
+    {
+      "path": "ld/esp32c6_provides.x",
+      "sha256": "74486bbdaad15e4490a32bfaf24773e03985a26ddf27fc51051c2d89a3d1992d"
+    },
+    {
+      "path": "ld/esp32h2_provides.x",
+      "sha256": "8392431b7074dd146a42678875d90d72f3faca697b94c03dd6f2055cf3aee9c6"
+    },
+    {
+      "path": "ld/esp32h4_provides.x",
+      "sha256": "b1808d325383e8324f6b29d1e97889ebd140967d49cd0183cde03fa96266d871"
+    },
+    {
+      "path": "ld/esp32s2_provides.x",
+      "sha256": "1182913cad72119e8a060d211e244a5d0d76e77e9379bf777f508e5e49d76bf5"
+    },
+    {
+      "path": "ld/esp32s31_provides.x",
+      "sha256": "74486bbdaad15e4490a32bfaf24773e03985a26ddf27fc51051c2d89a3d1992d"
+    },
+    {
+      "path": "ld/esp32s3_provides.x",
+      "sha256": "0e5d2ab9cb0baccd70f282536a0ec85d6a8321106dbe07205c9590e34f3e1203"
+    },
+    {
+      "path": "src/asynch.rs",
+      "sha256": "2b8cd8fbd275975cbf6abc7ff2ac292651bf54aafc826a40f68a20609ead6b5b"
+    },
+    {
+      "path": "src/ble/btdm/mod.rs",
+      "sha256": "46f218bb082ab393639e07e9b540b142572a846aadc6369c02a84ce8510e7e3b"
+    },
+    {
+      "path": "src/ble/btdm/os_adapter_esp32.rs",
+      "sha256": "dfbee21bbe4a10a28706e220f32dd55d9a2eb7a9ef16b1496dda463d8aab071e"
+    },
+    {
+      "path": "src/ble/btdm/os_adapter_esp32c3_s3.rs",
+      "sha256": "0212c7cbb9c1f84928e30ba38adcd118541e3ed63e736c7acf8e720e87829917"
+    },
+    {
+      "path": "src/ble/btdm2/mod.rs",
+      "sha256": "89ce3a52586a692d2bd14744814ff3013e2568264bcebb2b98ab14fdb3867d1b"
+    },
+    {
+      "path": "src/ble/btdm2/os_adapter_esp32h4.rs",
+      "sha256": "ce4b8cec3107549d8688f4fa9733cadefc1a3c1d9e3c3a16d119a0bfbc2187b2"
+    },
+    {
+      "path": "src/ble/btdm2/os_adapter_esp32s31.rs",
+      "sha256": "ca945b4db37828ed971d66b8110c6a25dac40e41f89344344c5a6d124f409afa"
+    },
+    {
+      "path": "src/ble/controller/mod.rs",
+      "sha256": "b2569116583065a1a4395279c0a6384590b86232a3a184bd9434fb02511fa90a"
+    },
+    {
+      "path": "src/ble/lp_clk.rs",
+      "sha256": "7c15088e70f6b9b9d47b19fbc6188f52a6c8c5c84ef7ac63aa24acd4c0ca4100"
+    },
+    {
+      "path": "src/ble/mod.rs",
+      "sha256": "5ab96f34bdc55602d19c520397a2ba4abb3e117b8b109350eaa6dcf36714bea7"
+    },
+    {
+      "path": "src/ble/npl/mod.rs",
+      "sha256": "cc2e6b9bd16f12219445fcd825816b98bdeebe4af07306beb0cb0758b7781780"
+    },
+    {
+      "path": "src/ble/npl/os_adapter_esp32c2.rs",
+      "sha256": "0144e1f2631f0449ed0ad769a2148513e8fa941fc9a755b2c500bf1e60ab4dbe"
+    },
+    {
+      "path": "src/ble/npl/os_adapter_esp32c5.rs",
+      "sha256": "8ee80c9e0f605c389673454e8f86f0aa77e2302745c6f88192401c2c9131bf77"
+    },
+    {
+      "path": "src/ble/npl/os_adapter_esp32c6.rs",
+      "sha256": "5597ec156f7ca673d621fcc995ac453e10ab759b01ddd8e81f2cb4712c8a2cbb"
+    },
+    {
+      "path": "src/ble/npl/os_adapter_esp32c61.rs",
+      "sha256": "f9295ed6d64a81788a9abac9ba3db193850fa2a2c9513e2a84b9f4dd3a1456e0"
+    },
+    {
+      "path": "src/ble/npl/os_adapter_esp32h2.rs",
+      "sha256": "c42bbaf486c0528e310eefebbacdde706f2a3dd69b10359ee0e4e107d6d51d47"
+    },
+    {
+      "path": "src/ble/npl/os_mempool.rs",
+      "sha256": "290911c77413a0436925165b518cb7b54794a43522824aca934ae395eac98519"
+    },
+    {
+      "path": "src/coex_utils.rs",
+      "sha256": "03f3293d28206db9ed30791d67db706904dda6af5c0b799e4ae302f29faf3994"
+    },
+    {
+      "path": "src/common_adapter.rs",
+      "sha256": "e0094384ce0771cb66b785f1046e60bf076864df82924ac28d20afd7152fc611"
+    },
+    {
+      "path": "src/compat/atomic.rs",
+      "sha256": "0960afe8da81823b58fa2b12e4807b5a705deb5d43cbc5b7adee6d71280f76a0"
+    },
+    {
+      "path": "src/compat/common.rs",
+      "sha256": "ff97cfbc368d8ab0ca646c0cde7e34fa41c89b63d21721697b124156990557ab"
+    },
+    {
+      "path": "src/compat/malloc.rs",
+      "sha256": "ce997def9f1255c342d10089b3321ab2c234307dd0ff15c3af9f9f87b7664879"
+    },
+    {
+      "path": "src/compat/misc.rs",
+      "sha256": "e5c7a98e12e47247dbb73a177a3ba9c282dfe503055469b88176a2ed5e93da07"
+    },
+    {
+      "path": "src/compat/mod.rs",
+      "sha256": "f88daf0f140070ab8ad14950f3ffcf9ffb48888b87c37a336f9ac55b7d25c541"
+    },
+    {
+      "path": "src/compat/mutex.rs",
+      "sha256": "d77879dedd12fa58673f75f41cc9553937cfd18ef0e771cd75010aebeed2370e"
+    },
+    {
+      "path": "src/compat/queue.rs",
+      "sha256": "a4e76213bd210afd3255366242592eba6307ec1a6a804e40bb6c3b748d3432d3"
+    },
+    {
+      "path": "src/compat/semaphore.rs",
+      "sha256": "be3d023633af2952c2cc04aac5c4d6e27ee0bbf315a5e7b942c44836349b0c8f"
+    },
+    {
+      "path": "src/compat/timer_compat.rs",
+      "sha256": "7eb539455d76084b46f73006b678d0b5d6bc92d5b4466843c73c17bf5b226af7"
+    },
+    {
+      "path": "src/compiler_rt_abi.rs",
+      "sha256": "2c7f419b6dc1db3f4f04b738664793bfe9e2fa62377ec0ae5248c95f9270a26b"
+    },
+    {
+      "path": "src/drop_guard.rs",
+      "sha256": "715b9645814770c1d215186c24dad7602cdca7326c61fab7a8d423efd2c9def6"
+    },
+    {
+      "path": "src/esp_now/mod.rs",
+      "sha256": "91e0ab3f77bec20efff359918bbbb17ccec086cde69af6144e8245472ca0778d"
+    },
+    {
+      "path": "src/fmt.rs",
+      "sha256": "5d7d874dd1065783edd252b3341b0dde045c9d7de32dd5e1893e63f03a207c7e"
+    },
+    {
+      "path": "src/ieee802154/frame.rs",
+      "sha256": "3d9b41bca37d53124811bf0a9aa054413fa422c640d6ae8d7ff2706d0d0dceeb"
+    },
+    {
+      "path": "src/ieee802154/hal.rs",
+      "sha256": "1a7c806723c050f4de3e150fb0255ca97eed0080f3eb43ba4252672e500b8b1b"
+    },
+    {
+      "path": "src/ieee802154/mod.rs",
+      "sha256": "d5618aaabe919f6e2f2add7ca08a1054c72e25d30b7ec28a5383a6b30945d6ec"
+    },
+    {
+      "path": "src/ieee802154/pib.rs",
+      "sha256": "f82541b70ea9e936ad4b5a97726ad63a6759057ccd519b617b03ba29c269b53f"
+    },
+    {
+      "path": "src/ieee802154/raw.rs",
+      "sha256": "e0c1939d38393097979d7b1c48a6633faae7d7ccd39fa313462a5d4e1443adfa"
+    },
+    {
+      "path": "src/interrupt_dispatch.rs",
+      "sha256": "68985feef5f13114a9dcf2bbe899ad0679382d71ebf24956566cfb3f2cacedeb"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "a2c006998fd3c82285ab2217150bbe5bc0dc194e7512e15c66772d4ab97d9299"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32.rs",
+      "sha256": "30e904fb016ad65ab9751c08730e74c8eca660a656990b7e380493e5d2bd62d8"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32c2.rs",
+      "sha256": "b368a28dadfa5b2899867ff4d6be64f6b9e9b1fb1a4d66582bd267b2bf769a20"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32c3.rs",
+      "sha256": "4238912a4baa370df808f1ae21b49a987d73afaf94e6a788246ea180060c6d94"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32c5.rs",
+      "sha256": "2867af88c90348a6fb2ade81f6d1cfdc406df8350326009bb54dd04d3a180517"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32c6.rs",
+      "sha256": "cad6e49f1b245bfe5f225bed9c1cf7b46b113f5e6727ae714be4ae0075ffcbc9"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32c61.rs",
+      "sha256": "6a6ca3ee499a140a9e8afa49738ef448612c66b030f2d57d389aec14fbb682d6"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32h2.rs",
+      "sha256": "47a80acd67445dd82e768f839b01c7a67bc1ec6dc272cfcebd385b3514f4aa0d"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32h4.rs",
+      "sha256": "608e0ab00af03dfbd5753665857ff8d938a0bad958b639ed9000592bc3464e4b"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32s2.rs",
+      "sha256": "b34b2755b42031dbc865d074b5a0d758bd3ba8accf996c8cb0c3a6721d23624b"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32s3.rs",
+      "sha256": "e7749111635d72c51efb70cc88f10d58cf169ff490e00c016cca54e8feb9d2fe"
+    },
+    {
+      "path": "src/radio_clocks/clocks_ll/esp32s31.rs",
+      "sha256": "de5fbc74d96009e7fdaa4b5eeb8deea8978e032df1a73d0894a290b3a776338d"
+    },
+    {
+      "path": "src/radio_clocks/mod.rs",
+      "sha256": "2dced602c84254dcdbed534633ae4ebe517043430a24bde7bf32d5af3fe706c3"
+    },
+    {
+      "path": "src/refcount.rs",
+      "sha256": "ca8d748755fa9584a0fb9097b50fc5bf256f6b5cc91c80213f01a1ed65a7cad3"
+    },
+    {
+      "path": "src/reg_access.rs",
+      "sha256": "256b330d2f8f122383195d898de4bcced0f5a25ce62fcc057eacfc829aa920a4"
+    },
+    {
+      "path": "src/time.rs",
+      "sha256": "5b29a161693c58409ee7a812f7eba132cd965d21967676e7610cc9a6a333dec3"
+    },
+    {
+      "path": "src/wifi/ap.rs",
+      "sha256": "67e2cc2b5c060a196f9bcb15c43aea201fe7c519fd6210215d1f806a59bbc46c"
+    },
+    {
+      "path": "src/wifi/csi.rs",
+      "sha256": "0991ae0b094d8117d8ab46b6de270016fed538ee82e9daddf7d92bfde8e78f5c"
+    },
+    {
+      "path": "src/wifi/event.rs",
+      "sha256": "99ed2e2686110deca813cd7c71c4bb6f102cfdbaf104f6beac440b9f451e56db"
+    },
+    {
+      "path": "src/wifi/ftm_calibration.rs",
+      "sha256": "012c10b775e27dbb9f8fbec3106ec95305edcd057da1fce8d30341e41f054d47"
+    },
+    {
+      "path": "src/wifi/internal.rs",
+      "sha256": "c28bdc22eefa56740143aef92494be45c0c08883ded0b065a1ed349d2e4df0d5"
+    },
+    {
+      "path": "src/wifi/mod.rs",
+      "sha256": "aef778fb26e67e888ff4190638daa303346700648c5f30ad82091ff683c9f693"
+    },
+    {
+      "path": "src/wifi/os_adapter/esp32.rs",
+      "sha256": "8733413ede8fdfa548d8572b846f9d39e635b5f610274ccf7c0994b2e4ad493e"
+    },
+    {
+      "path": "src/wifi/os_adapter/esp32c2.rs",
+      "sha256": "9380c5f306491a349d84ee28af49f8ed3caa494e8bf91ad6654e656dd778bff3"
+    },
+    {
+      "path": "src/wifi/os_adapter/esp32c3.rs",
+      "sha256": "a3e2796d6feae034b67cd2c2b302bfbadb7e71cc159d654b5e1754b8a44254c3"
+    },
+    {
+      "path": "src/wifi/os_adapter/esp32c5.rs",
+      "sha256": "ae398ec9c6f895b8b6a419c6377d7097fa3fac60f77a315fbd4fb316afbd3d4b"
+    },
+    {
+      "path": "src/wifi/os_adapter/esp32c6.rs",
+      "sha256": "b6d8f3778262f1a6853d84c0baecafbf3e7e1ace198fb79486146f439b885088"
+    },
+    {
+      "path": "src/wifi/os_adapter/esp32c61.rs",
+      "sha256": "7a0b9e33607e2eae5117a69c7d3754807e723d812e1dff5b46d9cd849ef5d773"
+    },
+    {
+      "path": "src/wifi/os_adapter/esp32s2.rs",
+      "sha256": "122838ee74df4b319c0313fd23a28816e85069120845deebf1f91206adcb06cd"
+    },
+    {
+      "path": "src/wifi/os_adapter/esp32s3.rs",
+      "sha256": "7b6f7b6c6536146f01aa608fc714c94332b1cb7cbb5132bd698b4b8fcf391533"
+    },
+    {
+      "path": "src/wifi/os_adapter/esp32s31.rs",
+      "sha256": "6986cfe58825c4c20375fd5102422eb27a1dd54548840df65a86a9d2261ba35f"
+    },
+    {
+      "path": "src/wifi/os_adapter/mod.rs",
+      "sha256": "177f288a201c1a299c3eebb790f3241517ec347e5a0a75324c000cd78182fff2"
+    },
+    {
+      "path": "src/wifi/scan.rs",
+      "sha256": "58698274bf7ddd4ba186609a73f62dc0666c6b291be4535d1d81897fa572e657"
+    },
+    {
+      "path": "src/wifi/sleep.rs",
+      "sha256": "85208c1eedc3f55b7d3e6cdf9fc5a7ca893de017950b8d4f6e0d9138f12464f8"
+    },
+    {
+      "path": "src/wifi/sniffer.rs",
+      "sha256": "6ff6aa06f9dde9d57ea6c15ae5b4ddd7af81856d6a095fc927bb5661f50a1a22"
+    },
+    {
+      "path": "src/wifi/sta/eap.rs",
+      "sha256": "ad26831fc0e9fda6ed43cf84c435e70ed48c8a512397813e94b40419e2b25e6e"
+    },
+    {
+      "path": "src/wifi/sta/mod.rs",
+      "sha256": "14250cba707a1399695cd4bc6f127860b48631c730f1ff327bd5517fa39d6c1b"
+    },
+    {
+      "path": "src/wifi/state.rs",
+      "sha256": "49b4d9616ce8b2b0f2c4fc9b53f6cb65c5ec7384483805f019c16b906820f48a"
+    },
+    {
+      "path": "src/wifi/weak_overrides.rs",
+      "sha256": "86ef59ea1331abb53ff06b105334cbf785af48c4c1bfa7960ab7c3b3c6996866"
+    }
+  ]
+}

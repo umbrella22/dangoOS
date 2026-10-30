@@ -93,6 +93,12 @@ fn extract(input: &Path, out: &Path) -> Result<()> {
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
+        Some("skins") if args.len() == 3 => {
+            println!("{}", serde_json::json!({
+                "status": "valid-skin-packages",
+                "skins": app_pack::skins::check(Path::new(&args[2]))?,
+            }));
+        }
         Some("extract") if args.len() == 4 => {
             extract(Path::new(&args[2]), Path::new(&args[3]))?;
         }
@@ -112,7 +118,7 @@ fn main() -> Result<()> {
                 "ids": packages.iter().map(|p| &p.id).collect::<Vec<_>>(),
             }));
         }
-        _ => return Err("usage: app-pack extract <image> <new-output-dir> | system <apps-root> <new-output-dir> --size <partition-bytes> | check <apps-root>".into()),
+        _ => return Err("usage: app-pack extract <image> <new-output-dir> | system <apps-root> <new-output-dir> --size <partition-bytes> | check <apps-root> | skins <skin-root>".into()),
     }
     Ok(())
 }

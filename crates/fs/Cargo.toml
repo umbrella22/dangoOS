@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 description = "File systems for ESP-Mosaico: vendored littlefs, mount table, and the POSIX layer newlib uses"
 publish = false
-license = "MIT AND BSD-3-Clause"
+license = "MIT AND BSD-3-Clause AND ISC"
 links = "mosaico_fs"
 build = "build.rs"
 

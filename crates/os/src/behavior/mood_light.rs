@@ -139,7 +139,9 @@ const fn style(expression: Expression) -> Style {
             },
             1.0,
         ),
-        Happy => (Rgb::OFF, Rgb::OFF, Rainbow { period_ms: 1400 }, 1.0),
+        Happy | MusicPlaying => (Rgb::OFF, Rgb::OFF, Rainbow { period_ms: 1400 }, 1.0),
+        NetworkConnected | BluetoothConnected => (Rgb::new(40, 180, 255), Rgb::OFF, breathe(1400, 0.3), 0.8),
+        NetworkDisconnected | BluetoothDisconnected => (Rgb::new(170, 100, 220), Rgb::OFF, breathe(2200, 0.2), 0.6),
         Puzzled => (
             Rgb::new(170, 60, 255),
             Rgb::new(255, 200, 40),

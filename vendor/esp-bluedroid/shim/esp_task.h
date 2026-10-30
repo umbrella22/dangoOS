@@ -1,0 +1,8 @@
+#pragma once
+#include "freertos/FreeRTOS.h"
+#define ESP_TASK_BT_CONTROLLER_PRIO 23
+#define ESP_TASK_BT_CONTROLLER_STACK 4096
+#define ESP_TASK_BT_HOST_PRIO 20
+#define ESP_TASK_BT_BTC_PRIO 19
+
+#define BT_TASK_EXTRA_STACK_SIZE 1024

@@ -16,6 +16,10 @@
 //! @mosaico ls                          -> @ok ls <id> <id> ...
 //! @mosaico status                      -> @ok status <mount>:<free>/<blocks>x<size> ...
 //! @mosaico reboot                      -> @ok reboot (then a software reset)
+//! @mosaico nand-info                   -> @ok nand-info id=... (read only)
+//! @mosaico nand-read <page>            -> @ok nand-read page=... crc=... ecc=...
+//! @mosaico screen-off <1..60> | screen-on | power-status
+//! @mosaico imu-irq <off|int1|int2> | imu-irq-status
 //! ```
 //!
 //! `begin` stages a fresh `/data/apps/.incoming/<id>`; `file` writes into it
@@ -39,7 +43,9 @@ const STAGING: &str = "/data/apps/.incoming";
 const PHOTO_STAGING: &str = "/data/appdata/photo/.incoming";
 const PHOTO_ROOT: &str = "/data/appdata/photo/photos";
 /// Longest command line; longer ones are discarded whole.
-const LINE_MAX: usize = 256;
+// A 253-byte DNS name plus the console prefix, wifi-probe verb and u16 port
+// requires 279 bytes. Keep the complete framed command within this limit.
+const LINE_MAX: usize = 320;
 /// Largest single file.
 pub const FILE_MAX: u32 = 1024 * 1024;
 /// Deepest relative path, in components.
@@ -66,6 +72,19 @@ pub enum Effect {
     /// The UI task validates/commits the resident brain and returns the reply.
     Brain(super::brain_store::Action),
     Ota(crate::ota::Command),
+    /// Read-only device discovery, executed after releasing the VFS lock.
+    NandInfo,
+    NandRead(u32),
+    NandStatus,
+    NandFormat,
+    NandTest(String),
+    NandBench(String),
+    Audio(crate::audio::Command),
+    Radio(crate::radio::Command),
+    Update(crate::update::Command),
+    Camera(crate::camera::Command),
+    Power(crate::power::Command),
+    ImuIrq(Option<crate::imu_interrupt::Route>),
     /// Explicit one-shot diagnostic reset control; unavailable in normal builds.
     #[cfg(feature = "usb-session-diagnostics")]
     UsbDiagReset(bool),
@@ -202,6 +221,18 @@ impl Session {
                                         | Effect::Brain(_)
                                         | Effect::Ota(_)
                                         | Effect::OtaCancel
+                                        | Effect::NandInfo
+                                        | Effect::NandRead(_)
+                                        | Effect::NandStatus
+                                        | Effect::NandFormat
+                                        | Effect::NandTest(_)
+                                        | Effect::NandBench(_)
+                                        | Effect::Audio(_)
+                                        | Effect::Radio(_)
+                                        | Effect::Update(_)
+                                        | Effect::Camera(_)
+                                        | Effect::Power(_)
+                                        | Effect::ImuIrq(_)
                                 );
                                 out(effect);
                             });
@@ -361,7 +392,12 @@ impl Session {
             self.ota_command(verb, &args, out);
             return;
         }
-        if self.ota_active && !matches!(verb, "hello") {
+        if self.ota_active
+            && !matches!(
+                verb,
+                "hello" | "power-status" | "wifi-status" | "wifi-saved" | "bt-status" | "update-status" | "update-cancel"
+            )
+        {
             out(Effect::Reply("@err OTA busy".into()));
             return;
         }
@@ -383,6 +419,151 @@ impl Session {
         }
         let result = match (verb, args.as_slice()) {
             ("hello", []) => Ok(format!("hello mosaico-push {VERSION}")),
+            (verb @ ("update-status" | "update-check" | "update-install" | "update-cancel"), []) => {
+                let command=match verb {
+                    "update-status"=>crate::update::Command::Status,
+                    "update-check"=>crate::update::Command::Check,
+                    "update-install"=>crate::update::Command::Install,
+                    _=>crate::update::Command::Cancel,
+                };
+                if command!=crate::update::Command::Status && (self.staging.is_some()||self.management_busy) {
+                    out(Effect::Reply("@err update transfer or management busy".into()));
+                } else {out(Effect::Update(command));}
+                return;
+            }
+            ("update-url", [url]) => {
+                if self.staging.is_some()||self.management_busy {out(Effect::Reply("@err update transfer or management busy".into()));}
+                else {match crate::update::Url::parse(url) {
+                    Ok(url)=>out(Effect::Update(crate::update::Command::InstallUrl(url))),
+                    Err(error)=>out(Effect::Reply(format!("@err update-url {error}"))),
+                }}
+                return;
+            }
+            ("update-proxy", [address]) => {
+                if self.staging.is_some() || self.management_busy {
+                    out(Effect::Reply("@err update transfer or management busy".into()));
+                } else if *address == "off" {
+                    out(Effect::Update(crate::update::Command::SetProxy(None)));
+                } else {
+                    match crate::update::HttpProxy::parse(address) {
+                        Ok(proxy) => out(Effect::Update(crate::update::Command::SetProxy(Some(proxy)))),
+                        Err(error) => out(Effect::Reply(format!("@err update-proxy {error}"))),
+                    }
+                }
+                return;
+            }
+            (verb @ ("camera-status" | "camera-probe" | "camera-start" | "camera-stop" | "camera-capture"), _) => {
+                match crate::camera::Command::parse(verb, &args) {
+                    Ok(command) if command != crate::camera::Command::Status && (self.staging.is_some() || self.management_busy) => out(Effect::Reply("@err camera transfer or management busy".into())),
+                    Ok(command) => out(Effect::Camera(command)),
+                    Err(error) => out(Effect::Reply(format!("@err {error}"))),
+                }
+                return;
+            }
+            ("imu-irq-status", []) => {
+                out(Effect::ImuIrq(None));
+                return;
+            }
+            ("imu-irq", [route]) => {
+                if self.staging.is_some() || self.management_busy {
+                    out(Effect::Reply(
+                        "@err imu-irq transfer or management busy".into(),
+                    ));
+                } else if let Some(route) = crate::imu_interrupt::Route::parse(route) {
+                    out(Effect::ImuIrq(Some(route)));
+                } else {
+                    out(Effect::Reply(
+                        "@err imu-irq expects off, int1 or int2".into(),
+                    ));
+                }
+                return;
+            }
+            (verb @ ("screen-off" | "screen-on" | "power-status"), _) => {
+                match crate::power::Command::parse(verb, &args) {
+                    Ok(crate::power::Command::ScreenOff(_))
+                        if self.staging.is_some() || self.management_busy =>
+                    {
+                        out(Effect::Reply(
+                            "@err screen-off transfer or management busy".into(),
+                        ))
+                    }
+                    Ok(command) => out(Effect::Power(command)),
+                    Err(error) => out(Effect::Reply(format!("@err {error}"))),
+                }
+                return;
+            }
+            ("audio-status"|"audio-stop"|"audio-tone"|"audio-play"|"audio-record"|"audio-loopback"|"audio-volume"|"audio-mute",_)=>{
+                match crate::audio::Command::parse(verb,&args){
+                    Ok(command) if command!=crate::audio::Command::Status && (self.staging.is_some()||self.management_busy)=>out(Effect::Reply("@err audio transfer or management busy".into())),
+                    Ok(command)=>out(Effect::Audio(command)),Err(error)=>out(Effect::Reply(format!("@err audio {error}"))),
+                }return;
+            }
+            (
+                "wifi-status" | "wifi-on" | "wifi-scan" | "wifi-connect" | "wifi-disconnect" | "wifi-off"
+                | "wifi-saved" | "wifi-saved-connect" | "wifi-forget" | "wifi-auto"
+                | "wifi-probe" | "bt-status" | "bt-on" | "bt-off",
+                _,
+            ) => {
+                let result = crate::radio::Command::parse(verb, &args);
+                match result {
+                    Ok(command)
+                        if !command.status()
+                            && (self.staging.is_some() || self.management_busy) =>
+                    {
+                        out(Effect::Reply(
+                            "@err wireless transfer or management busy".into(),
+                        ))
+                    }
+                    Ok(command) => out(Effect::Radio(command)),
+                    Err(error) => out(Effect::Reply(format!("@err wireless {error}"))),
+                }
+                return;
+            }
+            ("nand-status", []) => {
+                out(Effect::NandStatus);
+                return;
+            }
+            ("nand-format", [])
+            | ("nand-test", ["write" | "verify" | "cleanup"])
+            | ("nand-bench", ["write" | "read" | "cleanup"]) => {
+                if self.staging.is_some() || self.management_busy {
+                    out(Effect::Reply(format!(
+                        "@err {verb} transfer or management busy"
+                    )));
+                } else if verb == "nand-format" {
+                    out(Effect::NandFormat);
+                } else if verb == "nand-bench" {
+                    out(Effect::NandBench(args[0].into()));
+                } else {
+                    out(Effect::NandTest(args[0].into()));
+                }
+                return;
+            }
+            ("nand-read", [page]) => {
+                if self.staging.is_some() || self.management_busy {
+                    out(Effect::Reply(
+                        "@err nand-read transfer or management busy".into(),
+                    ));
+                } else if !page.is_empty() && page.bytes().all(|b| b.is_ascii_digit()) {
+                    match page.parse::<u32>() {
+                        Ok(page) => out(Effect::NandRead(page)),
+                        Err(_) => out(Effect::Reply("@err nand-read expected u32 page".into())),
+                    }
+                } else {
+                    out(Effect::Reply("@err nand-read expected u32 page".into()));
+                }
+                return;
+            }
+            ("nand-info", []) => {
+                if self.staging.is_some() || self.management_busy {
+                    out(Effect::Reply(
+                        "@err nand-info transfer or management busy".into(),
+                    ));
+                } else {
+                    out(Effect::NandInfo);
+                }
+                return;
+            }
             ("begin", [id]) => self.begin(vfs, id, UploadKind::App),
             ("skin-begin", [id]) => self.begin(vfs, id, UploadKind::Skin),
             ("photo-begin", []) => self
@@ -796,6 +977,182 @@ mod tests {
     fn crc32_matches_zlib() {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
         assert_eq!(crc32(b""), 0);
+    }
+
+    #[test]
+    fn full_dns_name_survives_console_framing_and_usb_packet_splits() {
+        let host = format!(
+            "{}.{}.{}.{}",
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(61)
+        );
+        assert_eq!(host.len(), 253);
+        let packet = format!("@mosaico wifi-probe {host} 65535\n@mosaico hello\n");
+        for chunk in [1, 64, 512] {
+            let effects = run(
+                &mut Vfs::new(),
+                &mut Session::new(),
+                packet.as_bytes(),
+                chunk,
+            );
+            assert_eq!(
+                effects,
+                [
+                    Effect::Radio(crate::radio::Command::WifiProbe {
+                        host: host.clone(),
+                        port: 65535
+                    }),
+                    Effect::Reply("@ok hello mosaico-push 1".into()),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn hardware_commands_are_deferred_at_the_exact_packet_boundary() {
+        let mut v = Vfs::new(); // Discovery must also work without mounted storage.
+        for (command, expected) in [
+            ("update-status", Effect::Update(crate::update::Command::Status)),
+            ("update-check", Effect::Update(crate::update::Command::Check)),
+            ("update-install", Effect::Update(crate::update::Command::Install)),
+            ("update-cancel", Effect::Update(crate::update::Command::Cancel)),
+            (
+                "wifi-status",
+                Effect::Radio(crate::radio::Command::WifiStatus),
+            ),
+            ("wifi-scan", Effect::Radio(crate::radio::Command::WifiScan)),
+            ("wifi-on", Effect::Radio(crate::radio::Command::WifiOn)),
+            ("bt-on", Effect::Radio(crate::radio::Command::BtOn)),
+            ("bt-off", Effect::Radio(crate::radio::Command::BtOff)),
+            ("nand-info", Effect::NandInfo),
+            ("nand-read 65535", Effect::NandRead(65535)),
+            ("nand-status", Effect::NandStatus),
+            ("nand-format", Effect::NandFormat),
+            ("nand-test write", Effect::NandTest("write".into())),
+            ("nand-test verify", Effect::NandTest("verify".into())),
+            ("nand-test cleanup", Effect::NandTest("cleanup".into())),
+            ("nand-bench write", Effect::NandBench("write".into())),
+            ("nand-bench read", Effect::NandBench("read".into())),
+            ("nand-bench cleanup", Effect::NandBench("cleanup".into())),
+            (
+                "screen-off 30",
+                Effect::Power(crate::power::Command::ScreenOff(30)),
+            ),
+            ("screen-on", Effect::Power(crate::power::Command::ScreenOn)),
+            ("power-status", Effect::Power(crate::power::Command::Status)),
+            (
+                "imu-irq int1",
+                Effect::ImuIrq(Some(crate::imu_interrupt::Route::Int1)),
+            ),
+            (
+                "imu-irq int2",
+                Effect::ImuIrq(Some(crate::imu_interrupt::Route::Int2)),
+            ),
+            (
+                "imu-irq off",
+                Effect::ImuIrq(Some(crate::imu_interrupt::Route::Off)),
+            ),
+            ("imu-irq-status", Effect::ImuIrq(None)),
+        ] {
+            let first = format!("@mosaico {command}\n");
+            let packet = format!("{first}@mosaico hello\n");
+            let mut session = Session::new();
+            let mut effects = Vec::new();
+            let n =
+                session.feed_until_deferred(&mut v, packet.as_bytes(), &mut |e| effects.push(e));
+            assert_eq!(n, first.len());
+            assert_eq!(effects, [expected]);
+            session.feed_until_deferred(&mut v, &packet.as_bytes()[n..], &mut |e| effects.push(e));
+            assert_eq!(effects[1], Effect::Reply("@ok hello mosaico-push 1".into()));
+        }
+    }
+
+    #[test]
+    fn malformed_or_busy_hardware_commands_never_reach_devices() {
+        let mut v = Vfs::new();
+        for command in [
+            "nand-info extra",
+            "nand-read",
+            "nand-read -1",
+            "nand-read +1",
+            "nand-read 4294967296",
+            "nand-read 3 extra",
+            "nand-format extra",
+            "nand-test erase",
+            "screen-off",
+            "screen-off 0",
+            "screen-off 61",
+            "screen-on extra",
+            "imu-irq both",
+            "imu-irq int1 extra",
+            "wifi-connect 61 0102030405060708",
+            "wifi-status extra",
+            "bt-on extra",
+            "wifi-probe localhost 0",
+        ] {
+            let effects = run(
+                &mut v,
+                &mut Session::new(),
+                format!("@mosaico {command}\n").as_bytes(),
+                1,
+            );
+            assert_eq!(effects.len(), 1);
+            assert!(matches!(&effects[0],Effect::Reply(s) if s.starts_with("@err")));
+        }
+        for busy in 0..3 {
+            for command in [
+                "nand-info",
+                "nand-read 0",
+                "nand-format",
+                "nand-test write",
+                "screen-off 30",
+                "imu-irq int1",
+                "wifi-scan",
+                "bt-on",
+            ] {
+                let mut session = Session::new();
+                match busy {
+                    0 => session.set_ota_active(true),
+                    1 => session.set_management_busy(true),
+                    _ => session.staging = Some("app".into()),
+                }
+                let effects = run(
+                    &mut v,
+                    &mut session,
+                    format!("@mosaico {command}\n").as_bytes(),
+                    64,
+                );
+                assert_eq!(effects.len(), 1);
+                assert!(matches!(&effects[0],Effect::Reply(s) if s.starts_with("@err")));
+            }
+        }
+    }
+
+    #[test]
+    fn ota_allows_passive_power_status_without_unlocking_mutations() {
+        let mut v = Vfs::new();
+        let mut session = Session::new();
+        session.set_ota_active(true);
+        let e = run(
+            &mut v,
+            &mut session,
+            b"@mosaico power-status\n@mosaico screen-off 30\n@mosaico nand-read 0\n@mosaico wifi-status\n@mosaico bt-status\n@mosaico wifi-scan\n",
+            512,
+        );
+        assert_eq!(
+            e,
+            [
+                Effect::Power(crate::power::Command::Status),
+                Effect::Reply("@err OTA busy".into()),
+                Effect::Reply("@err OTA busy".into()),
+                Effect::Radio(crate::radio::Command::WifiStatus),
+                Effect::Radio(crate::radio::Command::BtStatus),
+                Effect::Reply("@err OTA busy".into()),
+            ]
+        );
+        assert!(session.ota_active);
     }
 
     #[test]

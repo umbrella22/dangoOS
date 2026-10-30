@@ -1,13 +1,17 @@
 //! GPIO7/61 low-active buttons and GPIO57 open-drain power latch.
 //! Owns all three pins; independent of I2C/slot probing and Lua lifetime.
-use core::cell::RefCell;
+use core::{
+    cell::RefCell,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use critical_section::Mutex;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Instant, Timer};
 use esp_hal::gpio::{Input, Output};
 use log::{info, warn};
 use lua_engine::OnboardButtons;
 use os::behavior::affect::{EventKind, EventSource, SensorEvent};
-use os::buttons::{Button, Gesture, Shutdown, SLEEP_VISIBLE_MS};
+use os::buttons::{Button, Gesture, SLEEP_VISIBLE_MS, Shutdown};
 
 static SNAPSHOT: Mutex<RefCell<OnboardButtons>> = Mutex::new(RefCell::new(OnboardButtons {
     ready: 0,
@@ -21,12 +25,57 @@ static SNAPSHOT: Mutex<RefCell<OnboardButtons>> = Mutex::new(RefCell::new(Onboar
     }; 16],
 }));
 static POWER: Mutex<RefCell<Shutdown>> = Mutex::new(RefCell::new(Shutdown::Idle));
+static LOW_BATTERY: Mutex<RefCell<Option<os::battery::Shutdown>>> = Mutex::new(RefCell::new(None));
+
+static STOP_RADIO: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static RADIO_QUIET: AtomicBool = AtomicBool::new(false);
+
+// Controller operations can take seconds or fail. Keep them off the task that
+// owns GPIO57, without cancelling/reusing their untagged request/reply channels.
+#[embassy_executor::task]
+pub async fn shutdown_radio_task() {
+    STOP_RADIO.wait().await;
+    while !super::radio::quiesce().await {
+        Timer::after_millis(100).await;
+    }
+    RADIO_QUIET.store(true, Ordering::Release);
+}
 
 pub fn snapshot() -> OnboardButtons {
     critical_section::with(|cs| *SNAPSHOT.borrow_ref(cs))
 }
 pub fn shutdown_requested() -> bool {
-    critical_section::with(|cs| POWER.borrow_ref(cs).requested())
+    low_battery_requested() || critical_section::with(|cs| POWER.borrow_ref(cs).requested())
+}
+pub fn low_battery_requested() -> bool {
+    critical_section::with(|cs| LOW_BATTERY.borrow_ref(cs).is_some())
+}
+pub fn request_low_battery() {
+    let first = critical_section::with(|cs| {
+        let mut low = LOW_BATTERY.borrow_ref_mut(cs);
+        if low.is_some() {
+            return false;
+        }
+        *low = Some(os::battery::Shutdown::new(Instant::now().as_millis()));
+        true
+    });
+    if first {
+        crate::ota_runtime::orderly_shutdown();
+        super::power::wake();
+        super::lights::begin_shutdown();
+        super::haptic::set_enabled(false);
+        super::camera::set_ui_preview(false);
+        super::audio::request_stop();
+        super::update::cancel_for_shutdown();
+        info!("power: low battery latched; warning then physical shutdown, no software reset");
+    }
+}
+pub fn warning_uploaded(completed: bool) {
+    critical_section::with(|cs| {
+        if let Some(low) = LOW_BATTERY.borrow_ref_mut(cs).as_mut() {
+            low.uploaded(Instant::now().as_millis(), completed);
+        }
+    });
 }
 pub fn frame_uploaded(sleep_frame: bool, completed: bool) {
     critical_section::with(|cs| {
@@ -51,11 +100,34 @@ pub async fn button_task(ai: Input<'static>, boot: Input<'static>, mut power: Ou
     info!("buttons: AI GPIO7 / BOOT GPIO61 low-active, 20ms debounce, 180ms clicks, 1500ms long");
     let mut missing_frame_warned = false;
     let mut missing_clear_warned = false;
+    let mut radio_stop_requested = false;
+    let mut normal_cut_pending = false;
     loop {
         let now = Instant::now().as_millis();
+        if low_battery_requested() {
+            if !radio_stop_requested {
+                radio_stop_requested = true;
+                STOP_RADIO.signal(());
+            }
+            let cut = critical_section::with(|cs| {
+                LOW_BATTERY
+                    .borrow_ref_mut(cs)
+                    .as_mut()
+                    .is_some_and(|low| low.poll(Instant::now().as_millis()))
+            });
+            if cut {
+                info!("power: low battery warning/deadline complete; asserting GPIO57 low");
+                power.set_low();
+            }
+            // USB can retain supply after the latch is asserted. Stay on the
+            // terminal warning; no new buttons/navigation/reboot are admitted.
+            Timer::after_millis(5).await;
+            continue;
+        }
         for (index, pressed) in [ai.is_low(), boot.is_low()].into_iter().enumerate() {
             let update = keys[index].sample(now, pressed);
             if let Some(pressed) = update.edge {
+                super::power::wake();
                 critical_section::with(|cs| {
                     SNAPSHOT.borrow_ref_mut(cs).edge(index, pressed, now as u32)
                 });
@@ -75,6 +147,7 @@ pub async fn button_task(ai: Input<'static>, boot: Input<'static>, mut power: Ou
                 if index == 0 && gesture == Gesture::Long {
                     let first = critical_section::with(|cs| POWER.borrow_ref_mut(cs).request(now));
                     if first {
+                        crate::ota_runtime::orderly_shutdown();
                         super::lights::begin_shutdown();
                         info!("power: shutdown latched; waiting for presented Sleep frame");
                     }
@@ -107,9 +180,15 @@ pub async fn button_task(ai: Input<'static>, boot: Input<'static>, mut power: Ou
             missing_clear_warned = true;
             warn!("power: no shutdown black TX/latch receipt; keeping GPIO57 released");
         }
-        if cut {
+        normal_cut_pending |= cut;
+        if normal_cut_pending && !radio_stop_requested {
+            radio_stop_requested = true;
+            STOP_RADIO.signal(());
+        }
+        if normal_cut_pending && RADIO_QUIET.load(Ordering::Acquire) {
             info!("power: Sleep >=1500ms and lights cleared; asserting GPIO57 open-drain low once");
             power.set_low();
+            normal_cut_pending = false;
         }
         Timer::after_millis(5).await;
     }

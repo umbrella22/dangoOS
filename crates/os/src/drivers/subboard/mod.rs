@@ -144,6 +144,7 @@ pub struct Subboard {
     left_addr: Flex<'static>,
     _right_addr: Output<'static>,
     descriptor_errors: u32,
+    camera_leased: bool,
 }
 
 impl Subboard {
@@ -167,6 +168,7 @@ impl Subboard {
             left_addr,
             _right_addr: Output::new(right_addr, Level::High, OutputConfig::default()),
             descriptor_errors: 0,
+            camera_leased: false,
         }
     }
 
@@ -214,6 +216,32 @@ impl Subboard {
     /// Slot of the Interaction board being sampled, if any.
     pub fn active_slot(&self) -> Option<Slot> {
         self.active
+    }
+
+    pub fn service_camera(&mut self) {
+        use crate::drivers::camera::slot;
+        slot::set_present(self.slots[0].module == Some(Module::Camera));
+        if let Some(lease) = slot::returned() {
+            self.left.return_camera_reset(lease.reset);
+            self.camera_leased = false;
+            if self.slots[0].module != Some(Module::Camera) { drive_low(&mut self.left_addr); }
+            if self.active.is_none() && self.slots[0].module == Some(Module::Interaction) {
+                self.activate(Slot::Left);
+            }
+        }
+        if slot::requested() {
+            let result = if self.camera_leased { Err("left slot leased") }
+            else if self.slots[0].module != Some(Module::Camera) { Err("no camera in left slot") }
+            else {
+                self.left.take_camera_reset().ok_or("left slot pin unavailable").map(|reset| {
+                    release(&mut self.left_addr);
+                    let [d3, d5, d7] = self.left.camera_data();
+                    self.camera_leased = true;
+                    slot::Lease { reset, data: Some([d3, self.left_addr.peripheral_input(), d5, d7]) }
+                })
+            };
+            slot::grant(result);
+        }
     }
 
     /// Sample the active Interaction board, if any. A few microseconds of
@@ -320,7 +348,7 @@ impl Subboard {
                 }
             }
             Module::Camera => {
-                drive_low(&mut self.left_addr);
+                if !self.camera_leased { drive_low(&mut self.left_addr); }
                 info!("camera module removed; GPIO14 drives left A0 low again");
             }
             Module::Other(_) | Module::Unreadable | Module::ReadFailed => {
@@ -330,6 +358,7 @@ impl Subboard {
     }
 
     fn activate(&mut self, slot: Slot) {
+        if slot == Slot::Left && self.camera_leased { return; }
         match slot {
             Slot::Left => self.left.activate(),
             Slot::Right => self.right.activate(),

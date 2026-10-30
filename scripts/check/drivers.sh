@@ -12,7 +12,7 @@ DIR="$(mktemp -d "${TMPDIR:-/tmp}/mosaico-driver-tests.XXXXXX")"
 trap 'rm -rf "$DIR"' EXIT
 
 SRC=crates/os/src/drivers
-for file in touch/protocol.rs display/packing.rs geometry.rs \
+for file in touch/protocol.rs display/packing.rs geometry.rs nand/protocol.rs \
     subboard/descriptor.rs subboard/retry.rs subboard/signal.rs subboard/touch_key.rs; do
     name="$(basename "$file" .rs)"
     rustc --edition=2021 --test "$SRC/$file" -o "$DIR/$name"

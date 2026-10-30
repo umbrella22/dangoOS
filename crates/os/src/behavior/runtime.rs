@@ -298,6 +298,19 @@ impl Runtime {
             Expression::Error | Expression::Panic
         )
     }
+    pub async fn reload_brain_transaction_async(
+        &mut self, source: &str, now: u64,
+        commit: impl AsyncFnOnce() -> Result<(), alloc::string::String>,
+    ) -> Result<(), alloc::string::String> {
+        if self.shutdown { return Err("shutdown in progress".into()); }
+        self.brain.as_mut().ok_or_else(|| alloc::string::String::from("brain not configured"))?
+            .replace_with_commit_async(source, now, commit).await?;
+        self.brain_haptic = None;
+        self.brain_command = None;
+        self.collect_brain_effects();
+        self.publish();
+        Ok(())
+    }
     pub fn native_expression(&self) -> Expression {
         if self.shutdown {
             Expression::Sleep

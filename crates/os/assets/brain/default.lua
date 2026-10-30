@@ -3,7 +3,7 @@
 local min,max,abs = math.min,math.max,math.abs
 local function sub(a,b) return max(0,a-b) end
 local function priority(p) return p=='Error' and 3 or p=='Panic' and 2 or 1 end
-local intensity={Idle=0,Sleep=0,Curious=40,Happy=50,Puzzled=60,Confused=45,Surprised=70,Panic=100,Angry=90,Satisfied=55,Listening=60,Thinking=35,Speaking=55,Error=100,Tired=25,Dying=15,Peering=40,Dazzled=65}
+local intensity={Idle=0,Sleep=0,Curious=40,Happy=50,Puzzled=60,Confused=45,Surprised=70,Panic=100,Angry=90,Satisfied=55,Listening=60,Thinking=35,Speaking=55,Error=100,Tired=25,Dying=15,Peering=40,Dazzled=65,NetworkDisconnected=35,NetworkConnected=50,BluetoothDisconnected=35,BluetoothConnected=50,MusicPlaying=55}
 local function window(times,at,span,capacity)
     times[#times+1]=at
     while #times>capacity or (#times>0 and sub(at,times[1])>span) do table.remove(times,1) end
@@ -138,6 +138,8 @@ function A:resolve(skip_reaction)
         return self.activity,'Activity',self.fallback_since_ms
     end
     if self.battery_expression then return self.battery_expression,'Battery',self.fallback_since_ms end
+    if self.music_since then return 'MusicPlaying','Activity',self.music_since end
+    if self.connection_expression then return self.connection_expression,'Activity',self.connection_since end
     return self.idle_expression,'Idle',self.fallback_since_ms
 end
 function A:snapshot_at(now)
@@ -352,10 +354,22 @@ function A:on_module_removed(at,source,kind)
     if kind=='Interaction' then self:start_module_sequence(at,{step('Surprised','ModuleRemove',800),step('Confused','ModuleRemove',2500)},'ModuleRemove')
     elseif kind=='Camera' then self:start_module_sequence(at,{step('Confused','ModuleRemove',2500)},'ModuleRemove') end
 end
+function A:on_business(at,kind,value)
+    if kind=='MusicPlayback' then
+        if value then self.music_since=self.music_since or at else self.music_since=nil end
+        return
+    end
+    local field=kind=='NetworkConnection' and 'network_connected' or 'bluetooth_connected'
+    if self[field]==value then return end
+    self[field]=value
+    self.connection_expression=kind=='NetworkConnection' and (value and 'NetworkConnected' or 'NetworkDisconnected') or (value and 'BluetoothConnected' or 'BluetoothDisconnected')
+    self.connection_since=at
+end
 function A:on_event(event)
     local at=max(event.at_ms,self.now_ms);self:advance(at)
     local k=event.kind;local t=type(k)=="string" and k or k.type;local args=type(k)=="table" and k.args or {}
-    if t=='Accel' then self:on_accel(at,k.ax_mg,k.ay_mg,k.az_mg)
+    if t=='NetworkConnection' or t=='BluetoothConnection' or t=='MusicPlayback' then self:on_business(at,t,args[1])
+    elseif t=='Accel' then self:on_accel(at,k.ax_mg,k.ay_mg,k.az_mg)
     elseif t=='Gyro' then self:on_gyro(at,k.gx_dps,k.gy_dps,k.gz_dps)
     elseif t=='MagneticEdge' then self:on_magnetic_edge(at,k.confidence)
     elseif t=='KeyDown' then self:on_key_down(at,event.source)

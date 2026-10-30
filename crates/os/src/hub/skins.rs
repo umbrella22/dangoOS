@@ -19,10 +19,52 @@ use alloc::{
 pub const ROOT: &str = "/data/skins";
 pub const STAGING: &str = "/data/skins/.incoming";
 const SELECTED: &str = "/data/skins/.selected";
+pub const DEFAULT_NAME: &str = "鸣潮 · 心月狐团子";
+
+// Existing NAND packages retain their stable IDs and saved selection when
+// bundled characters are renamed. Custom packages keep their manifest names.
+fn display_name<'a>(id: &str, manifest_name: &'a str) -> &'a str {
+    match id {
+        "default" => DEFAULT_NAME,
+        "eclipse" => "玄灵 · 月蚀",
+        "normal" => "玄灵 · 常态",
+        "black-blue" => "智谱团子",
+        _ => manifest_name,
+    }
+}
 
 pub struct Loaded {
     pub id: String,
     pub skin: Rc<Skin>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Choice {
+    pub id: String,
+    pub name: String,
+}
+/// Lightweight catalog: opening Settings reads names, never every image blob.
+/// Full validation remains part of selecting and loading one resource.
+pub fn choices(v: &mut Vfs) -> Result<Vec<Choice>, String> {
+    let mut choices = alloc::vec![Choice { id: "default".into(), name: DEFAULT_NAME.into() }];
+    let entries = match v.read_dir(ROOT) {
+        Ok(entries) => entries,
+        Err(Errno::NOENT) => return Ok(choices),
+        Err(e) => return Err(e.to_string()),
+    };
+    for entry in entries {
+        if entry.meta.kind != Kind::Dir || valid_id(&entry.name).is_err() { continue; }
+        let manifest = read(v, &format!("{ROOT}/{}/skin.json", entry.name), 4096)
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).map_err(|_| "skin manifest JSON".into()));
+        let Ok(manifest) = manifest else { continue; };
+        let Some(name) = manifest["name"].as_str() else { continue; };
+        if manifest["id"].as_str() != Some(entry.name.as_str()) || name.is_empty()
+            || name.len() > 96 || name.chars().any(char::is_control) { continue; }
+        let name = display_name(&entry.name, name).into();
+        choices.push(Choice { id: entry.name, name });
+    }
+    let order = |id: &str| match id { "eclipse" => 0, "normal" => 1, "black-blue" => 2, _ => 3 };
+    choices[1..].sort_by(|a, b| order(&a.id).cmp(&order(&b.id)).then_with(|| a.id.cmp(&b.id)));
+    Ok(choices)
 }
 fn valid_id(id: &str) -> Result<(), String> {
     if !registry::id_is_valid(id) || id == "default" {
@@ -167,13 +209,35 @@ pub fn select(v: &mut Vfs, id: &str) -> Result<(), String> {
     }
     persist(v, id)
 }
+/// Validate and persist a UI selection once, retaining the validated resource
+/// for activation. The previous live skin survives any read or write failure.
+pub fn select_loaded(v: &mut Vfs, id: &str, log: &mut dyn FnMut(&str)) -> Result<Loaded, String> {
+    let skin = if id == "default" {
+        default_skin(v, log)
+    } else {
+        recover(v, id)?;
+        load_dir(v, &format!("{ROOT}/{id}"), id)?
+    };
+    persist(v, id)?;
+    Ok(Loaded { id: id.into(), skin })
+}
+fn default_skin(v: &mut Vfs, log: &mut dyn FnMut(&str)) -> Rc<Skin> {
+    let loaded = read(v, "/system/skins/default.bin", MAX_BYTES).and_then(Skin::parse);
+    match loaded {
+        Ok(skin) => skin,
+        Err(reason) => {
+            log(&format!("skin system default unavailable: {reason}; using recovery art"));
+            Skin::builtin()
+        }
+    }
+}
 pub fn restore(v: &mut Vfs, log: &mut dyn FnMut(&str)) -> Loaded {
     let result = (|| {
         let id = selected(v)?;
         if id == "default" {
             return Ok(Loaded {
                 id,
-                skin: Skin::builtin(),
+                skin: default_skin(v, log),
             });
         }
         recover(v, &id)?;
@@ -184,7 +248,7 @@ pub fn restore(v: &mut Vfs, log: &mut dyn FnMut(&str)) -> Loaded {
         log(&format!("skin fallback default: {reason}"));
         Loaded {
             id: "default".into(),
-            skin: Skin::builtin(),
+            skin: default_skin(v, log),
         }
     })
 }
@@ -279,6 +343,68 @@ mod tests {
         let mut out = vec![0; PIXELS];
         FoxRenderer::new().render(&Scene::with_skin(FoxPose::Idle, skin), &mut out);
         out
+    }
+    #[test]
+    fn renamed_bundled_characters_keep_existing_nand_ids_and_custom_names() {
+        let mut v = disk();
+        for (id, name) in [("eclipse", "月蚀"), ("normal", "常态"),
+            ("black-blue", "黑发蓝挑染"), ("custom", "自定义团子")] {
+            let path = format!("{ROOT}/{id}");
+            v.create_dir_all(&path).unwrap();
+            let manifest = serde_json::json!({"id": id, "name": name});
+            v.write_file(&format!("{path}/skin.json"), manifest.to_string().as_bytes()).unwrap();
+        }
+        persist(&mut v, "black-blue").unwrap();
+        let before = v.read_file(&format!("{ROOT}/black-blue/skin.json")).unwrap();
+        let catalog = choices(&mut v).unwrap();
+        assert_eq!(catalog.iter().map(|c| (c.id.as_str(), c.name.as_str())).collect::<Vec<_>>(), [
+            ("default", "鸣潮 · 心月狐团子"), ("eclipse", "玄灵 · 月蚀"),
+            ("normal", "玄灵 · 常态"), ("black-blue", "智谱团子"), ("custom", "自定义团子"),
+        ]);
+        assert_eq!(selected(&mut v).unwrap(), "black-blue");
+        assert_eq!(v.read_file(&format!("{ROOT}/black-blue/skin.json")).unwrap(), before);
+    }
+    #[test]
+    fn prepared_selection_reuses_validated_pixels_and_preserves_the_previous_choice_on_failure() {
+        let mut v = disk();
+        install(&mut v, "one", 0x07e0);
+        let loaded = select_loaded(&mut v, "one", &mut |_| {}).unwrap();
+        assert_eq!(loaded.id, "one");
+        assert_eq!(selected(&mut v).unwrap(), "one");
+        let expected = pixels(Rc::clone(&loaded.skin));
+        // Activation uses its owned bytes even if storage is unavailable later.
+        v.remove_tree(&format!("{ROOT}/one")).unwrap();
+        assert_eq!(pixels(loaded.skin), expected);
+        assert!(select_loaded(&mut v, "missing", &mut |_| {}).is_err());
+        assert_eq!(selected(&mut v).unwrap(), "one");
+        v.create_dir_all(&format!("{SELECTED}.new")).unwrap();
+        assert!(select_loaded(&mut v, "default", &mut |_| {}).is_err());
+        assert_eq!(selected(&mut v).unwrap(), "one");
+    }
+    #[test]
+    #[ignore = "requires private assets/dango-family artwork"]
+    fn family_catalog_persists_a_validated_choice_and_reloads_that_character() {
+        let mut v = disk();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/dango-family/skins");
+        for id in ["eclipse", "normal", "black-blue"] {
+            let manifest = std::fs::read(root.join(id).join("skin.json")).unwrap();
+            let binary = std::fs::read(root.join(id).join("fox.bin")).unwrap();
+            let path = format!("{ROOT}/{id}");
+            v.create_dir_all(&path).unwrap();
+            v.write_file(&format!("{path}/skin.json"), &manifest).unwrap();
+            v.write_file(&format!("{path}/fox.bin"), &binary).unwrap();
+        }
+        let catalog = choices(&mut v).unwrap();
+        assert_eq!(catalog.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["鸣潮 · 心月狐团子", "玄灵 · 月蚀", "玄灵 · 常态", "智谱团子"]);
+        select(&mut v, "normal").unwrap();
+        assert_eq!(selected(&mut v).unwrap(), "normal");
+        let normal = restore(&mut v, &mut |_| panic!("valid selection fell back"));
+        assert_eq!(normal.id, "normal");
+        let before = pixels(normal.skin);
+        v.write_file(&format!("{ROOT}/eclipse/fox.bin"), b"broken").unwrap();
+        assert!(select(&mut v, "eclipse").is_err());
+        assert_eq!(selected(&mut v).unwrap(), "normal");
+        assert_eq!(pixels(restore(&mut v, &mut |_| {}).skin), before);
     }
     #[test]
     fn selection_cold_load_replacement_same_id_and_delete_return_to_builtin() {

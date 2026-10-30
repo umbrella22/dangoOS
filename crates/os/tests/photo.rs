@@ -2,7 +2,7 @@
 //! actual image decoders. Host libc files are mirrored into LittleFS for D: BIN.
 use lua_engine::{Host, Limits, RawAllocator, Request, Step, Vm};
 use os::lua_lvgl::LuaLvglService;
-use rs_lvgl::{sys, Display};
+use rs_lvgl::{Display, sys};
 use std::{
     alloc::Layout,
     cell::RefCell,
@@ -217,11 +217,28 @@ fn populate(root: &Path, fixtures: &Path) {
             1 => ("01-grayscale.jpeg".into(), "grayscale.jpeg"),
             2 => ("02-orientation.bin".into(), "orientation-rgb565.bin"),
             3 => ("03-corrupt.jpg".into(), "corrupt.jpg"),
+            4 => ("04-camera.jpg".into(), "camera-generated"),
             27 => ("ignored.png".into(), "pixels.png"),
             _ => (format!("{n:02}-orientation.jpg"), "orientation.jpg"),
         };
         let path = root.join("photos").join(name);
-        let data = fs::read(fixtures.join(source)).unwrap();
+        let data = if source == "camera-generated" {
+            let mut uyvy = vec![0; 640 * 480 * 2];
+            for y in 0..480 {
+                for x in (0..640).step_by(2) {
+                    let at = (y * 640 + x) * 2;
+                    uyvy[at..at + 4].copy_from_slice(if x < 320 {
+                        &[90, 81, 240, 81]
+                    } else {
+                        &[240, 41, 110, 41]
+                    });
+                }
+            }
+            let rgb = os::camera::image::rgb888(&uyvy, 640, 480, false).unwrap();
+            lua_engine::jpeg::encode_rgb888(640, 480, &rgb, 85).unwrap()
+        } else {
+            fs::read(fixtures.join(source)).unwrap()
+        };
         fs::write(&path, &data).unwrap();
         fs::File::options()
             .write(true)
@@ -302,10 +319,11 @@ fn photo_navigation_deletion_and_cleanup() {
     };
     h.run(1800);
     assert!(visible("Album") && visible("27 photos"));
-    assert!(logs
-        .borrow()
-        .iter()
-        .any(|l| l.contains("found 27 image(s)")));
+    assert!(
+        logs.borrow()
+            .iter()
+            .any(|l| l.contains("found 27 image(s)"))
+    );
     capture(&out, "01-grid-native-images", &pixels);
     let scroll = unsafe { find_scroll(sys::lv_screen_active()).expect("scrollable grid") };
     h.press(400, 400, 100);
@@ -334,6 +352,17 @@ fn photo_navigation_deletion_and_cleanup() {
     h.label(">");
     assert!(visible("03-corrupt.jpg") && visible("Image load failed"));
     capture(&out, "06-corrupt-image", &pixels);
+    h.label(">");
+    assert!(visible("04-camera.jpg") && !visible("Image load failed"));
+    capture(&out, "06b-camera-jpeg-fullscreen", &pixels);
+    {
+        let output = pixels.borrow();
+        let left = &output[(220 * 480 + 100) * 3..][..3];
+        let right = &output[(220 * 480 + 380) * 3..][..3];
+        assert!(left[0] > 240 && left[2] < 16, "camera red: {left:?}");
+        assert!(right[2] > 240 && right[0] < 16, "camera blue: {right:?}");
+    }
+    h.label("<");
     h.label("<");
     h.label("<");
     assert!(visible("01-grayscale.jpeg"));
@@ -375,10 +404,12 @@ fn photo_navigation_deletion_and_cleanup() {
         late <= early + 128 * 1024,
         "retained callback growth: early={early} late={late}"
     );
-    assert!(!logs
-        .borrow()
-        .iter()
-        .any(|l| l.contains("lvgl callback failed")));
+    assert!(
+        !logs
+            .borrow()
+            .iter()
+            .any(|l| l.contains("lvgl callback failed"))
+    );
     h.vm.as_mut().unwrap().interrupt();
     // External app stop owns teardown; no Lua cleanup is required to make it safe.
     drop(h.vm.take());

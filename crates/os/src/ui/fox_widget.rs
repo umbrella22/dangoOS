@@ -145,6 +145,7 @@ pub struct FoxControl {
     expression: Cell<Expression>,
     play_pose: Cell<Option<FoxPose>>,
     skin: core::cell::RefCell<Rc<fox::skin::Skin>>,
+    loading: Cell<bool>,
     visual: Cell<FoxVisual>,
     /// Render on the next tick instead of waiting for the 50 ms cadence.
     urgent: Cell<bool>,
@@ -176,6 +177,7 @@ impl FoxControl {
             expression: Cell::new(expression),
             play_pose: Cell::new(None),
             skin: core::cell::RefCell::new(fox::skin::Skin::builtin()),
+            loading: Cell::new(false),
             visual: Cell::new(FoxVisual::IDLE),
             urgent: Cell::new(true),
             creates: Cell::new(0),
@@ -237,8 +239,18 @@ impl FoxControl {
     /// Publish a fully validated skin at one UI-owned switch point.
     pub fn set_skin(&self, skin: Rc<fox::skin::Skin>) {
         *self.skin.borrow_mut() = skin;
+        self.set_loading(false);
         self.mark_urgent();
     }
+
+    /// Keep recovery art hidden until the persisted selection is resolved.
+    pub fn set_loading(&self, loading: bool) {
+        if self.loading.replace(loading) != loading {
+            self.mark_urgent();
+        }
+    }
+
+    pub fn loading(&self) -> bool { self.loading.get() }
 
     /// Show a new expression. The mounted widget switches pose on the next
     /// [`rs_lvgl_ui::Ui::tick`]; no remount and no `App::view` call happen.
@@ -579,8 +591,13 @@ impl CustomWidget for FoxWidget {
         // Advance on every tick so animation timing does not depend on the
         // render cadence.
         let animate_started = mono_us();
-        self.animator.advance(elapsed_ms);
-        let input = self.compose_input(elapsed_ms);
+        let input = if self.control.loading() {
+            // The selected character gets its complete entrance after loading.
+            FoxInput::REST
+        } else {
+            self.animator.advance(elapsed_ms);
+            self.compose_input(elapsed_ms)
+        };
         self.control
             .last_animate_us
             .set(elapsed_us(animate_started));
@@ -611,8 +628,14 @@ impl CustomWidget for FoxWidget {
         };
 
         let render_started = mono_us();
-        let scene = self.animator.scene(input);
-        self.renderer.render(&scene, lease.pixels_mut());
+        let pose = if self.control.loading() {
+            fox::loading::render(lease.pixels_mut());
+            None
+        } else {
+            let scene = self.animator.scene(input);
+            self.renderer.render(&scene, lease.pixels_mut());
+            Some(scene.pose)
+        };
         self.control.last_render_us.set(elapsed_us(render_started));
         #[cfg(all(feature = "touch-latency-diagnostics", target_os = "none"))]
         crate::telemetry::touch_trace::with(|t| {
@@ -620,7 +643,7 @@ impl CustomWidget for FoxWidget {
         });
         FoxControl::bump(&self.control.rendered);
         lease.publish();
-        self.control.rendered_pose.set(Some(scene.pose));
+        self.control.rendered_pose.set(pose);
 
         if !self.control.plane_mode() {
             self.show_latest(pool, object);

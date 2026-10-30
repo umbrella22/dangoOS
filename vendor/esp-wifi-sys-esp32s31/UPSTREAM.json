@@ -1,0 +1,111 @@
+{
+  "repository": "https://github.com/esp-rs/esp-wifi-sys.git",
+  "revision": "5afc3a38cc1abcd463e3b5140f0ac742de44053f",
+  "package": "esp-wifi-sys-esp32s31",
+  "files_before_patch": [
+    {
+      "path": ".cargo/config.toml",
+      "sha256": "c89d6df6cd0df9ced760f8f49f609a2ff61a721b77e9d69445ebcfe3c9ad2095"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "8e505d80de80029d7ccc3cb956af3407a7b7be47efcd6ef55d0ef2f2a63e7a3f"
+    },
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "ecfe934a9e3fb8ae30d74fabaebac85d280024f117d77f5c71a7456b17fc9ca3"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "0101ae3d137bc02e76a16616ce4da583ac497a4cc280530b32c4c8f96c2d35fc"
+    },
+    {
+      "path": "README.md",
+      "sha256": "417f88626660fd3b458259b73eb6dbf805b0b52f2db48a855c5ac52003106bfb"
+    },
+    {
+      "path": "build.rs",
+      "sha256": "69bc82ba4686851dc439e08143c9e32ca69675152b2aca5798dcdaa795d62c02"
+    },
+    {
+      "path": "libs/libble_app.a",
+      "sha256": "62dbe7216619d1f1e3dcd51233d91b211add15c7c746851af0be6a632cdae195"
+    },
+    {
+      "path": "libs/libbredr_app.a",
+      "sha256": "d3ea92e80bb60805d86a7bc831d52cb8b4c408d0ba9fe4425c88b6f03dca2093"
+    },
+    {
+      "path": "libs/libbtbb.a",
+      "sha256": "f6fb6e5f64b1d0a930ea65445c0bcc982be68abaae4d4a66914a8434212d41c7"
+    },
+    {
+      "path": "libs/libbtdm_common.a",
+      "sha256": "fa22a8a2aca48b807addda2bbad78868d6774c82bcdeb8090f9140f6cbccd099"
+    },
+    {
+      "path": "libs/libcoexist.a",
+      "sha256": "9b8f55b1a1670ac8da1323595c817eca7340f073e783c162d3a2dfde7bbd19c8"
+    },
+    {
+      "path": "libs/libcore.a",
+      "sha256": "649dac152b6aa6a0c41d14a2e15eb2421bd85247e227aaf4bb6fbd638a748cfa"
+    },
+    {
+      "path": "libs/libespnow.a",
+      "sha256": "0dc76a695732593c5078a98b253814ca3763e2ff9fcd2dc89463a4050409a593"
+    },
+    {
+      "path": "libs/libmesh.a",
+      "sha256": "5cd5e3ea8f03708d9d6e2de9e329d12fcebf00af416bfa19dc1d24b6f13a590c"
+    },
+    {
+      "path": "libs/libnet80211.a",
+      "sha256": "bb011bf4e8125426fe869a560808a73c12aaa19bec8cfdc68bedb7c33d1a0e24"
+    },
+    {
+      "path": "libs/libphy.a",
+      "sha256": "37a56eb83a54cf4378c121ff131befbc10a4490347ffe36317d66d95483578e7"
+    },
+    {
+      "path": "libs/libpp.a",
+      "sha256": "1fe72c9b13813c30b5016055e2d3f374fd82a05fdab4d56aefcc7ea82d51dfec"
+    },
+    {
+      "path": "libs/libprintf.a",
+      "sha256": "7524617cf66e12760d4fcacf0b2e5baf1f18513a8bb6169442dced1a954bc5c1"
+    },
+    {
+      "path": "libs/libregulatory.a",
+      "sha256": "cea35934a1737f34461b59265e57b950005ee36a2113ee9f958d55d4ea5ad021"
+    },
+    {
+      "path": "libs/libsmartconfig.a",
+      "sha256": "f50b3c4537842374dbe2076de6427af1eb2eebc389654058e49ebb3cf02e3f2e"
+    },
+    {
+      "path": "libs/libwapi.a",
+      "sha256": "1db945577a23ccdcb722e074958a656885746bfc50b31d1b2e4db3b136b83986"
+    },
+    {
+      "path": "libs/libwpa_supplicant.a",
+      "sha256": "28353b46a2406bc96d8c1010eec1953ed0a711fff6c0923371550763ee0c785a"
+    },
+    {
+      "path": "src/c_types.rs",
+      "sha256": "d2ad76f76d884c27b664ea56e04f3c8e18c278492698af048b5e2244b9f42e59"
+    },
+    {
+      "path": "src/fmt.rs",
+      "sha256": "ecadf3ab68ae254b4a766108a63c8b55c7ef4108ee5ab069250daacf44314c78"
+    },
+    {
+      "path": "src/include.rs",
+      "sha256": "72284ff5e76e9e233c38daa384331309443c3541e10c260a27bec6ac4edb8f85"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "47c074ff2608850b165b1201f1a2dbc0f5c2cbc3e696a8c489408894ef2a6702"
+    }
+  ]
+}

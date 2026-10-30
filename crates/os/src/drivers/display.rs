@@ -320,6 +320,27 @@ impl Display<Async> {
         let hw = (percent.min(100) as u32 * 255 / 100) as u8;
         self.write_reg_async(0x51, &[hw]).await
     }
+
+    /// Recoverable CO5300 standby. Keep VCC and CS ownership intact.
+    pub async fn sleep_in(&mut self) -> Result<(), esp_hal::spi::Error> {
+        self.write_reg_async(0x28, &[]).await?; // Display Off
+        self.write_reg_async(0x10, &[]).await?; // Sleep In
+        embassy_time::Timer::after_millis(120).await;
+        Ok(())
+    }
+
+    /// Use the existing board init's conservative 600 ms settle intervals.
+    /// Brightness stays zero until the plane completes a fresh full frame.
+    pub async fn sleep_out(&mut self) -> Result<(), esp_hal::spi::Error> {
+        self.write_reg_async(0x11, &[]).await?;
+        embassy_time::Timer::after_millis(600).await;
+        // Write brightness after Sleep Out has settled, before Display On;
+        // do not rely on register writes being accepted while asleep.
+        self.set_brightness_async(0).await?;
+        self.write_reg_async(0x29, &[]).await?;
+        embassy_time::Timer::after_millis(600).await;
+        Ok(())
+    }
 }
 
 /// Whether the panel is already powered and initialized by the factory

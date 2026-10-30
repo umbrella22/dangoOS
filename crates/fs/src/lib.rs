@@ -13,6 +13,7 @@ extern crate alloc;
 
 pub mod global;
 pub mod lfs;
+pub mod nand;
 pub mod vfs;
 
 #[cfg(test)]

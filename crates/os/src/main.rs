@@ -9,17 +9,20 @@
 //! - [`console`]: the USB CDC-ACM log console and app push protocol.
 //! - The host-testable library (`os`): behaviour, fox, UI, telemetry.
 //!
-//! `esp-rtos` + Embassy, two executors:
+//! `esp-rtos` + Embassy, pinned thread and interrupt executors:
 //!
 //! - **Interrupt executor (FROM_CPU_INTR1, priority 2)**
 //!   - `tasks::plane`: exclusively owns the CO5300 panel. Takes the newest
 //!     rendered canvas from the two-slot canvas pool and uploads it in 32-row
 //!     DMA chunks. Running here lets each chunk resume as soon as its DMA
 //!     completes, instead of waiting for the thread-mode renderer to yield.
-//! - **Thread-mode executor**
+//! - **Core1 thread-mode executor**
 //!   - `tasks::ui`: exclusively owns LVGL. A 5 ms loop drains sensors and
 //!     touch into the behaviour runtime, renders the fox into a free canvas
 //!     slot and hands each new frame to the plane.
+//!   - `tasks::lua`: foreground Lua applications, with LVGL requests routed
+//!     through the UI owner. Resident Lua is serviced by `tasks::ui`.
+//! - **Core0 thread-mode executor**
 //!   - `tasks::input`: exclusively owns the CST9220. GPIO6 falling edges plus a
 //!     5 ms fallback trigger async I2C report reads into a bounded queue.
 //!   - `tasks::sensors`: polls the BMI270, the BMM150 pair and both expansion
@@ -29,6 +32,12 @@
 //!   - `tasks::haptic`: non-blocking motor patterns on GPIO8. esp-hal has no
 //!     S31 LEDC driver at this revision, so RMT TX generates the equivalent
 //!     5 kHz PWM in hardware.
+//!
+//! The default `dual-core-ui` build runs UI and Lua on Core1. Core0's
+//! priority-1 executor services HCI, IP, input and power; a priority-0 services
+//! thread handles USB commands, persistence, skin/registry loading, TLS crypto
+//! and photo encoding. IRQ executors retain the hardware bindings on Core0.
+//! `--no-default-features` keeps UI/Lua on Core0 for comparison only.
 //!
 //! The console is a USB-OTG HS CDC-ACM device on the USB-C port. The boot
 //! summary is replayed on every connection and includes display readiness,
@@ -61,6 +70,8 @@ mod crashlog;
 mod drivers;
 mod ota_runtime;
 mod tasks;
+#[cfg(feature = "dual-core-ui")]
+mod ui_executor;
 #[cfg(feature = "usb-session-diagnostics")]
 mod usb_diag_driver;
 
@@ -89,7 +100,36 @@ use log::{info, warn};
 use os::telemetry::usb_session as usb_diag;
 
 use crate::drivers::{display, shared_i2c, subboard, touch};
-use crate::tasks::{haptic, input, lights, lua, plane, sensors, ui};
+use crate::tasks::{haptic, input, lights, plane, sensors};
+#[cfg(any(not(feature = "dual-core-ui"), feature = "usb-session-diagnostics"))]
+use crate::tasks::ui;
+#[cfg(not(feature = "dual-core-ui"))]
+use crate::tasks::lua;
+
+mod resident_budget;
+mod service_executor;
+
+#[cfg(feature = "ota-capacity-probe")]
+#[used]
+static CAPACITY_PROBE: [u8; 7 * 512 * 1024] = [0x6d; 7 * 512 * 1024];
+
+#[cfg(feature = "ota-capacity-probe")]
+#[inline(never)]
+fn verify_capacity_probe() {
+    // This feature moves .text beyond the old four-MiB linker boundary.
+    // Executing this function proves that the upper mapping is usable.
+    let code = verify_capacity_probe as *const () as usize;
+    assert!(code >= 0x40400000, "capacity probe must execute above four MiB");
+    let mut sum = 0u32;
+    for offset in (0..CAPACITY_PROBE.len()).step_by(65536) {
+        // Read each mapped flash page at runtime, including the last page.
+        sum += unsafe { CAPACITY_PROBE.as_ptr().add(offset).read_volatile() } as u32;
+    }
+    assert_eq!(sum, 56 * 0x6d);
+    let first = CAPACITY_PROBE.as_ptr() as usize;
+    info!("ota capacity probe: bytes={} first={first:#x} last={:#x} code={code:#x} pages=56 sum={sum} PASS",
+        CAPACITY_PROBE.len(), first + CAPACITY_PROBE.len() - 1);
+}
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
@@ -98,6 +138,8 @@ async fn main(spawner: Spawner) {
     usb_diag::begin_boot();
     console::install_logger();
     crashlog::report_last_boot();
+    #[cfg(feature = "radio-hang-diagnostics")]
+    drivers::storage::report_previous_rom_access();
 
     info!("==============================================");
     info!("Mosaico S31 R1 platform runtime");
@@ -109,11 +151,19 @@ async fn main(spawner: Spawner) {
 
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     drivers::storage::init_flash();
-    ota_runtime::early_boot();
-    // LVGL plus the 480x48 internal-RAM draw buffer need more than the R0
-    // heartbeat-only heap; this matches the archived UI firmware.
-    esp_alloc::heap_allocator!(size: 256 * 1024);
+    // LVGL's internal-RAM draw band and hardware buffers need more than the
+    // archived heartbeat-only heap.
+    // General allocations prefer PSRAM. DMA and radio use explicit Internal
+    // capabilities, retaining internal heap space for their live buffers.
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+    // Bluedroid adds internal control state. Keep at least 32 KiB between BSS
+    // and the boot stack top; both thread mode and interrupt executors use it.
+    // General allocations prefer PSRAM, while DMA/controller buffers explicitly
+    // request Internal capability from this heap plus the reclaimed region.
+    esp_alloc::heap_allocator!(size: 160 * 1024);
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+    #[cfg(feature = "ota-capacity-probe")]
+    verify_capacity_probe();
 
     // The flash file systems are mounted once USB is up (see the end), so a
     // failure there shows up on the console.
@@ -130,8 +180,12 @@ async fn main(spawner: Spawner) {
     // The scheduler needs a timer and the FROM_CPU0 software interrupt. It must
     // be running before the first async I2C transaction uses `embassy-time`.
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+    esp_rtos::start(timg0.timer0);
+    let services = service_executor::start().await;
+    resident_budget::init();
     info!("esp-rtos scheduler started (TIMG0 timer, FROM_CPU_INTR0)");
+    #[cfg(feature = "radio-hang-diagnostics")]
+    spawner.spawn(radio_hang_watchdog(timg0.wdt).unwrap());
     #[cfg(feature = "usb-session-diagnostics")]
     spawner.spawn(usb_diagnostic_sampler().unwrap());
 
@@ -147,11 +201,47 @@ async fn main(spawner: Spawner) {
     let ai = esp_hal::gpio::Input::new(peripherals.GPIO7, button_config);
     let boot = esp_hal::gpio::Input::new(peripherals.GPIO61, button_config);
     spawner.spawn(tasks::buttons::button_task(ai, boot, shutdown).unwrap());
+    spawner.spawn(tasks::buttons::shutdown_radio_task().unwrap());
 
     // The console comes up first so that later boot steps can be seen. After
     // a panic, wait (bounded) for the host so the record is read before the
     // same step can fail again.
-    spawner.spawn(usb_task(peripherals.USB_HS, flash).unwrap());
+    services.spawn(usb_task(peripherals.USB_HS, flash).unwrap());
+    // Main I2C0: CST9220 at 0x5A (SDA=56, SCL=3, 400 kHz), async.
+    let i2c = I2c::new(
+        peripherals.I2C0,
+        esp_hal::i2c::master::Config::default().with_frequency(Rate::from_khz(400)),
+    )
+    .expect("I2C0 initialization failed")
+    .with_sda(peripherals.GPIO56)
+    .with_scl(peripherals.GPIO3)
+    .into_async();
+    shared_i2c::install_async(i2c);
+    tasks::battery::boot_check().await;
+    spawner.spawn(tasks::battery::task().unwrap());
+    info!("shared I2C0 installed (async, CST9220 @0x5A)");
+    if !tasks::buttons::low_battery_requested() { ota_runtime::early_boot(); }
+
+    let (network, network_runner) = drivers::radio::wifi::network();
+    spawner.spawn(tasks::radio::wifi::network_task(network, network_runner).unwrap());
+    spawner.spawn(tasks::radio::wifi::task(peripherals.WIFI, network).unwrap());
+    spawner.spawn(tasks::radio::classic::task(peripherals.BT).unwrap());
+    services.spawn(tasks::settings::task().unwrap());
+    services.spawn(tasks::settings::preferences_task().unwrap());
+    spawner.spawn(tasks::update::task(network).unwrap());
+    services.spawn(tasks::skins::task().unwrap());
+    services.spawn(tasks::apps::scan_task().unwrap());
+    // Dedicated SPI3 + DMA1. Enable QE over SIO before claiming all four data pins.
+    drivers::nand::init(
+        peripherals.SPI3,
+        peripherals.DMA_AXI_CH1,
+        peripherals.GPIO20,
+        peripherals.GPIO21,
+        peripherals.GPIO22,
+        peripherals.GPIO23,
+        peripherals.GPIO24,
+        peripherals.GPIO25,
+    );
     // WS2812 retains its last colour across an MCU reset. Clear it before
     // slow panel/storage work or the bounded post-panic USB wait. This only
     // runs after firmware entry; ROM download mode cannot execute this clear.
@@ -219,17 +309,11 @@ async fn main(spawner: Spawner) {
         peripherals.GPIO44,
     );
 
-    // Main I2C0: CST9220 at 0x5A (SDA=56, SCL=3, 400 kHz), async.
-    let i2c = I2c::new(
-        peripherals.I2C0,
-        esp_hal::i2c::master::Config::default().with_frequency(Rate::from_khz(400)),
-    )
-    .expect("I2C0 initialization failed")
-    .with_sda(peripherals.GPIO56)
-    .with_scl(peripherals.GPIO3)
-    .into_async();
-    shared_i2c::install_async(i2c);
-    info!("shared I2C0 installed (async, CST9220 @0x5A)");
+    let audio_executor=alloc::boxed::Box::leak(alloc::boxed::Box::new(
+        InterruptExecutor::new(peripherals.FROM_CPU_INTR3)
+    ));
+    audio_executor.start(Priority::Priority2).spawn(tasks::audio::task(peripherals.I2S0,peripherals.DMA_CH0,peripherals.GPIO54,peripherals.GPIO37,peripherals.GPIO49,peripherals.GPIO52,peripherals.GPIO40,peripherals.GPIO45).unwrap());
+
 
     let touch = touch::Cst9220::new().await;
     info!("touch available={}", touch.is_some());
@@ -251,18 +335,17 @@ async fn main(spawner: Spawner) {
         alloc::boxed::Box::new(InterruptExecutor::new(peripherals.FROM_CPU_INTR1)),
     );
     let plane_spawner = plane_executor.start(Priority::Priority2);
-    // SAFETY: single-core firmware; the interrupt executor runs on core 0,
-    // the same core that created the panel driver.
+    // SAFETY: this interrupt executor remains on Core0, the same core that
+    // created the panel driver. Only completed frame leases cross from Core1.
     let panel = unsafe { plane::PanelOwner::new(panel) };
     plane_spawner.spawn(plane::plane_task(panel, plane_display, panel_te).unwrap());
     info!("plane on interrupt executor (FROM_CPU_INTR1, priority 2)");
-    spawner.spawn(ui::ui_task(plane_ui).unwrap());
     match touch {
         Some(touch) => {
             spawner.spawn(input::input_task(gpio6, touch).unwrap());
-            info!("R1 tasks spawned: plane, ui, input");
+            info!("R1 hardware tasks spawned: plane, input");
         }
-        None => info!("R1 tasks spawned: plane, ui (input task disabled)"),
+        None => info!("R1 hardware tasks spawned: plane (input task disabled)"),
     }
 
     // v1.2 subboard bus (I2C1, SDA=GPIO0/SCL=GPIO1, internal pull-ups). It is
@@ -276,6 +359,17 @@ async fn main(spawner: Spawner) {
     .with_scl(peripherals.GPIO1)
     .into_async();
     shared_i2c::install_subboard_async(subboard_i2c);
+    let camera_executor=alloc::boxed::Box::leak(alloc::boxed::Box::new(
+        InterruptExecutor::new(peripherals.FROM_CPU_INTR2),
+    ));
+    camera_executor.start(Priority::Priority3)
+        .spawn(drivers::camera::dvp::receive_task().unwrap());
+    services.spawn(tasks::camera::task(tasks::camera::Hardware(
+        peripherals.GPIO48, peripherals.GPIO34,
+        peripherals.LCD_CAM,peripherals.DMA_AXI_CH2,
+        peripherals.GPIO16,peripherals.GPIO15,peripherals.GPIO33,peripherals.GPIO18,
+        peripherals.GPIO55,peripherals.GPIO19,peripherals.GPIO17,
+    )).unwrap());
 
     // Expansion slots: EEPROM address pins (left GPIO14 low -> 0x50, right
     // GPIO39 high -> 0x51) and the Interaction board pins of each side. The
@@ -299,14 +393,24 @@ async fn main(spawner: Spawner) {
             peripherals.GPIO10,
         ),
     );
-    spawner.spawn(sensors::sensor_task(subboard).unwrap());
+    let sensor_irq = esp_hal::gpio::Input::new(
+        peripherals.GPIO2,
+        esp_hal::gpio::InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
+    );
+    spawner.spawn(sensors::sensor_task(subboard, sensor_irq).unwrap());
     info!(
         "sensor task spawned (BMI270/BMM150 on I2C0, slot EEPROMs 0x50/0x51 on I2C1, queue={})",
         sensors::SENSOR_QUEUE_CAPACITY
     );
 
-    spawner.spawn(lua::lua_task().unwrap());
-    info!("lua task spawned ({})", lua_engine::LUA_RELEASE);
+    #[cfg(not(feature = "dual-core-ui"))]
+    {
+        spawner.spawn(ui::ui_task(plane_ui).unwrap());
+        spawner.spawn(lua::lua_task().unwrap());
+        info!("UI/Lua executor on Core0 (single-core comparison)");
+    }
+    #[cfg(feature = "dual-core-ui")]
+    ui_executor::start(peripherals.CPU_CTRL, plane_ui);
 
     // Everything else runs in the spawned tasks.
     core::future::pending::<()>().await;
@@ -316,11 +420,17 @@ async fn main(spawner: Spawner) {
 /// apps when this is done).
 async fn mount_storage(flash: esp_hal::peripherals::FLASH<'static>) {
     embassy_time::Timer::after_millis(1500).await;
+    if !tasks::battery::wait_boot().await {
+        drivers::storage::mark_ready();
+        return;
+    }
     if crashlog::skip(crashlog::Stage::Storage) {
         warn!("fs: not mounted this boot (the last one panicked there); built-in apps only");
     } else {
         crashlog::enter(crashlog::Stage::Storage);
         drivers::storage::init(flash);
+        drivers::nand::volume::mount();
+        drivers::storage::finish_data_init();
         crashlog::enter(crashlog::Stage::Running);
     }
     drivers::storage::mark_ready();
@@ -401,8 +511,59 @@ async fn usb_diagnostic_sampler() {
             os::telemetry::display::FRAMES.load(Ordering::Relaxed),
             console::diagnostic_log_drops(),
         );
-        if usb_diag::reset_due(embassy_time::Instant::now().as_millis()) {
+        if usb_diag::reset_due(embassy_time::Instant::now().as_millis())
+            && !tasks::buttons::shutdown_requested() {
             esp_hal::system::software_reset();
         }
     }
 }
+
+// #region debug-point F:executor-hang
+#[cfg(feature = "radio-hang-diagnostics")]
+#[embassy_executor::task]
+async fn radio_hang_watchdog(
+    mut watchdog: esp_hal::timer::timg::Wdt<esp_hal::peripherals::TIMG0<'static>>,
+) {
+    use esp_hal::{
+        interrupt::InterruptConfigurable,
+        time::Duration,
+        timer::timg::{MwdtStage, MwdtStageAction},
+    };
+    // Capture the interrupted instruction if IRQs still run. Stage1 remains a
+    // hardware reset when IRQ masking also prevents the diagnostic interrupt.
+    watchdog.set_timeout(MwdtStage::Stage0, Duration::from_secs(10));
+    watchdog.set_timeout(MwdtStage::Stage1, Duration::from_secs(2));
+    watchdog.set_interrupt_handler(radio_hang_interrupt);
+    watchdog.enable();
+    watchdog.set_stage_action(MwdtStage::Stage0, MwdtStageAction::Interrupt);
+    watchdog.set_stage_action(MwdtStage::Stage1, MwdtStageAction::ResetSystem);
+    // Only the WDT enable bit is changed; TIMG0's scheduler timer is separate.
+    unsafe { &*esp32s31::TIMG0::ptr() }
+        .int_ena()
+        .modify(|_, w| w.wdt().set_bit());
+    watchdog.feed();
+    info!("radio diagnostic: TIMG0 capture at 10s, hardware reset at 12s; feed every 1s");
+    loop {
+        embassy_time::Timer::after_secs(1).await;
+        watchdog.feed();
+    }
+}
+
+#[cfg(feature = "radio-hang-diagnostics")]
+#[esp_hal::handler(priority = esp_hal::interrupt::Priority::max())]
+fn radio_hang_interrupt() {
+    let pc: usize;
+    let status: usize;
+    // SAFETY: read-only machine CSRs, with the original interrupted PC still
+    // saved by the trap entry. No allocator, scheduler lock or logger is used.
+    unsafe {
+        core::arch::asm!("csrr {0}, mepc", out(reg) pc, options(nomem, nostack));
+        core::arch::asm!("csrr {0}, mstatus", out(reg) status, options(nomem, nostack));
+    }
+    let (dispatch_us, trace_calls) = resident_budget::diagnostic_dispatch();
+    panic!(
+        "radio watchdog pc={pc:#x} task={:#x} d={dispatch_us} n={trace_calls} s={status:#x}",
+        resident_budget::diagnostic_task()
+    );
+}
+// #endregion

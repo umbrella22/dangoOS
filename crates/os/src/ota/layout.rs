@@ -74,59 +74,33 @@ pub fn parse(bytes: &[u8], capacity: u32) -> Result<Layout> {
     }
     inspect(entries)
 }
+/// Exact current NOR contract. Writable application data lives on NAND.
+pub const EXPECTED: [(&str, u8, u8, u32, u32); 9] = [
+    ("otadata", 1, 0, 0x9000, 0x2000),
+    ("phy_init", 1, 1, 0xb000, 0x1000),
+    ("sysmeta", 1, 2, 0xc000, 0x14000),
+    ("vibe_mode", 0, 0x20, 0x20000, 0x1c0000),
+    ("coredump", 1, 3, 0x1e0000, 0x20000),
+    ("nvs", 1, 2, 0x200000, 0x6000),
+    ("main_app", 0, 0x10, 0x210000, SLOT_SIZE),
+    ("ota_1", 0, 0x11, 0x810000, SLOT_SIZE),
+    ("system", 1, 0x83, 0xe10000, 0x1f0000),
+];
 fn inspect(entries: Vec<Partition>) -> Result<Layout> {
-    let find = |name: &str| entries.iter().find(|p| p.label == name);
-    let main = find("main_app").ok_or(Error::Layout("main_app missing"))?;
-    let ab =
-        main.kind == 0 && main.subtype == 0x10 && main.offset == 0x210000 && main.size == SLOT_SIZE;
-    if entries.iter().any(|p| {
-        p.kind == 0
-            && (p.subtype == 0 || (0x10..=0x1f).contains(&p.subtype))
-            && !(p.label == "main_app" && p.subtype == 0x10
-                || ab && p.label == "ota_1" && p.subtype == 0x11)
-    }) {
-        return Err(Error::Layout("extra factory/OTA application"));
-    }
-    let data = if ab {
-        for (label, kind, subtype, offset, size) in [
-            ("main_app", 0, 0x10, 0x210000, SLOT_SIZE),
-            ("ota_1", 0, 0x11, 0x510000, SLOT_SIZE),
-            ("data", 1, 0x83, 0x810000, 0x1d0000),
-            ("otadata", 1, 0, 0x9000, 0x2000),
-        ] {
-            let p = find(label).ok_or(Error::Layout("A/B partition missing"))?;
-            if (p.kind, p.subtype, p.offset, p.size) != (kind, subtype, offset, size) {
-                return Err(Error::Layout("A/B layout mismatch"));
-            }
-        }
-        Some((0x810000, 0x1d0000))
-    } else if main.kind == 0
-        && main.subtype == 0x10
-        && main.offset == 0x210000
-        && main.size == 0x7d0000
-        && !entries.iter().any(|p| p.subtype == 0x11 && p.kind == 0)
-        && find("data").is_none()
-    {
-        Some((0x7e0000, 0x200000))
-    } else {
-        return Err(Error::Layout("unknown app/data layout"));
-    };
-    for (label, kind, subtype, offset) in [
-        ("vibe_mode", 0, 0x20, 0x20000),
-        ("ui_apps", 1, 0x41, 0x9e0000),
-        ("system", 1, 0x83, 0xd00000),
-    ] {
-        if find(label).is_none_or(|p| (p.kind, p.subtype, p.offset) != (kind, subtype, offset)) {
-            return Err(Error::Layout("protected partition missing/moved"));
+    if entries.len() != EXPECTED.len() { return Err(Error::Layout("partition count")); }
+    for &(label, kind, subtype, offset, size) in &EXPECTED {
+        let p = entries.iter().find(|p| p.label == label).ok_or(Error::Layout("A/B partition missing"))?;
+        if (p.kind, p.subtype, p.offset, p.size) != (kind, subtype, offset, size) {
+            return Err(Error::Layout("A/B layout mismatch"));
         }
     }
-    Ok(Layout { entries, ab, data })
+    Ok(Layout { entries, ab: true, data: None })
 }
 
 /// Validate the complete A/B table without invoking the heap. Used before PSRAM init.
 pub fn verify_ab_early(bytes: &[u8], capacity: u32) -> Result<()> {
     let mut count = 0usize;
-    let mut found = 0u8;
+    let mut found = 0u16;
     let mut digest_end = None;
     for (i, e) in bytes.chunks_exact(32).enumerate() {
         if e[..2] == [0xeb, 0xeb] {
@@ -170,28 +144,16 @@ pub fn verify_ab_early(bytes: &[u8], capacity: u32) -> Result<()> {
                 return Err(Error::Layout("partition overlap/duplicate"));
             }
         }
-        let expected = match label {
-            "main_app" => Some((0, 0x10, 0x210000, Some(SLOT_SIZE), 1)),
-            "ota_1" => Some((0, 0x11, 0x510000, Some(SLOT_SIZE), 2)),
-            "data" => Some((1, 0x83, 0x810000, Some(0x1d0000), 4)),
-            "otadata" => Some((1, 0, 0x9000, Some(0x2000), 8)),
-            "vibe_mode" => Some((0, 0x20, 0x20000, None, 16)),
-            "ui_apps" => Some((1, 0x41, 0x9e0000, None, 32)),
-            "system" => Some((1, 0x83, 0xd00000, None, 64)),
-            _ => None,
-        };
-        if let Some((kind, subtype, at, length, bit)) = expected {
-            if (e[2], e[3], offset) != (kind, subtype, at) || length.is_some_and(|v| v != size) {
-                return Err(Error::Layout("A/B layout mismatch"));
-            }
-            found |= bit;
-        } else if e[2] == 0 && (e[3] == 0 || (0x10..=0x1f).contains(&e[3])) {
-            return Err(Error::Layout("extra factory/OTA application"));
+        let (index, &(_, kind, subtype, at, length)) = EXPECTED.iter().enumerate()
+            .find(|(_, entry)| entry.0 == label).ok_or(Error::Layout("unknown partition"))?;
+        if (e[2], e[3], offset, size) != (kind, subtype, at, length) {
+            return Err(Error::Layout("A/B layout mismatch"));
         }
+        found |= 1 << index;
         count += 1;
     }
     let end = digest_end.ok_or(Error::Layout("partition digest missing"))?;
-    if found != 127 || bytes[end..].iter().any(|&v| v != 0xff) {
+    if count != EXPECTED.len() || found != (1 << EXPECTED.len()) - 1 || bytes[end..].iter().any(|&v| v != 0xff) {
         return Err(Error::Layout("A/B partitions/trailer"));
     }
     Ok(())

@@ -1,0 +1,17 @@
+{
+  "upstream": "https://github.com/dlbeer/dhara",
+  "commit": "0e083ded62b911dc1eca1ee99176342541af95c5",
+  "license": "ISC",
+  "patches": [],
+  "files": {
+    "README": "7310b71bca59697984a81f1e3cb49de9564552ea40b323be9144a78d7d3dae6f",
+    "LICENSE": "857b1e7c6a95b2de5be238ea94310444cc479054b62e7f39307d5d2a241ecba9",
+    "dhara/journal.c": "ac98c9424855ea7aad318807ade621599c01c6a0d612d15f5146a81bb2f1fb21",
+    "dhara/map.c": "493327114488139358e8bf7dca360351428bb9998325bef71bfd0e768cdaea4c",
+    "include/dhara/nand.h": "1d0bb8ff2d14ae7a3303bfd47e6b4e8fa338c94abc58aa1e87cbdb087ad17b16",
+    "include/dhara/error.h": "87196176947857f85d184cc9b1f5dfc07e490366dc3ed06ecef9c78a397f2743",
+    "include/dhara/map.h": "f2656fef486accccbad945a25b06ae15b8e2e666b860042d844a87b8294ee09d",
+    "include/dhara/bytes.h": "b4138fc271ed2757e62b4aa6eab7f3eb0176da5d53470e0166a8780d46cd0e88",
+    "include/dhara/journal.h": "443c16e33a8f7a78a84c6619c8dfc52a6c060b710d85583a64758e7e3a967c13"
+  }
+}

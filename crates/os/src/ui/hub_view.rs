@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use rs_lvgl_ui::{
     symbol, Align, Color, FlexAlign, Font, GridTrack, ImageSource, Key, Part, Size, State, Style,
-    TextAlign, View,
+    ScrollDir, ScrollbarMode, TextAlign, View,
 };
 
 use super::hub_font::{HUB_20, HUB_24, HUB_30, HUB_DIGITS_64};
@@ -24,8 +24,8 @@ use super::AppMsg;
 use crate::behavior::affect::ModuleKind;
 use crate::hub::countdown::{format_mm_ss, Phase, PRESETS_MIN};
 use crate::hub::registry::{AppEntry, Registry};
-use crate::hub::snapshot::{MagnetState, SlotState, SystemSnapshot};
-use crate::hub::{AppId, Hub, Settings};
+use crate::hub::snapshot::{MagnetState, SlotState};
+use crate::hub::{AppId, Hub};
 
 /// Design tokens.
 pub mod tokens {
@@ -53,10 +53,24 @@ pub mod tokens {
 
 use tokens::*;
 
-fn font_20() -> Font {
+/// Terminal battery warning, independent of mounted apps, skins and Lua.
+pub(super) fn low_battery() -> View<AppMsg> {
+    rs_lvgl_ui::obj().key(Key::Named("low-battery-root")).scrollable(false)
+        .style(Style::neutral().bg(BG).width(Size::Percent(100)).height(Size::Percent(100)))
+        .child(rs_lvgl_ui::obj().style(Style::neutral().width(Size::Px(100)).height(Size::Px(56))
+            .align(Align::Center).offset(-3, -76).radius(9).border(MUTED, 3))
+            .child(rs_lvgl_ui::obj().style(Style::neutral().width(Size::Px(8)).height(Size::Px(22))
+                .bg(ACCENT).radius(2).align(Align::LeftMid).offset(9, 0))))
+        .child(rs_lvgl_ui::obj().style(Style::neutral().width(Size::Px(6)).height(Size::Px(20))
+            .bg(MUTED).radius(2).align(Align::Center).offset(52, -76)))
+        .child(text("低电量", font_30(), TEXT).style(Style::default().align(Align::Center).offset(0, 2)))
+        .child(text("即将关机，请连接电源", font_20(), MUTED).style(Style::default().align(Align::Center).offset(0, 48)))
+}
+
+pub(super) fn font_20() -> Font {
     HUB_20.font()
 }
-fn font_24() -> Font {
+pub(super) fn font_24() -> Font {
     HUB_24.font()
 }
 fn font_30() -> Font {
@@ -70,12 +84,12 @@ fn font_icon() -> Font {
     unsafe { Font::from_raw(core::ptr::addr_of!(rs_lvgl::sys::lv_font_montserrat_48)) }
 }
 
-fn text(content: impl Into<String>, font: Font, color: Color) -> View<AppMsg> {
+pub(super) fn text(content: impl Into<String>, font: Font, color: Color) -> View<AppMsg> {
     rs_lvgl_ui::label(content).style(Style::neutral().font(font).fg(color))
 }
 
 /// A full-screen page: black field, centred title, home indicator.
-fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -> View<AppMsg> {
+pub(super) fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -> View<AppMsg> {
     rs_lvgl_ui::obj()
         .key(Key::Named(key))
         .scrollable(false)
@@ -107,27 +121,12 @@ fn home_indicator() -> View<AppMsg> {
     )
 }
 
-/// The content column under the title.
-fn content(key: &'static str) -> View<AppMsg> {
-    rs_lvgl_ui::column([])
-        .key(Key::Named(key))
-        .scrollable(false)
-        .style(
-            Style::neutral()
-                .width(Size::Px(COLUMN_W))
-                .height(Size::Content)
-                .gap(8)
-                .align(Align::TopMid)
-                .offset(0, CONTENT_Y),
-        )
-}
-
-fn card() -> Style {
+pub(super) fn card() -> Style {
     Style::neutral().bg(CARD).radius(RADIUS).pad(20)
 }
 
 /// A 68 px row: label on the left, `trailing` on the right.
-fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>) -> View<AppMsg> {
+pub(super) fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>) -> View<AppMsg> {
     rs_lvgl_ui::row([])
         .key(Key::Named(key))
         .scrollable(false)
@@ -143,7 +142,7 @@ fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>) -> View<A
         .child(trailing)
 }
 
-fn switch(key: &'static str, on: bool, msg: fn(bool) -> AppMsg) -> View<AppMsg> {
+pub(super) fn switch(key: &'static str, on: bool, msg: fn(bool) -> AppMsg) -> View<AppMsg> {
     rs_lvgl_ui::switch(on)
         .key(Key::Named(key))
         .style(
@@ -165,7 +164,7 @@ struct Tile {
     color: Color,
 }
 
-const NATIVE_TILES: [Tile; 3] = [
+const NATIVE_TILES: [Tile; 4] = [
     Tile {
         app: AppId::Settings,
         icon: symbol::SETTINGS,
@@ -181,6 +180,7 @@ const NATIVE_TILES: [Tile; 3] = [
         icon: symbol::BELL,
         color: ACCENT,
     },
+    Tile {app:AppId::Camera,icon:symbol::IMAGE,color:GREEN},
 ];
 
 /// Launcher tiles per row.
@@ -280,7 +280,7 @@ fn tile(
 fn fit_name(name: &str) -> String {
     fit_text(name, 120)
 }
-fn fit_text(name: &str, max: u32) -> String {
+pub(super) fn fit_text(name: &str, max: u32) -> String {
     let clean: String = name
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
@@ -455,88 +455,9 @@ pub fn lua_app(entry: Option<&AppEntry>) -> View<AppMsg> {
         .child(home_indicator())
 }
 
-// ---------------------------------------------------------------- settings
-
-/// Settings: brightness, lights, haptics, about.
-pub fn settings(settings: &Settings, uptime_s: u64, free_kib: u32) -> View<AppMsg> {
-    let brightness = rs_lvgl_ui::column([])
-        .key(Key::Named("brightness"))
-        .scrollable(false)
-        .style(
-            card()
-                .width(Size::Percent(100))
-                .height(Size::Content)
-                .gap(18),
-        )
-        .child(
-            rs_lvgl_ui::row([])
-                .key(Key::Named("head"))
-                .scrollable(false)
-                .style(
-                    Style::neutral()
-                        .width(Size::Percent(100))
-                        .height(Size::Content)
-                        .flex_align(FlexAlign::SpaceBetween, FlexAlign::Center),
-                )
-                .child(text("亮度", font_24(), TEXT).key(Key::Named("label")))
-                .child(
-                    text(format!("{}%", settings.brightness), font_24(), MUTED)
-                        .key(Key::Named("value")),
-                ),
-        )
-        .child(
-            rs_lvgl_ui::slider(
-                Settings::MIN_BRIGHTNESS as i32,
-                100,
-                settings.brightness as i32,
-            )
-            .key(Key::Named("slider"))
-            .style(
-                Style::default()
-                    .width(Size::Px(COLUMN_W - 40 - 16))
-                    .height(Size::Px(10))
-                    .offset(8, 0)
-                    .bg(CARD_HI)
-                    .radius(5),
-            )
-            .part_style(Part::Indicator, Style::default().bg(ACCENT).radius(5))
-            .part_style(Part::Knob, Style::default().bg(TEXT).pad(8))
-            .on_value_changed(AppMsg::Brightness),
-        );
-
-    let minutes = uptime_s / 60;
-    let about = if minutes < 60 {
-        format!("运行 {} 分 · {} KB", minutes, free_kib)
-    } else {
-        format!("运行 {} 时 {} 分", minutes / 60, minutes % 60)
-    };
-
-    page(
-        AppId::Settings.key(),
-        AppId::Settings.title(),
-        content("rows")
-            .child(brightness)
-            .child(row(
-                "lights",
-                "灯光",
-                switch("switch", settings.lights, AppMsg::Lights),
-            ))
-            .child(row(
-                "haptics",
-                "震动",
-                switch("switch", settings.haptics, AppMsg::Haptics),
-            ))
-            .child(row(
-                "about",
-                "关于",
-                text(about, font_20(), MUTED).key(Key::Named("value")),
-            )),
-    )
-}
-
 // ----------------------------------------------------------------- sensors
 
-/// Three rows of cards end at the gesture band: 80 + 3 x 108 + 2 x 8 = 420.
+/// The scroll viewport ends above the system gesture band at y=420.
 const SENSOR_CARD_H: i16 = 108;
 const SENSOR_Y: i16 = 80;
 
@@ -598,8 +519,9 @@ fn slot_name(slot: SlotState) -> &'static str {
     }
 }
 
-/// Sensors: a 2x3 grid of live values.
-pub fn sensors(snapshot: &SystemSnapshot) -> View<AppMsg> {
+/// Sensor readings and camera/radio service snapshots in one scrollable grid.
+pub fn sensors(hub: &Hub) -> View<AppMsg> {
+    let snapshot = &hub.snapshot;
     let tilt = match (snapshot.tilt_deg(), snapshot.accel_mg) {
         (Some(deg), Some([x, y, z])) => [
             format!("倾角 {}°", deg),
@@ -634,6 +556,33 @@ pub fn sensors(snapshot: &SystemSnapshot) -> View<AppMsg> {
         MagnetState::Contact => "磁铁 贴合",
     };
 
+    let camera_slot = if snapshot.left == SlotState::Module(ModuleKind::Camera) {
+        Some("左侧已接入")
+    } else if snapshot.right == SlotState::Module(ModuleKind::Camera) {
+        Some("右侧已接入")
+    } else {
+        None
+    };
+    let camera_state = match hub.camera.state {
+        crate::camera::State::Off => {
+            if camera_slot.is_some() { "待机" } else { "未接入" }
+        }
+        crate::camera::State::Starting => "正在启动",
+        crate::camera::State::Preview => "正在采集",
+        crate::camera::State::Fault => "相机故障",
+    };
+    let camera_detail = if hub.camera.pid != 0 && camera_slot.is_some() {
+        hub.camera.sensor()
+    } else {
+        camera_slot.unwrap_or("未检测到模块")
+    };
+    let wifi_detail = match hub.radio.ip.filter(|_| {
+        hub.radio.wifi == crate::radio::WifiState::Connected
+    }) {
+        Some(b) => format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3]),
+        None => "2.4 GHz".into(),
+    };
+
     let cards = [
         sensor_card("tilt", "姿态", tilt, None),
         sensor_card("gyro", "角速度", gyro, None),
@@ -641,11 +590,21 @@ pub fn sensors(snapshot: &SystemSnapshot) -> View<AppMsg> {
         sensor_card("battery", "电量", battery.0, battery.1),
         sensor_card("slots", "模块", slots, None),
         sensor_card(
+            "camera", "相机", [camera_state.into(), camera_detail.into()], None,
+        ),
+        sensor_card(
+            "wifi", "Wi-Fi", [hub.radio.wifi.label().into(), wifi_detail], None,
+        ),
+        sensor_card(
+            "bluetooth", "蓝牙", [hub.radio.bluetooth.label().into(), "ESP-Mosaico Audio".into()], None,
+        ),
+        sensor_card(
             "presence",
             "状态",
             [String::from(presence), String::from(magnet)],
             None,
-        ),
+        )
+        .style(Style::default().width(Size::Px(COLUMN_W))),
     ];
     let grid = rs_lvgl_ui::grid(
         [GridTrack::Px(196), GridTrack::Px(196)],
@@ -653,18 +612,24 @@ pub fn sensors(snapshot: &SystemSnapshot) -> View<AppMsg> {
             GridTrack::Px(SENSOR_CARD_H),
             GridTrack::Px(SENSOR_CARD_H),
             GridTrack::Px(SENSOR_CARD_H),
+            GridTrack::Px(SENSOR_CARD_H),
+            GridTrack::Px(SENSOR_CARD_H),
         ],
         cards
             .into_iter()
             .enumerate()
-            .map(|(i, card)| card.grid_cell((i % 2) as u16, (i / 2) as u16, 1, 1)),
+            .map(|(i, card)| {
+                card.grid_cell((i % 2) as u16, (i / 2) as u16, if i == 8 { 2 } else { 1 }, 1)
+            }),
     )
     .key(Key::Named("grid"))
-    .scrollable(false)
+    .scrollable(true)
+    .scroll_dir(ScrollDir::VER)
+    .scrollbar_mode(ScrollbarMode::Auto)
     .style(
         Style::neutral()
             .width(Size::Px(COLUMN_W))
-            .height(Size::Content)
+            .height(Size::Px(340))
             .gap(8)
             .align(Align::TopMid)
             .offset(0, SENSOR_Y),
@@ -835,11 +800,26 @@ pub fn timer(hub: &Hub) -> View<AppMsg> {
 /// The view for one app.
 pub fn app(hub: &Hub, registry: &Registry, app: AppId) -> View<AppMsg> {
     match app {
-        AppId::Settings => settings(&hub.settings, hub.about.uptime_s, hub.about.free_kib),
-        AppId::Sensors => sensors(&hub.snapshot),
+        AppId::Settings => settings_pages(hub,&crate::hub::settings::Session::default()),
+        AppId::Sensors => sensors(hub),
         AppId::Timer => timer(hub),
+        AppId::Camera => camera(hub.camera),
         AppId::Lua(i) => lua_app(registry.apps.get(i as usize)),
     }
+}
+
+pub fn settings_pages(hub:&Hub,session:&crate::hub::settings::Session)->View<AppMsg>{super::settings_view::view(hub,session)}
+
+pub fn camera(s:crate::camera::Snapshot)->View<AppMsg> {
+    let live=s.state==crate::camera::State::Preview;
+    let status=if s.error.is_some(){"相机未就绪，请检查左侧插槽或重试".into()}else if live{format!("640×480 · 已保存 {}",s.saved)}else{"正在连接左侧相机…".into()};
+    page(AppId::Camera.key(),"相机",rs_lvgl_ui::obj().key(Key::Named("viewfinder"))
+        .scrollable(false).style(Style::neutral().bg(CARD).width(Size::Px(360)).height(Size::Px(270)).align(Align::TopMid).offset(0,96))
+        .child(text(if live{""}else if s.error.is_some(){"相机未就绪"}else{"正在启动"},font_24(),MUTED).style(Style::default().align(Align::Center))))
+        .child(text(status,font_20(),MUTED).key(Key::Named("capture-status")).style(Style::default().align(Align::TopMid).offset(0,68)))
+        .child(rs_lvgl_ui::button(if live{"拍照"}else{"重试"}).key(Key::Named("shutter"))
+            .style(Style::neutral().width(Size::Px(144)).height(Size::Px(44)).bg(ACCENT).fg(TEXT).font(font_24()).radius(22).align(Align::TopMid).offset(0,372))
+            .on_click(if live{AppMsg::CameraCapture}else{AppMsg::CameraRetry}))
 }
 
 /// Confirmation is keyed separately from the grid. Identity is captured in

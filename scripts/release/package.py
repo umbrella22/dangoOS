@@ -24,8 +24,8 @@ from ota_image import validate_image
 INPUTS = json.loads((HERE / "inputs.json").read_text())
 OFFICIAL = INPUTS["official"]
 FLASH_BYTES = 0x1000000
-SYSTEM_AT = 0xD00000
-SYSTEM_BYTES = 0x2EE000
+SYSTEM_AT = 0xE10000
+SYSTEM_BYTES = 0x1F0000
 
 
 def sha(data):
@@ -108,6 +108,7 @@ def assemble(official, application, system, table, version, pins=OFFICIAL):
     parts.update(partition_table=(layout.TABLE_AT, table),
                  otadata=(layout.OTA_AT, initial_otadata()),
                  application=(layout.APP_AT, application), system=(SYSTEM_AT, system))
+    parts.pop("ui_apps", None)  # the former UI area belongs to the enlarged OTA slots
     full = merge_parts(parts)
     components = {name: {"offset": start, "bytes": len(payload), "sha256": sha(payload)}
                   for name, (start, payload) in parts.items()}
@@ -128,54 +129,100 @@ def write_zip(path, files):
             archive.writestr(info, payload)
 
 
+def verify_nand_skins(catalog, files):
+    require(isinstance(catalog, list) and catalog, "missing NAND skin catalog")
+    expected = set()
+    ids = set()
+    for skin in catalog:
+        identity = skin.get("id")
+        require(isinstance(identity, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,63}", identity)
+                and identity != "default" and identity not in ids, "invalid/duplicate NAND skin id")
+        ids.add(identity)
+        require(set(skin["files"]) == {"fox.bin", "skin.json"}, "NAND skin file inventory")
+        for name, info in skin["files"].items():
+            path = f"dango-skin/{identity}/{name}"
+            expected.add(path)
+            require(path in files and len(files[path]) == info["bytes"] and sha(files[path]) == info["sha256"],
+                    f"NAND skin missing or changed: {path}")
+        metadata = json.loads(files[f"dango-skin/{identity}/skin.json"])
+        binary = files[f"dango-skin/{identity}/fox.bin"]
+        require(metadata["id"] == identity and metadata["name"] == skin["name"]
+                and metadata["version"] == skin["version"] and metadata["canvas"] == [352, 336]
+                and metadata["schema_version"] == 1
+                and metadata["binary_bytes"] == len(binary) <= 1024 * 1024
+                and metadata["binary_crc32"] == zlib.crc32(binary), "NAND skin manifest mismatch")
+    require({name for name in files if name.startswith("dango-skin/")} == expected,
+            "NAND skin archive inventory mismatch")
+
+
 def install_notes(tag, stem):
     return f"""# dangoOS {tag} 安装与升级
 
 适用硬件：ESP-Mosaico V1.2 / ESP32-S31，16 MiB Flash。
 
-## OTA 升级
+## 首次安装与恢复
 
-`{stem}-ota.bin` 是应用镜像，只适用于已经采用 MOSAICO_S31_AB_LAYOUT_V1 的 dangoOS。
-它保留 BL、分区表、上一运行槽、system 应用和用户数据。它不能从 Flash 地址 0 刷入。
-OTA ZIP 内含镜像和 USB 更新工具；解压后关闭其他串口监视器，执行：
-
-```sh
-python3 -m pip install -r requirements.txt
-python3 tools/console.py ota {stem}-ota.bin --port PORT --verbose
-python3 tools/console.py ota-status --port PORT
-```
-
-将 PORT 替换为运行时 USB CDC 端口，例如 `/dev/cu.usbmodemmosaico_s31_r11` 或 `COM3`。
-升级完成以重启后的运行槽、版本 `{tag[1:]}`、`Valid` 和自检结果为准。
-
-## 全量安装与恢复
-
-`{stem}-full.bin` 是从 Flash 地址 **0x0** 开始的完整 **16 MiB** 镜像。
-**它会重建分区，并清除设置、照片、存档及下载应用；刷入前备份需要保留的数据。**
-镜像包括官方 Mosaico BL、Vibe Mode 和工厂 UI 资源、dangoOS A/B 分区、slot 0 应用及
-从仓库生成的 system 应用。slot 1、用户 data、NVS 和崩溃记录从擦除状态开始。
-首次启动由系统初始化 data；初始 OTA 元数据选择 slot 0。
-
-全量 ZIP 解压后，按住 BOOT 点一下 RESET 进入 ROM 下载模式，再执行：
+下载并解压 `{stem}-full.zip`，关闭其他串口监视器。
+按住 BOOT，短按 RESET，再松开 BOOT，让设备进入 ROM 下载模式。执行：
 
 ```sh
 python3 -m pip install -r requirements.txt
-python3 -m esptool --chip esp32s31 --port PORT --baud 460800 --before no-reset --after hard-reset write-flash 0x0 {stem}-full.bin
+python3 install.py --flash-port ROM_PORT --port RUNTIME_PORT
 ```
 
-这里的 PORT 是 ROM 下载端口，可能与运行时端口不同。完整镜像已覆盖全部 Flash，
-保留镜像中的 Flash 参数即可。进入系统后检查版本、显示/触摸、应用列表和 OTA 状态。
+`ROM_PORT` 是下载模式端口，`RUNTIME_PORT` 是固件运行后的 USB CDC 端口；两者可能不同。
+macOS/Linux 使用 `/dev/cu.usbmodem…`、`/dev/ttyACM…`，Windows 使用 `COM3` 等端口名。
+安装器先检查包内文件校验和，再刷写 NOR、等待系统启动，最后将三套团子安装到 NAND。
+
+**全量刷写会覆盖 NOR 上的系统内容、分区、引导信息和 Wi-Fi NVS；独立 NAND 上的照片、存档和偏好保留。**
+新 NAND 或无法挂载的卷需要显式初始化，安装器会提示后退出。仅在确认可以清空该 NAND 时，
+重新运行并添加 `--format-nand`；如 NOR 已刷好，可直接执行：
+
+```sh
+python3 install.py --port RUNTIME_PORT --format-nand
+```
+
+格式化会擦除未挂载 NAND 上的全部数据；已挂载卷即使带此参数也不会被格式化。
+资源逐套暂存、校验并提交，安装不会改变当前团子选择。完成后进入“设置 → 更换团子”。
+
+## 日常升级
+
+已使用 dangoOS 的设备，可以连接 2.4 GHz WPA2 Wi-Fi，在“设置 → 系统更新”中安装新固件。
+无线更新只更新原生固件，保留现有团子资源和 Lua 应用；它不会下载 ZIP 中的 NAND 资源。
+
+USB 升级使用 `{stem}-ota.zip`，只适用于 MOSAICO_S31_AB_LAYOUT_V2_6M_NAND 布局。
+解压后执行：
+
+```sh
+python3 -m pip install -r requirements.txt
+python3 tools/console.py ota {stem}-ota.bin --port RUNTIME_PORT --verbose
+python3 tools/console.py ota-status --port RUNTIME_PORT
+python3 install.py --port RUNTIME_PORT
+```
+
+OTA 写备用槽并在重启后进行健康确认；检查运行槽、版本 `{tag[1:]}`、`Valid` 和自检结果。
+最后一条命令更新三套 NAND 团子，亦可在无线升级后单独运行。
+鸣潮 · 心月狐团子和内置 Lua 应用位于 NOR 的 system 分区，更新它们需使用全量安装包。
+
+## 包内资源
+
+| 内容 | 安装位置 |
+| --- | --- |
+| `{stem}-full.bin`（全量 ZIP） | NOR 0x0 起的完整 16 MiB，含 BL、Vibe Mode、双 6 MiB A/B 槽、system |
+| `{stem}-ota.bin`（OTA ZIP） | NOR 非活动应用槽；不能从地址 0x0 刷入 |
+| `dango-skin/eclipse/` | NAND `/data/skins/eclipse/`（玄灵 · 月蚀） |
+| `dango-skin/normal/` | NAND `/data/skins/normal/`（玄灵 · 常态） |
+| `dango-skin/black-blue/` | NAND `/data/skins/black-blue/`（智谱团子） |
+
+每套 NAND 资源只有 `fox.bin` 和 `skin.json`。两个 ZIP 都包含这三套资源与安装工具；
+独立 BIN 只针对 NOR，单刷 BIN 不会安装 NAND 资源。
 
 ## 产物与验证范围
 
 先核对发布页的 `SHA256SUMS`。ZIP 内部也包含各文件的 SHA-256 清单。
-`manifest.json` 记录源码提交、镜像类型、分区偏移、官方组件来源和哈希。
-官方 BL 来源：Mosaico Claw v0.6.0；BL 构建时间为 Oct 21 2026 19:45:22。
-该 BL 与此前保留版本的差异限于构建元数据及校验字段。
-
-发布流水线验证主机测试、固件构建、镜像结构、分区、system 文件树和校验和。
-本次发布没有刷写设备；新 BL 的整机首次安装和恢复入口未做本轮硬件验收。
-保留官方 Vibe Mode 资源不代表已验证它与本项目应用和数据布局的全部交互。
+`manifest.json` 记录源码提交、镜像类型、分区偏移、官方组件及 NAND 团子的版本、大小和哈希。
+流水线检查主机测试、固件构建、镜像结构、system 文件树、团子解码及文件校验和。
+硬件验收状态见 manifest 的 `hardware_validation`；构建校验不代表已在设备上完成安装验收。
 """.encode()
 
 
@@ -198,6 +245,12 @@ def build(args):
         official = path.read_bytes()
     official_components(official)
     table = partition_table()
+    catalog = json.loads(subprocess.check_output(
+        ["cargo", "run", "-p", "app-pack", "--locked", "--offline", "--", "skins", "dango-skin"],
+        cwd=ROOT, text=True))["skins"]
+    skin_files = {f"dango-skin/{skin['id']}/{name}": (ROOT / "dango-skin" / skin["id"] / name).read_bytes()
+                  for skin in catalog for name in skin["files"]}
+    verify_nand_skins(catalog, skin_files)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="release-build-", dir=ROOT / "target") as temporary:
         temporary = Path(temporary)
@@ -218,12 +271,13 @@ def build(args):
         manifest = {
             "schema": 1, "project": "dangoOS", "version": version, "tag": tag,
             "source_commit": commit, "source_dirty": dirty, "board": "ESP-Mosaico V1.2",
-            "chip": "esp32s31", "flash_bytes": FLASH_BYTES, "layout": "MOSAICO_S31_AB_LAYOUT_V1",
+            "chip": "esp32s31", "flash_bytes": FLASH_BYTES, "layout": "MOSAICO_S31_AB_LAYOUT_V2_6M_NAND",
             "upstream": OFFICIAL, "partitions": rows, "components": components,
             "application": info, "hardware_validation": "not-run for this release",
+            "nand_skins": catalog,
             "images": {
                 "ota": {"file": f"{stem}-ota.bin", "bytes": len(application), "sha256": sha(application),
-                        "delivery": "runtime USB A/B OTA", "preserves_user_data": True},
+                        "delivery": "runtime USB or HTTPS A/B OTA", "preserves_user_data": True},
                 "full": {"file": f"{stem}-full.bin", "bytes": len(full), "sha256": sha(full),
                          "flash_offset": 0, "preserves_user_data": False},
             },
@@ -235,10 +289,11 @@ def build(args):
                  "manifest.json": json_bytes(manifest), "INSTALL.md": install_notes(tag, stem)}
         requirements = b"pyserial==3.5\nesptool==5.6.0\n"
         common = {"manifest.json": files["manifest.json"], "INSTALL.md": files["INSTALL.md"],
-                  "requirements.txt": requirements}
-        ota_files = {**common, f"{stem}-ota.bin": application,
-                     "tools/console.py": (ROOT / "scripts/device/console.py").read_bytes(),
-                     "tools/ota_image.py": (ROOT / "scripts/device/ota_image.py").read_bytes()}
+                  "requirements.txt": requirements, **skin_files,
+                  "install.py": (HERE / "install.py").read_bytes(),
+                  "tools/console.py": (ROOT / "scripts/device/console.py").read_bytes(),
+                  "tools/ota_image.py": (ROOT / "scripts/device/ota_image.py").read_bytes()}
+        ota_files = {**common, f"{stem}-ota.bin": application}
         full_files = {**common, f"{stem}-full.bin": full, "partitions.csv": (HERE / "partitions.csv").read_bytes(),
                       "system-file-tree.json": json_bytes(report),
                       "UPSTREAM.md": (HERE / "UPSTREAM.md").read_bytes()}
@@ -287,7 +342,7 @@ def verify(directory, require_clean=True):
     require(set(files) == expected_files, "release asset inventory mismatch")
     require(re.fullmatch(r"[0-9a-f]{40}", manifest["source_commit"]), "invalid source commit")
     require((manifest["chip"], manifest["flash_bytes"], manifest["layout"]) ==
-            ("esp32s31", FLASH_BYTES, "MOSAICO_S31_AB_LAYOUT_V1"), "manifest device/layout mismatch")
+            ("esp32s31", FLASH_BYTES, "MOSAICO_S31_AB_LAYOUT_V2_6M_NAND"), "manifest device/layout mismatch")
     images = {}
     for mode in ("ota", "full"):
         item = manifest["images"][mode]
@@ -304,6 +359,8 @@ def verify(directory, require_clean=True):
     parts = {"partition_table": (layout.TABLE_AT, table), "otadata": (layout.OTA_AT, initial_otadata()),
              "application": (layout.APP_AT, images["ota"])}
     for name, pin in OFFICIAL["components"].items():
+        if name == "ui_apps":
+            continue
         payload = images["full"][pin["offset"]:pin["offset"] + pin["bytes"]]
         require(sha(payload) == pin["sha256"], f"full image {name} differs from official pin")
         parts[name] = (pin["offset"], payload)
@@ -324,6 +381,10 @@ def verify(directory, require_clean=True):
             require(archive.testzip() is None, "ZIP CRC mismatch")
             zipped = {name: archive.read(name) for name in names}
         verify_checksums(zipped)
+        if "nand_skins" in manifest:
+            verify_nand_skins(manifest["nand_skins"], zipped)
+            require({"install.py", "tools/console.py", "tools/ota_image.py", "requirements.txt"} <= set(zipped),
+                    "NAND installation tools missing")
         require(zipped[image_name] == images[mode] and zipped["manifest.json"] == files["manifest.json"] and
                 zipped["INSTALL.md"] == files["INSTALL.md"],
                 "ZIP and standalone artifacts differ")

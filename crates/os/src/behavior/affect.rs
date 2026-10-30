@@ -196,6 +196,11 @@ pub enum EventKind {
     /// External voice/LLM Activity input. Accepts `Listening`, `Thinking`,
     /// `Speaking`, `Error` and `Idle`; other expressions are ignored.
     Activity(Expression),
+    /// Actual link edges, selected until a subsequent host state replaces them.
+    NetworkConnection(bool),
+    BluetoothConnection(bool),
+    /// Active playback owns MusicPlaying; false releases it immediately.
+    MusicPlayback(bool),
 }
 
 /// One timestamped sensor event.
@@ -567,6 +572,7 @@ pub struct AffectEngine {
     fallback_since_ms: u64,
     idle_expression: Expression,
     activity: Option<Expression>,
+    business: super::business::State,
     error_active: bool,
     error_since_ms: u64,
     reaction: Option<Reaction>,
@@ -617,6 +623,7 @@ impl AffectEngine {
             fallback_since_ms: now_ms,
             idle_expression: Expression::Idle,
             activity: None,
+            business: super::business::State::default(),
             error_active: false,
             error_since_ms: 0,
             reaction: None,
@@ -714,6 +721,7 @@ impl AffectEngine {
             EventKind::ModuleRemoved(kind) => self.on_module_removed(at, event.source, kind),
             EventKind::BatteryLevel(percent) => self.on_battery_level(at, percent),
             EventKind::Activity(expression) => self.on_activity(at, expression),
+            kind @ (EventKind::NetworkConnection(_) | EventKind::BluetoothConnection(_) | EventKind::MusicPlayback(_)) => self.business.observe(at, kind),
         }
     }
 
@@ -869,6 +877,9 @@ impl AffectEngine {
         // every reaction and Activity above still wins.
         if let Some(expression) = self.battery_expression {
             return (expression, ReactionReason::Battery, self.fallback_since_ms);
+        }
+        if let Some((expression, since)) = self.business.expression() {
+            return (expression, ReactionReason::Activity, since);
         }
         (
             self.idle_expression,
@@ -2158,6 +2169,9 @@ fn expression_intensity(expression: Expression) -> u8 {
         Expression::Dying => 15,
         Expression::Peering => 40,
         Expression::Dazzled => 65,
+        Expression::NetworkDisconnected | Expression::BluetoothDisconnected => 35,
+        Expression::NetworkConnected | Expression::BluetoothConnected => 50,
+        Expression::MusicPlaying => 55,
     }
 }
 

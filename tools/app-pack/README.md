@@ -8,16 +8,18 @@
 
 ```sh
 cargo run -p app-pack --offline -- check apps
-# size 是设备分区表中的 system 分区字节数；当前板卡为 750 个 4 KiB 块
-cargo run -p app-pack --offline -- system apps target/system-release --size 3072000
+cargo run -p app-pack --offline -- skins dango-skin
+# size 是设备分区表中的 system 分区字节数；当前布局为 496 个 4 KiB 块
+cargo run -p app-pack --offline -- system apps target/system-release --size 2031616
 cargo run -p app-pack --offline -- extract /absolute/system.bin /absolute/new-extraction
 cargo test -p app-pack --offline
 ```
 
 `system` 输出 `system.bin`、`file-tree-report.json` 和 `application-docs/<id>/`。
 应用根目录的 README、LICENSE、SOURCE.json 作为主机交付资料保存，其余非隐藏
-文件写入 `/apps/<id>/`。镜像只包含应用本体；照片、存档、开发示例和设备探针不进入
-system 分区。源码中新增一个分类下的有效应用后，下一次打包会自动将其加入应用集。
+文件写入 `/apps/<id>/`。完整默认狐狸皮肤从已校验的生成数据打包为 `/skins/default.bin`，
+固件从 system 加载到 PSRAM。照片、存档、开发示例和设备探针不进入 system 分区。
+源码中新增一个分类下的有效应用后，下一次打包会自动将其加入应用集。
 
 工具重新只读挂载输出，逐项比较文件树，校验全部应用的注册、System 来源、模块依赖
 和图标解码。报告记录完整文件清单、大小、SHA-256、空闲块数和应用资料哈希。
@@ -25,6 +27,11 @@ system 分区。源码中新增一个分类下的有效应用后，下一次打�
 
 `extract` 读取既有 LittleFS 镜像，写入新的主机目录并核对文件字节；输入不被修改。
 此命令用于检查镜像，不参与新 system 镜像的构建。
+
+`skins` 校验公开的 NAND 团子资源目录：每套恰好包含 `fox.bin` 和 `skin.json`，
+角色 ID、版本、画布、大小和 CRC 符合设备契约，全部图像可被设备解码器解析。
+输出 JSON 清单包含每套资源的名称、版本、文件大小与 SHA-256，供发布打包器使用。
+这三套资源由发布包中的 USB 安装器写入 NAND，不加入 NOR 的 system 镜像。
 
 应用正常运行的存储根为 `/data/appdata/<id>`；USB 下载更新写入 `/data/apps/<id>`，
 同 ID 下载版优先于 system 版本。删除下载版后显示 system 版本，清数据保留应用本体。

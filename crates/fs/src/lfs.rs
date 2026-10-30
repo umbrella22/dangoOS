@@ -337,6 +337,18 @@ impl Fs {
         ))
     }
 
+    /// Explicitly replace the filesystem. Ordinary mount never calls this.
+    pub fn format(dev: Device, geometry: Geometry) -> Result<Self, Errno> {
+        let (raw, dev) = Self::create(dev, geometry)?;
+        let r = check(unsafe { mfs_format(raw.as_ptr()) })
+            .and_then(|()| check(unsafe { mfs_mount(raw.as_ptr()) }));
+        if let Err(e) = r {
+            unsafe { mfs_destroy(raw.as_ptr()) };
+            return Err(e);
+        }
+        Ok(Self { raw, _dev: dev, read_only: false, geometry })
+    }
+
     fn m(&self) -> *mut c_void {
         self.raw.as_ptr()
     }

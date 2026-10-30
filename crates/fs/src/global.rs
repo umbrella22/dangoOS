@@ -1,20 +1,20 @@
 //! The firmware's one [`Vfs`] and the C entry points over it.
 //!
-//! Every caller runs on the same executor thread and each call finishes
-//! before returning (no `.await` inside), so the lock never waits: it only
-//! turns an accidental re-entry (a C call made from inside a VFS call) into
-//! `EBUSY` instead of aliasing `&mut`.
+//! Each call finishes synchronously. Same-thread re-entry returns `EBUSY`;
+//! a configured runtime may wait for a different RTOS thread without masking
+//! interrupts. Interrupt callers can refuse to wait. All paths retain exclusive
+//! access to the VFS and its block devices.
 
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, CStr};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::lfs::{Kind, Metadata, OpenFlags, Whence};
 use crate::vfs::Vfs;
 use crate::Errno;
 
 struct Global {
-    busy: AtomicBool,
+    lock: OwnerLock,
     vfs: UnsafeCell<Option<Vfs>>,
 }
 
@@ -22,9 +22,59 @@ struct Global {
 unsafe impl Sync for Global {}
 
 static GLOBAL: Global = Global {
-    busy: AtomicBool::new(false),
+    lock: OwnerLock::new(),
     vfs: UnsafeCell::new(None),
 };
+
+/// Runtime policy for synchronous VFS contention. `context_id` returns a nonzero
+/// execution-context identity (an RTOS thread, not a CPU). `wait` yields with interrupts
+/// enabled, or returns false if the current context cannot wait (e.g. an ISR).
+pub struct LockHooks {
+    pub context_id: fn() -> usize,
+    pub wait: fn() -> bool,
+}
+
+static DEFAULT_HOOKS: LockHooks = LockHooks {
+    context_id: || 1,
+    wait: || false,
+};
+static LOCK_HOOKS: AtomicPtr<LockHooks> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Install before starting any concurrent VFS callers. Host users default to
+/// immediate `EBUSY`, preserving the same-thread re-entry contract.
+pub fn set_lock_hooks(hooks: &'static LockHooks) {
+    LOCK_HOOKS.store(core::ptr::from_ref(hooks).cast_mut(), Ordering::Release);
+}
+
+struct OwnerLock(AtomicUsize);
+impl OwnerLock {
+    const fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+
+    fn acquire(&self, hooks: &LockHooks) -> Result<OwnerGuard<'_>, Errno> {
+        let id = (hooks.context_id)();
+        assert_ne!(id, 0, "VFS context identity must be nonzero");
+        loop {
+            match self
+                .0
+                .compare_exchange(0, id, Ordering::Acquire, Ordering::Relaxed)
+            {
+                Ok(_) => return Ok(OwnerGuard(self)),
+                Err(owner) if owner == id => return Err(Errno::BUSY),
+                Err(_) if !(hooks.wait)() => return Err(Errno::BUSY),
+                Err(_) => {}
+            }
+        }
+    }
+}
+
+struct OwnerGuard<'a>(&'a OwnerLock);
+impl Drop for OwnerGuard<'_> {
+    fn drop(&mut self) {
+        self.0 .0.store(0, Ordering::Release);
+    }
+}
 
 /// Install the VFS (once, at boot). Replaces any earlier one.
 pub fn install(vfs: Vfs) {
@@ -32,13 +82,75 @@ pub fn install(vfs: Vfs) {
 }
 
 fn with_slot<R>(f: impl FnOnce(&mut Option<Vfs>) -> R) -> Result<R, Errno> {
-    if GLOBAL.busy.swap(true, Ordering::Acquire) {
-        return Err(Errno::BUSY);
-    }
+    let hooks = LOCK_HOOKS.load(Ordering::Acquire);
+    // SAFETY: installed hooks have static lifetime; null selects the default.
+    let hooks = unsafe { hooks.as_ref() }.unwrap_or(&DEFAULT_HOOKS);
+    let _guard = GLOBAL.lock.acquire(hooks)?;
     // SAFETY: the flag above makes this the only live reference.
     let r = f(unsafe { &mut *GLOBAL.vfs.get() });
-    GLOBAL.busy.store(false, Ordering::Release);
     Ok(r)
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    #[test]
+    fn reentry_and_interrupt_contention_return_busy() {
+        let lock = OwnerLock::new();
+        let core1 = LockHooks {
+            context_id: || 1,
+            wait: || panic!("same-thread reentry must not wait"),
+        };
+        let interrupt2 = LockHooks {
+            context_id: || 2,
+            wait: || false,
+        };
+        let guard = lock.acquire(&core1).unwrap();
+        assert!(matches!(lock.acquire(&core1), Err(Errno::BUSY)));
+        assert!(matches!(lock.acquire(&interrupt2), Err(Errno::BUSY)));
+        drop(guard);
+        assert!(lock.acquire(&interrupt2).is_ok());
+    }
+
+    #[test]
+    fn other_thread_waits_and_observes_the_released_owner() {
+        use std::{
+            thread,
+            time::{Duration, Instant},
+        };
+        static WAITED: AtomicUsize = AtomicUsize::new(0);
+        WAITED.store(0, Ordering::Relaxed);
+        let lock = OwnerLock::new();
+        let value = AtomicUsize::new(0);
+        let core1 = LockHooks {
+            context_id: || 1,
+            wait: || false,
+        };
+        let core2 = LockHooks {
+            context_id: || 2,
+            wait: || {
+                WAITED.fetch_add(1, Ordering::Relaxed);
+                thread::yield_now();
+                true
+            },
+        };
+        thread::scope(|scope| {
+            let guard = lock.acquire(&core1).unwrap();
+            let reader = scope.spawn(|| {
+                let _guard = lock.acquire(&core2).unwrap();
+                assert_eq!(value.load(Ordering::Relaxed), 42);
+            });
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while WAITED.load(Ordering::Relaxed) == 0 {
+                assert!(Instant::now() < deadline, "second thread did not contend");
+                thread::yield_now();
+            }
+            value.store(42, Ordering::Relaxed);
+            drop(guard);
+            reader.join().unwrap();
+        });
+    }
 }
 
 /// Run `f` on the installed VFS. `ENOENT` when none is installed (no file

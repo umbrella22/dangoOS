@@ -98,6 +98,15 @@ impl BatterySample {
 /// A probed gauge.
 pub struct Bq27220;
 
+/// Reserve protection stays available even when SOC is invalid/unconfigured.
+pub async fn read_power() -> Result<os::battery::Reading, &'static str> {
+    let reading = os::battery::Reading {
+        voltage_mv: read_u16(REG_VOLTAGE).await?,
+        current_ma: read_u16(REG_AVERAGE_CURRENT).await? as i16,
+    };
+    if reading.valid() { Ok(reading) } else { Err("battery voltage out of range") }
+}
+
 impl Bq27220 {
     /// Probe the gauge by reading `StateOfCharge()`.
     ///

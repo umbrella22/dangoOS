@@ -14,8 +14,12 @@
 
 use core::cell::RefCell;
 
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex as AsyncMutex};
-use embassy_time::{with_timeout, Duration};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex,
+    mutex::{Mutex as AsyncMutex, MutexGuard},
+    semaphore::{FairSemaphore, Semaphore, SemaphoreReleaser},
+};
+use embassy_time::{with_timeout, Duration, Instant};
 use esp_hal::{
     i2c::master::{Config as I2cConfig, Error as I2cError, I2c},
     time::Rate,
@@ -41,15 +45,43 @@ pub const TRANSACTION_TIMEOUT: Duration = Duration::from_millis(100);
 /// 静态变量的约束。
 struct AsyncSlot(RefCell<Option<SharedI2c>>);
 
-// SAFETY: R1 固件只运行一个 esp-rtos/Embassy executor，I2C 异步中断处理器
-// 在初始化核心上运行；`AsyncSlot` 只被本模块的静态持有，所有访问都经过
-// `SHARED_I2C_ASYNC` 异步互斥锁串行化，且从不移动到其他核心。这避开了
-// esp-hal 用 `!Send` 防止的跨核使用场景。
+// SAFETY: I2C 驱动、使用它的硬件任务和异步中断都留在 Core0；Core1 的
+// UI/Lua 通过命令与状态通道访问硬件，不调用本模块的总线助手。`AsyncSlot`
+// 只被本模块的静态持有，所有访问都经过对应异步互斥锁串行化，且从不移动
+// 到其他核心。这避开了 esp-hal 用 `!Send` 防止的跨核使用场景。
 unsafe impl Send for AsyncSlot {}
 
 /// R1 异步槽位（I2C0: 触摸/IMU/磁力计共享）。
 static SHARED_I2C_ASYNC: AsyncMutex<CriticalSectionRawMutex, AsyncSlot> =
     AsyncMutex::new(AsyncSlot(RefCell::new(None)));
+
+// I2C0 has three concurrent users: touch, sensors and the audio codec. Boot
+// initialization is the fourth possible caller. FIFO admission prevents a
+// sensor transaction chain from reacquiring the non-fair mutex ahead of touch.
+type MainAdmission = FairSemaphore<CriticalSectionRawMutex, 4>;
+static MAIN_ADMISSION: MainAdmission = MainAdmission::new(1);
+struct MainBusGuard {
+    // Drop the slot before returning its admission permit.
+    slot: MutexGuard<'static, CriticalSectionRawMutex, AsyncSlot>,
+    _admission: SemaphoreReleaser<'static, MainAdmission>,
+}
+impl core::ops::Deref for MainBusGuard {
+    type Target = AsyncSlot;
+    fn deref(&self) -> &AsyncSlot {
+        &self.slot
+    }
+}
+async fn main_bus_lock() -> MainBusGuard {
+    let admission = MAIN_ADMISSION
+        .acquire(1)
+        .await
+        .expect("I2C0 has at most four concurrent callers");
+    let slot = SHARED_I2C_ASYNC.lock().await;
+    MainBusGuard {
+        slot,
+        _admission: admission,
+    }
+}
 
 /// v1.2 扩展槽异步槽位（I2C1: 左右槽 EEPROM 与模块外设）。
 static SHARED_I2C_SUBBOARD_ASYNC: AsyncMutex<CriticalSectionRawMutex, AsyncSlot> =
@@ -83,7 +115,7 @@ fn install_slot(
 
 /// 异步写事务，持有总线直到完成；总线未安装时返回 `None`。
 pub async fn write_async(addr: u8, bytes: &[u8]) -> Option<Result<(), I2cError>> {
-    let guard = SHARED_I2C_ASYNC.lock().await;
+    let guard = main_bus_lock().await;
     let mut borrow = guard.0.borrow_mut();
     let i2c = borrow.as_mut()?;
     Some(
@@ -96,7 +128,7 @@ pub async fn write_async(addr: u8, bytes: &[u8]) -> Option<Result<(), I2cError>>
 
 /// 异步读事务，持有总线直到完成；总线未安装时返回 `None`。
 pub async fn read_async(addr: u8, bytes: &mut [u8]) -> Option<Result<(), I2cError>> {
-    let guard = SHARED_I2C_ASYNC.lock().await;
+    let guard = main_bus_lock().await;
     let mut borrow = guard.0.borrow_mut();
     let i2c = borrow.as_mut()?;
     Some(
@@ -107,6 +139,65 @@ pub async fn read_async(addr: u8, bytes: &mut [u8]) -> Option<Result<(), I2cErro
     )
 }
 
+/// CST9220 requires STOP between register selection, report read and ACK.
+/// Retain the bus across those transactions so sensor polling cannot delay
+/// the report's ACK or replace an unread release with a later contact.
+pub async fn touch_report_async(
+    addr: u8,
+    register: u16,
+    report: &mut [u8],
+    ack: Option<u8>,
+) -> Option<Result<(), I2cError>> {
+    let queued = Instant::now();
+    let guard = main_bus_lock().await;
+    let wait_us = queued.elapsed().as_micros();
+    let mut borrow = guard.0.borrow_mut();
+    let i2c = borrow.as_mut()?;
+    let mut phases = [0u64; 3];
+    let result = async {
+        let started = Instant::now();
+        let result = with_timeout(
+            TRANSACTION_TIMEOUT,
+            i2c.write_async(addr, &register.to_be_bytes()),
+        )
+        .await;
+        phases[0] = started.elapsed().as_micros();
+        result.unwrap_or(Err(I2cError::Timeout))?;
+        let started = Instant::now();
+        let result = with_timeout(TRANSACTION_TIMEOUT, i2c.read_async(addr, report)).await;
+        phases[1] = started.elapsed().as_micros();
+        result.unwrap_or(Err(I2cError::Timeout))?;
+        if let Some(ack) = ack {
+            let [hi, lo] = register.to_be_bytes();
+            let started = Instant::now();
+            let result =
+                with_timeout(TRANSACTION_TIMEOUT, i2c.write_async(addr, &[hi, lo, ack])).await;
+            phases[2] = started.elapsed().as_micros();
+            result.unwrap_or(Err(I2cError::Timeout))?;
+        }
+        Ok(())
+    }
+    .await;
+    drop(borrow);
+    drop(guard);
+    // Rate-limited phase receipts distinguish bus contention from executor
+    // delays without adding work to the ISR or changing transfer deadlines.
+    static LAST_RECEIPT_MS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    let now_ms = Instant::now().as_millis() as u32;
+    let previous = LAST_RECEIPT_MS.load(core::sync::atomic::Ordering::Relaxed);
+    if wait_us + phases.iter().sum::<u64>() >= 30_000 && now_ms.wrapping_sub(previous) >= 1000 {
+        LAST_RECEIPT_MS.store(now_ms, core::sync::atomic::Ordering::Relaxed);
+        log::info!(
+            "touch bus: wait_us={wait_us} select_us={} read_us={} ack_us={} ok={}",
+            phases[0],
+            phases[1],
+            phases[2],
+            result.is_ok()
+        );
+    }
+    Some(result)
+}
+
 /// 异步写后读（单次重复起始事务），持有总线直到完成；总线未安装时返回
 /// `None`。传感器寄存器读用它；CST9220 需要两次独立事务，见 `touch.rs`。
 pub async fn write_read_async(
@@ -114,7 +205,7 @@ pub async fn write_read_async(
     write: &[u8],
     read: &mut [u8],
 ) -> Option<Result<(), I2cError>> {
-    let guard = SHARED_I2C_ASYNC.lock().await;
+    let guard = main_bus_lock().await;
     let mut borrow = guard.0.borrow_mut();
     let i2c = borrow.as_mut()?;
     Some(
@@ -186,7 +277,7 @@ pub async fn write_reg_at_khz_async(
     value: u8,
     khz: u32,
 ) -> Option<Result<(), I2cError>> {
-    let guard = SHARED_I2C_ASYNC.lock().await;
+    let guard = main_bus_lock().await;
     let mut borrow = guard.0.borrow_mut();
     let i2c = borrow.as_mut()?;
     let changed = khz != MAIN_BUS_FREQUENCY_KHZ;
@@ -209,7 +300,7 @@ async fn read_regs_mode_async(
     khz: u32,
     split: bool,
 ) -> Option<Result<(), I2cError>> {
-    let guard = SHARED_I2C_ASYNC.lock().await;
+    let guard = main_bus_lock().await;
     let mut borrow = guard.0.borrow_mut();
     let i2c = borrow.as_mut()?;
     let changed = khz != MAIN_BUS_FREQUENCY_KHZ;
@@ -315,4 +406,67 @@ pub async fn subboard_write_reg_async(
     value: u8,
 ) -> Option<Result<(), I2cError>> {
     subboard_write_async(addr, &[reg, value]).await
+}
+
+/// SCCB sensors use a 16-bit register address and the module's 100 kHz bus
+/// rate. Restore I2C1 before releasing the lock, including on I/O failure.
+pub async fn camera_read_reg(addr: u8, reg: u16) -> Result<u8, I2cError> {
+    let guard = SHARED_I2C_SUBBOARD_ASYNC.lock().await;
+    let mut borrow = guard.0.borrow_mut();
+    let i2c = borrow.as_mut().ok_or(I2cError::ExecutionIncomplete)?;
+    i2c.apply_config(&I2cConfig::default().with_frequency(Rate::from_khz(100)))
+        .map_err(|_| I2cError::ExecutionIncomplete)?;
+    let mut value = [0];
+    let result = with_timeout(
+        TRANSACTION_TIMEOUT,
+        i2c.write_read_async(addr, &reg.to_be_bytes(), &mut value),
+    )
+    .await
+    .unwrap_or(Err(I2cError::Timeout));
+    let restored = i2c.apply_config(&I2cConfig::default().with_frequency(Rate::from_khz(400)));
+    restored.map_err(|_| I2cError::ExecutionIncomplete)?;
+    result.map(|()| value[0])
+}
+
+pub async fn camera_write_reg(addr: u8, reg: u16, value: u8) -> Result<(), I2cError> {
+    let [hi, lo] = reg.to_be_bytes();
+    camera_write_bytes(addr, &[hi, lo, value]).await
+}
+
+pub async fn camera_write_reg8(addr: u8, reg: u8, value: u8) -> Result<(), I2cError> {
+    camera_write_bytes(addr, &[reg, value]).await
+}
+
+async fn camera_write_bytes(addr: u8, bytes: &[u8]) -> Result<(), I2cError> {
+    let guard = SHARED_I2C_SUBBOARD_ASYNC.lock().await;
+    let mut borrow = guard.0.borrow_mut();
+    let i2c = borrow.as_mut().ok_or(I2cError::ExecutionIncomplete)?;
+    i2c.apply_config(&I2cConfig::default().with_frequency(Rate::from_khz(100)))
+        .map_err(|_| I2cError::ExecutionIncomplete)?;
+    let result = with_timeout(TRANSACTION_TIMEOUT, i2c.write_async(addr, bytes))
+        .await
+        .unwrap_or(Err(I2cError::Timeout));
+    let restored = i2c.apply_config(&I2cConfig::default().with_frequency(Rate::from_khz(400)));
+    restored.map_err(|_| I2cError::ExecutionIncomplete)?;
+    result
+}
+
+/// SC101IOT uses a page selector followed by an 8-bit register read. Both
+/// phases share the lock; these are not OV3640-style 16-bit addresses.
+pub async fn camera_read_paged(addr: u8, reg: u16) -> Result<u8, I2cError> {
+    let guard = SHARED_I2C_SUBBOARD_ASYNC.lock().await;
+    let mut borrow = guard.0.borrow_mut();
+    let i2c = borrow.as_mut().ok_or(I2cError::ExecutionIncomplete)?;
+    i2c.apply_config(&I2cConfig::default().with_frequency(Rate::from_khz(100)))
+        .map_err(|_| I2cError::ExecutionIncomplete)?;
+    let mut value = [0];
+    let result = with_timeout(TRANSACTION_TIMEOUT, async {
+        i2c.write_async(addr, &[0xf0, (reg >> 8) as u8]).await?;
+        i2c.write_read_async(addr, &[reg as u8], &mut value).await
+    })
+    .await
+    .unwrap_or(Err(I2cError::Timeout));
+    i2c.apply_config(&I2cConfig::default().with_frequency(Rate::from_khz(400)))
+        .map_err(|_| I2cError::ExecutionIncomplete)?;
+    result.map(|()| value[0])
 }

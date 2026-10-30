@@ -11,11 +11,15 @@ name = "os"
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["dual-core-ui"]
 # Device binary only; integration tests build the host library.
 firmware = []
+# Core1 UI/Lua executor. Disable default features only for single-core diagnosis.
+dual-core-ui = []
 # Fault injection only for RTC-armed, unconfirmed A/B candidates.
 ota-test-panic = []
+# Development-only mapped-flash probe, used to boot images larger than 4 MiB.
+ota-capacity-probe = []
 # Read-only motor/RMT receipts for manual hardware diagnosis; no waveform changes.
 haptic-diagnostics = []
 # Read-only per-sample touch/edge receipts, capped per port activation.
@@ -26,12 +30,19 @@ touch-latency-diagnostics = []
 native-ui-diagnostics = []
 # Retained USB observations and explicit one-shot diagnostic reset commands; no reconnect policy changes.
 usb-session-diagnostics = []
+# Bounded observations of the resident scheduler clock; budgets unchanged.
+radio-scheduling-diagnostics = []
+# Development-only hardware watchdog; recover a stopped executor and retain USB evidence.
+radio-hang-diagnostics = ["usb-session-diagnostics", "radio-scheduling-diagnostics", "esp-radio-rtos-driver/task-diagnostics", "esp-bluedroid/work-diagnostics"]
 
 [dependencies]
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 sha2 = { version = "0.10", default-features = false }
 md-5 = { version = "0.10", default-features = false }
 log.workspace = true
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
+embedded-io = { version = "0.7", default-features = false }
+embedded-io-async = { version = "0.7", default-features = false }
 # Host-buildable UI dependencies: the library and integration tests build
 # with the plain host toolchain; the ESP HAL/RTOS dependencies stay target
 # gated.
@@ -47,13 +58,35 @@ esp-alloc.workspace = true
 esp-bootloader-esp-idf.workspace = true
 esp-storage.workspace = true
 esp-println.workspace = true
-esp-rtos.workspace = true
+esp-rtos = { workspace = true, features = ["rtos-trace"] }
+esp-sync = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = ["esp32s31"] }
+rtos-trace = "0.2.1"
+esp-radio.workspace = true
+esp-bluedroid = { path = "../../vendor/esp-bluedroid" }
+esp-radio-rtos-driver = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = ["default-core0"] }
+static_cell = "2.1"
+embassy-net = { version = "0.8", default-features = false, features = ["dhcpv4", "medium-ethernet", "tcp", "udp", "dns"] }
+rustls = { version = "0.23.45", default-features = false, features = ["tls12"] }
+rustls-rustcrypto = { git = "https://github.com/RustCrypto/rustls-rustcrypto", rev = "234c8dd12469a849945400698c8e48210f3556c9", default-features = false, features = ["alloc", "tls12", "zeroize"] }
+webpki-roots = { version = "1", default-features = false }
+getrandom = { version = "0.2", default-features = false, features = ["custom"] }
 embassy-executor.workspace = true
 embassy-time.workspace = true
 embassy-usb = { version = "0.6", default-features = false }
 embassy-futures = "0.1"
 embassy-sync = "0.8"
 critical-section.workspace = true
+
+[dev-dependencies]
+# Exercise the production owned TLS engine against an in-memory TLS server.
+rustls = { version = "0.23.45", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = { git = "https://github.com/RustCrypto/rustls-rustcrypto", rev = "234c8dd12469a849945400698c8e48210f3556c9", default-features = false, features = ["alloc", "tls12", "zeroize"] }
+
+[target.'cfg(not(target_os = "none"))'.dev-dependencies]
+# Exercise the firmware runner with real DHCP and a manually advanced clock.
+embassy-net = { version = "0.8", default-features = false, features = ["dhcpv4", "medium-ethernet", "tcp", "udp", "dns"] }
+embassy-time = { version = "0.5", features = ["mock-driver", "generic-queue-8"] }
+critical-section = { workspace = true, features = ["std"] }
 
 [[bin]]
 name = "os-fw"

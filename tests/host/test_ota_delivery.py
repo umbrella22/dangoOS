@@ -29,7 +29,7 @@ def structural_image():
     segment[48:59] = b"mosaico-s31"
     # Command-looking bytes must remain part of the raw payload.
     segment[256:256 + 18] = b"\0@mosaico reboot\n\xff"
-    marker = b"MOSAICO_S31_AB_LAYOUT_V1\0"
+    marker = b"MOSAICO_S31_AB_LAYOUT_V2_6M_NAND\0"
     segment[512:512 + len(marker)] = marker
     raw = header + struct.pack("<II", 0x40000020, len(segment)) + segment
     checksum = 0xEF
@@ -99,7 +99,7 @@ class OtaDeliveryTests(unittest.TestCase):
         bad_chip = bytearray(self.data)
         struct.pack_into("<H", bad_chip, 12, 9)
         bad_chip[-32:] = hashlib.sha256(bad_chip[:-32]).digest()
-        for data in (b"", self.data[:12], bytes(bad_chip), self.data[:-1] + b"\x80", b"x" * (0x300000 + 1)):
+        for data in (b"", self.data[:12], bytes(bad_chip), self.data[:-1] + b"\x80", b"x" * (0x600000 + 1)):
             self.path.write_bytes(data)
             with self.assertRaisesRegex(SystemExit, "before connection"):
                 self.run_cli("ota", str(self.path))
@@ -107,7 +107,7 @@ class OtaDeliveryTests(unittest.TestCase):
 
     def test_structurally_valid_legacy_firmware_is_rejected_before_connection(self):
         old = bytearray(self.data)
-        marker = b"MOSAICO_S31_AB_LAYOUT_V1\0"
+        marker = b"MOSAICO_S31_AB_LAYOUT_V2_6M_NAND\0"
         at = old.index(marker)
         old[at:at + len(marker)] = b"\0" * len(marker)
         checksum = 0xEF

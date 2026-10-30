@@ -5,6 +5,7 @@
 
 pub mod display;
 pub mod latency;
+pub mod power;
 
 #[cfg(any(test, feature = "native-ui-diagnostics"))]
 pub mod native_ui;

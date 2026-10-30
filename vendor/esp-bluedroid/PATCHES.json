@@ -1,0 +1,60 @@
+{
+  "upstream_commit": "4d80c1b29aeabc8e735ffc6e1be9bb23e95d1d5d",
+  "patch": "patches/mosaico.patch",
+  "files": [
+    {
+      "path": "host/bluedroid/api/esp_bt_main.c",
+      "upstream_sha256": "86799604b748dc4cebe32380d378841a1647583c3b467d9f3f296cad1ec61ad5",
+      "local_sha256": "fb0f2c3d7e50f6829d8bdcd857c654dd9b41659e5b3ff7da5ec6f52197b4cee6",
+      "reason": "Exclude BLE OSAL/profile task initialization and teardown in the Classic-only build."
+    },
+    {
+      "path": "host/bluedroid/bta/sys/bta_sys_conn.c",
+      "upstream_sha256": "06a462b2e023863d19fec5dba25fcb568415947e20481fd7371efdaac5495811",
+      "local_sha256": "d5d83047a07a276f7918c551e5dc690b79a6a538f29c1807e9fbd64de6acb731",
+      "reason": "Declare standard string functions explicitly."
+    },
+    {
+      "path": "host/bluedroid/common/include/common/bt_target.h",
+      "upstream_sha256": "fc352545f791e56ef81c559aa12904046285322eb3fef156f3224089ed3252d8",
+      "local_sha256": "87f6d938365e12ab41558a70317f42c73c405079f4d88be7a5c831567870db88",
+      "reason": "Compile A2DP Sink and SBC decoder without A2DP Source or SBC encoder."
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/bta_av_co.c",
+      "upstream_sha256": "7d30c60401d5eea21a7ea03492134b09550c36d6424e2736f93ef1b71c94996a",
+      "local_sha256": "b30ff6167a1984c3d1ca0d28218159c423c36151d48ddebd0b56b5247ebf7e8b",
+      "reason": "Exclude source-only delay reporting in the sink build."
+    },
+    {
+      "path": "common/osi/allocator.c",
+      "upstream_sha256": "eb00b293fa0e7e91daffcc918f32e799ef2418682725812af3b6f716525d2629",
+      "local_sha256": "176db3c10ebb7bacf99214280abc6b05a68f17d1f0596a382b0c6acf46226b0d",
+      "reason": "Report available heap without claiming a largest contiguous block API."
+    },
+    {
+      "path": "common/osi/thread.c",
+      "upstream_sha256": "e03679272cd590f8807ca6830dbae844649577234944db638c4068e93ad8e822",
+      "local_sha256": "34e32f62894c200310bd757e117f85a0e0102be9fdb687ae9a3393c0e1b2a78f",
+      "reason": "Wait for stop acknowledgement before native scheduler deletion; stopped workers sleep until deletion. Optional work-item entry/exit tracing is diagnostic-only."
+    },
+    {
+      "path": "common/btc/core/btc_task.c",
+      "upstream_sha256": "158f53a486ab10d20bc0f88fb573e57e1c9b9cd58baeb3665cf74b960c4231f8",
+      "local_sha256": "1cd835a97024aa5a57e07dee227dbf8830b62c68b30351773f640e91da3ab393",
+      "reason": "Exclude disabled BLUFI headers from the Classic-only build."
+    },
+    {
+      "path": "host/bluedroid/hci/hci_hal_h4.c",
+      "upstream_sha256": "05302fa12da70fdd8e6a3dfa4d6112c31dc56c85246e15b96414cad2930bbe0e",
+      "local_sha256": "f11c371dd7e69f51e4b54079973f52628b569f8b18e8421cad00ff3ee657bf26",
+      "reason": "Optional diagnostic-only persistent receive-queue entry/dequeue/exit and packet-header observations."
+    },
+    {
+      "path": "common/osi/fixed_queue.c",
+      "upstream_sha256": "1f83d24227c76891155ba0f90b24750c89f0dd18f88a4d0182ab1471146ddba6",
+      "local_sha256": "6d93e25e10c3cc08006e20f79ba7f9468c49e454557f8342c06e26ff0d246d2e",
+      "reason": "Publish the dequeue semaphore credit while the list mutex is held so an HCI consumer cannot self-repost on an uncredited list item and starve its producer."
+    }
+  ]
+}

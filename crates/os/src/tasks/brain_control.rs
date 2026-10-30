@@ -21,22 +21,22 @@ static BUSY: AtomicBool = AtomicBool::new(false);
 static PENDING: Mutex<RefCell<Option<Action>>> = Mutex::new(RefCell::new(None));
 static DONE: Signal<CriticalSectionRawMutex, Result<String, String>> = Signal::new();
 
-fn read_selected() -> Result<Option<String>, String> {
-    ::fs::global::with(|vfs| Ok(brain_store::selected(vfs)))
+async fn read_selected() -> Result<Option<String>, String> {
+    crate::service_executor::run(|| ::fs::global::with(|vfs| Ok(brain_store::selected(vfs)))).await
         .map_err(|e| format!("brain filesystem: {e}"))?
 }
-fn persist(source: Option<&str>) -> Result<(), String> {
-    ::fs::global::with(|vfs| Ok(brain_store::persist(vfs, source)))
+async fn persist(source: Option<String>) -> Result<(), String> {
+    crate::service_executor::run(move || ::fs::global::with(|vfs| Ok(brain_store::persist(vfs, source.as_deref())))).await
         .map_err(|e| format!("brain filesystem: {e}"))?
 }
 
-pub fn boot(
+pub async fn boot(
     runtime: &mut Runtime,
     now: u64,
     allocator: &'static lua_engine::RawAllocator,
     clock: Option<fn() -> u64>,
 ) {
-    let selected = read_selected();
+    let selected = read_selected().await;
     if matches!(&selected, Ok(None))
         && runtime.brain_active()
         && runtime.brain_source() == Some(DEFAULT_SOURCE)
@@ -107,7 +107,7 @@ fn status(runtime: &Runtime) -> String {
     )
 }
 
-pub fn poll(runtime: &mut Runtime, now: u64, shutting_down: bool) {
+pub async fn poll(runtime: &mut Runtime, now: u64, shutting_down: bool) {
     let Some(action) = critical_section::with(|cs| PENDING.borrow_ref_mut(cs).take()) else {
         return;
     };
@@ -118,12 +118,12 @@ pub fn poll(runtime: &mut Runtime, now: u64, shutting_down: bool) {
         match action {
             Action::Status => Ok(status(runtime)),
             Action::Install(source) => runtime
-                .reload_brain_transaction(&source, now, || persist(Some(&source)))
+                .reload_brain_transaction_async(&source, now, async || persist(Some(source.clone())).await).await
                 .map(|()| String::new()),
             Action::Default => runtime
-                .reload_brain_transaction(DEFAULT_SOURCE, now, || persist(None))
+                .reload_brain_transaction_async(DEFAULT_SOURCE, now, async || persist(None).await).await
                 .map(|()| String::new()),
-            Action::Reload => read_selected()
+            Action::Reload => read_selected().await
                 .and_then(|source| {
                     runtime.reload_brain_transaction(
                         source.as_deref().unwrap_or(DEFAULT_SOURCE),

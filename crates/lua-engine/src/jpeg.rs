@@ -4,6 +4,14 @@
 use alloc::vec::Vec;
 
 extern "C" {
+    fn mosaico_jpeg_encode_rgb(
+        write: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, i32),
+        context: *mut core::ffi::c_void,
+        rgb: *const u8,
+        width: i32,
+        height: i32,
+        quality: i32,
+    ) -> i32;
     fn mosaico_jpeg_decode(
         data: *const u8,
         len: usize,
@@ -12,6 +20,48 @@ extern "C" {
         out: *mut u8,
         out_len: usize,
     ) -> i32;
+}
+
+/// Encode packed RGB888 without a Lua state or VM memory ledger.
+pub fn encode_rgb888(width: u16, height: u16, pixels: &[u8], quality: u8) -> Result<Vec<u8>, i32> {
+    if width == 0
+        || height == 0
+        || pixels.len() != usize::from(width) * usize::from(height) * 3
+        || !(1..=100).contains(&quality)
+    {
+        return Err(-1);
+    }
+    unsafe extern "C" fn write(
+        context: *mut core::ffi::c_void,
+        data: *mut core::ffi::c_void,
+        size: i32,
+    ) {
+        // SAFETY: the synchronous encoder supplies a live chunk and the
+        // exclusive Vec context passed below; it retains neither pointer.
+        let out = unsafe { &mut *context.cast::<Vec<u8>>() };
+        if size > 0 {
+            out.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(data.cast::<u8>(), size as usize)
+            });
+        }
+    }
+    let mut out = Vec::new();
+    // SAFETY: the RGB size was checked and callback/context live for the call.
+    let result = unsafe {
+        mosaico_jpeg_encode_rgb(
+            write,
+            (&mut out as *mut Vec<u8>).cast(),
+            pixels.as_ptr(),
+            i32::from(width),
+            i32::from(height),
+            i32::from(quality),
+        )
+    };
+    if result == 0 || out.is_empty() {
+        Err(-1)
+    } else {
+        Ok(out)
+    }
 }
 
 /// A decoded image, RGB888 rows top to bottom.
@@ -74,6 +124,21 @@ pub fn decode(data: &[u8]) -> Result<Rgb888, i32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_encoder_produces_an_album_decodable_jpeg() {
+        let rgb = alloc::vec![180u8;16*8*3];
+        let encoded = super::encode_rgb888(16, 8, &rgb, 85).unwrap();
+        let decoded = super::decode(&encoded).unwrap();
+        assert_eq!((decoded.width, decoded.height), (16, 8));
+        assert!(
+            decoded
+                .pixels
+                .iter()
+                .all(|&v| (i32::from(v) - 180).abs() <= 3)
+        );
+        assert!(super::encode_rgb888(16, 8, &rgb[..20], 85).is_err());
+        assert!(super::encode_rgb888(16, 8, &rgb, 0).is_err());
+    }
     #[test]
     fn decodes_a_baseline_jpeg_and_rejects_garbage() {
         // 16x8 baseline JPEG: left half red, right half blue (made with PIL).

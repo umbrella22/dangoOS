@@ -11,6 +11,7 @@ use core::{
 use embassy_time::{Instant, Timer};
 use os::ota::{self, Command, Error, Updater};
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+static PAUSE_UI: AtomicBool = AtomicBool::new(false);
 static VM_OK: AtomicBool = AtomicBool::new(false);
 static AB_LAYOUT: AtomicBool = AtomicBool::new(false);
 static HEALTH: critical_section::Mutex<core::cell::RefCell<ota::HealthWindow>> =
@@ -19,8 +20,18 @@ static CONFIRMED: AtomicBool = AtomicBool::new(false);
 pub fn active() -> bool {
     ACTIVE.load(Ordering::Acquire)
 }
-const RTC_MAGIC: u32 = 0x4f544136;
+pub fn pauses_ui() -> bool {
+    PAUSE_UI.load(Ordering::Acquire)
+}
+pub fn blocks_standby() -> bool {
+    active() || tasks::update::busy() || candidate()
+}
+pub fn candidate() -> bool {
+    AB_LAYOUT.load(Ordering::Acquire) && !CONFIRMED.load(Ordering::Acquire)
+}
+const RTC_MAGIC: u32 = 0x4f544137;
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct Attempts {
     magic: u32,
     slot: u32,
@@ -55,28 +66,41 @@ impl Attempts {
     }
 }
 pub fn record_boot_attempt() {
-    let a = unsafe { &mut *addr_of_mut!(ATTEMPTS) };
-    if a.valid() {
-        a.count = a.count.saturating_add(1);
-        a.seal();
-    }
+    critical_section::with(|_| {
+        let a = unsafe { &mut *addr_of_mut!(ATTEMPTS) };
+        if a.valid() {
+            a.count = a.count.saturating_add(1);
+            a.seal();
+        }
+    });
 }
-fn arm(slot: u8, previous: u8, seq: u32) {
-    let a = unsafe { &mut *addr_of_mut!(ATTEMPTS) };
-    *a = Attempts {
-        magic: RTC_MAGIC,
-        slot: slot as u32,
-        previous: previous as u32,
-        count: 0,
-        seq,
-        check: 0,
-    };
-    a.seal();
+fn arm(slot: u8, previous: u8, seq: u32) -> bool {
+    critical_section::with(|_| {
+        if tasks::buttons::shutdown_requested() {
+            return false;
+        }
+        let a = unsafe { &mut *addr_of_mut!(ATTEMPTS) };
+        *a = Attempts {
+            magic: RTC_MAGIC,
+            slot: slot as u32,
+            previous: previous as u32,
+            count: 0,
+            seq,
+            check: 0,
+        };
+        a.seal();
+        true
+    })
 }
 fn disarm() {
-    unsafe {
+    critical_section::with(|_| unsafe {
         (*addr_of_mut!(ATTEMPTS)).magic = 0;
-    }
+    });
+}
+/// An intentional power-latch shutdown is not a failed candidate boot attempt.
+/// This does not confirm the image or change A/B selection.
+pub fn orderly_shutdown() {
+    disarm();
 }
 /// Pinned esp-hal bb239a0 partitions.rs S31 MMU-entry-zero algorithm.
 pub fn booted_slot() -> ota::Result<u8> {
@@ -86,7 +110,7 @@ pub fn booted_slot() -> ota::Result<u8> {
     });
     match physical {
         0x210000 => Ok(0),
-        0x510000 => Ok(1),
+        0x810000 => Ok(1),
         _ => Err(Error::State("MMU running partition is not an OTA slot")),
     }
 }
@@ -102,7 +126,7 @@ pub fn early_boot() {
     let Ok(booted) = booted_slot() else {
         return;
     };
-    let a = unsafe { &mut *addr_of_mut!(ATTEMPTS) };
+    let a = critical_section::with(|_| unsafe { *addr_of_mut!(ATTEMPTS) });
     if !a.valid() {
         return;
     }
@@ -176,12 +200,16 @@ pub fn health() -> String {
     )
 }
 /// Called from the real UI loop after frame handoff and native housekeeping.
-pub fn selftest() {
+pub fn selftest(boot_ready: bool) {
+    if tasks::buttons::shutdown_requested() {
+        return;
+    }
     if !AB_LAYOUT.load(Ordering::Acquire) || CONFIRMED.load(Ordering::Acquire) {
         return;
     }
     let (system, data) = storage::mounted();
-    let ready = !active()
+    let ready = boot_ready
+        && !active()
         && storage::ready()
         && system
         && data
@@ -200,7 +228,7 @@ pub fn selftest() {
             .borrow_mut()
             .observe(Instant::now().as_millis(), healthy)
     });
-    if !passed {
+    if !passed || tasks::buttons::shutdown_requested() {
         return;
     }
     let Ok(layout) = storage::layout() else {
@@ -224,13 +252,36 @@ pub fn selftest() {
 pub struct DeviceUpdater {
     inner: Option<Updater>,
     old_haptic: bool,
+    owns_transfer: bool,
 }
 impl DeviceUpdater {
     pub fn new() -> Self {
         Self {
             inner: None,
             old_haptic: true,
+            owns_transfer: false,
         }
+    }
+    /// Reserve admission before awaiting camera/radio shutdown. Network
+    /// downloads and USB preparation must not start through each other's gap.
+    pub fn reserve(&mut self) -> ota::Result<()> {
+        if tasks::buttons::shutdown_requested() {
+            return Err(Error::State("shutdown pending"));
+        }
+        if !CONFIRMED.load(Ordering::Acquire) {
+            return Err(Error::State("boot selftest not confirmed"));
+        }
+        if tasks::apps::is_managing()
+            || ACTIVE
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return Err(Error::Busy);
+        }
+        self.inner = None;
+        self.owns_transfer = true;
+        self.old_haptic = tasks::haptic::enabled();
+        Ok(())
     }
     pub fn abort(&mut self) {
         if let Some(up) = self.inner.as_mut() {
@@ -238,10 +289,12 @@ impl DeviceUpdater {
                 up.abort();
             }
         }
-        if ACTIVE.swap(false, Ordering::AcqRel) {
+        if self.owns_transfer && ACTIVE.swap(false, Ordering::AcqRel) {
+            PAUSE_UI.store(false, Ordering::Release);
             tasks::lua::release_management();
             tasks::haptic::set_enabled(self.old_haptic);
         }
+        self.owns_transfer = false;
     }
     pub async fn execute(&mut self, cmd: Command) -> core::result::Result<(String, bool), String> {
         let verb = cmd.verb();
@@ -255,6 +308,10 @@ impl DeviceUpdater {
         }
     }
     async fn command(&mut self, cmd: Command) -> ota::Result<(String, bool)> {
+        if tasks::buttons::shutdown_requested() && !matches!(cmd, Command::Status | Command::Abort)
+        {
+            return Err(Error::State("shutdown pending"));
+        }
         match cmd {
             Command::Status => {
                 let layout = storage::layout();
@@ -293,21 +350,16 @@ impl DeviceUpdater {
                 Ok(("@ok ota-abort".into(), false))
             }
             Command::Begin { size, sha } => {
-                if !CONFIRMED.load(Ordering::Acquire) {
-                    return Err(Error::State("boot selftest not confirmed"));
-                }
-                if active() {
-                    return Err(Error::Busy);
-                }
-                if tasks::apps::is_managing() {
+                if !self.owns_transfer {
+                    self.reserve()?;
+                } else if self.inner.is_some() {
                     return Err(Error::Busy);
                 }
                 let layout = storage::layout()?;
                 let slot = booted_slot()?;
                 let mut updater = Updater::new(&layout, slot, &mut OtaFlash)?;
                 updater.begin(size, sha)?;
-                ACTIVE.store(true, Ordering::Release);
-                self.old_haptic = tasks::haptic::enabled();
+                PAUSE_UI.store(true, Ordering::Release);
                 match embassy_futures::select::select(
                     tasks::haptic::quiesce(),
                     Timer::after_secs(5),
@@ -344,13 +396,24 @@ impl DeviceUpdater {
                 }
                 let up = self.inner.as_mut().ok_or(Error::State("no transfer"))?;
                 up.start_verify()?;
-                while !up.verify_step(&mut OtaFlash)? {
+                loop {
+                    if tasks::buttons::shutdown_requested() {
+                        return Err(Error::State("shutdown pending"));
+                    }
+                    if up.verify_step(&mut OtaFlash)? {
+                        break;
+                    }
                     Timer::after_millis(1).await;
                 }
                 let entries = ota::read_entries(&mut OtaFlash)?;
                 let (_, selected) =
                     ota::selected(entries)?.ok_or(Error::State("activation metadata absent"))?;
-                arm(up.target(), up.booted(), selected.seq);
+                if tasks::buttons::shutdown_requested() {
+                    return Err(Error::State("shutdown pending"));
+                }
+                if !arm(up.target(), up.booted(), selected.seq) {
+                    return Err(Error::State("shutdown pending"));
+                }
                 Ok(("@ok ota-end".into(), true))
             }
         }

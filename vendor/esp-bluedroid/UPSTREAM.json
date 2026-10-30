@@ -1,0 +1,2706 @@
+{
+  "repository": "https://github.com/espressif/esp-idf",
+  "commit": "4d80c1b29aeabc8e735ffc6e1be9bb23e95d1d5d",
+  "files": [
+    {
+      "path": "host/bluedroid/config/stack_config.c",
+      "sha256": "907a28b2dff78ce2cae99496eb734bae165d46572c413167b16e0f6ee233baab"
+    },
+    {
+      "path": "host/bluedroid/hci/packet_fragmenter.c",
+      "sha256": "f6d654bcf2200a508b35ad9f14e2d62cab26223054a828b1b4e3ff55c533b387"
+    },
+    {
+      "path": "host/bluedroid/hci/ble_hci_iso.c",
+      "sha256": "a27a5c5120dda2099ef7c4d7814d8d539e20971e8dbe5f83c6a8e26f422a606d"
+    },
+    {
+      "path": "host/bluedroid/hci/hci_hal_h4.c",
+      "sha256": "05302fa12da70fdd8e6a3dfa4d6112c31dc56c85246e15b96414cad2930bbe0e"
+    },
+    {
+      "path": "host/bluedroid/hci/hci_layer.c",
+      "sha256": "3ea02f5a7886ccd68475a7db723eeb102790d7f8fef425ea2db114f17eb29137"
+    },
+    {
+      "path": "host/bluedroid/hci/hci_audio.c",
+      "sha256": "2c341277011012fb900b95b44f56d505e07be9b61354ad0eb46cd880b17f04bf"
+    },
+    {
+      "path": "host/bluedroid/hci/hci_packet_parser.c",
+      "sha256": "ffbf64c1040842b0a39c1b6c1569ad64e364d973ae3753087da36b0239fa5f2d"
+    },
+    {
+      "path": "host/bluedroid/hci/hci_packet_factory.c",
+      "sha256": "9106ec6ddde39dfe85919f730ee4d6e7011429668cb0ef515ec891955acf7ead"
+    },
+    {
+      "path": "host/bluedroid/api/esp_bt_main.c",
+      "sha256": "86799604b748dc4cebe32380d378841a1647583c3b467d9f3f296cad1ec61ad5"
+    },
+    {
+      "path": "host/bluedroid/api/esp_avrc_api.c",
+      "sha256": "1ad746cfcf6819c54544ee1e3542dd5e1a7ecde151238590c0fbdce75fb54648"
+    },
+    {
+      "path": "host/bluedroid/api/esp_pbac_api.c",
+      "sha256": "b808695383142aa4dc8f71346ad9c3b3c8027813e7872fcb3d9ea84c12c3916b"
+    },
+    {
+      "path": "host/bluedroid/api/esp_pan_api.c",
+      "sha256": "f04e2a8e3c0d57ac9995b890c54ab30ba61223aaa988dc5b6d3ccc46690b6e29"
+    },
+    {
+      "path": "host/bluedroid/api/esp_bt_device.c",
+      "sha256": "1e01d4a7d4fdef31148e38485106e49167dc41474cac9e60cabbc0d73b80bbf7"
+    },
+    {
+      "path": "host/bluedroid/api/esp_bluedroid_hci.c",
+      "sha256": "a9854f00a0d0f7e999c0dc2c0b3133e6d5aa1ea9781e422ab103ecaaa6e87b20"
+    },
+    {
+      "path": "host/bluedroid/api/esp_hidh_api.c",
+      "sha256": "f5bd04a93bfe02dda0c441e80220ff24ada8223b67d96e7a0d8bce6bc8f3447f"
+    },
+    {
+      "path": "host/bluedroid/api/esp_gatt_common_api.c",
+      "sha256": "8937fa65afc4f7b99dad3b04a9c6016643d5b0367b871111229e2ec0a649fe08"
+    },
+    {
+      "path": "host/bluedroid/api/esp_gattc_api.c",
+      "sha256": "6fed670f0bd7d6d12c431a903cbc2d26bbc94fe573ae595c997e4449ffdcb11a"
+    },
+    {
+      "path": "host/bluedroid/api/esp_gap_bt_api.c",
+      "sha256": "5366eb4e0265feed4f4b27c29c0e814ea17382e707630b4658d192425120ad1d"
+    },
+    {
+      "path": "host/bluedroid/api/esp_ble_ead.c",
+      "sha256": "7439740fc55ebf4f963bf6eeea5d12e9e4a99e2396e488abe2793525b373e8f5"
+    },
+    {
+      "path": "host/bluedroid/api/esp_hf_ag_api.c",
+      "sha256": "8d58510bf5894bfbb7ab3e0884ad93abb35621d9e0c3f829b33fd4f742b831fa"
+    },
+    {
+      "path": "host/bluedroid/api/esp_ble_l2cap_api.c",
+      "sha256": "f8b070cd810609dd639a4e4abd88ee904e33a287dfc31ae3fff11d88a44d5e10"
+    },
+    {
+      "path": "host/bluedroid/api/esp_ble_iso_api.c",
+      "sha256": "5b4d71ba3e5cb9ccfb3991f2f4ebdc3bf303bd7d81e3505cd375d43ee11bff75"
+    },
+    {
+      "path": "host/bluedroid/api/esp_hidd_api.c",
+      "sha256": "0e01e902a789e6bf1a5d02f0f70b46083b8d5b096a101d746717b09e037b9f9a"
+    },
+    {
+      "path": "host/bluedroid/api/esp_l2cap_bt_api.c",
+      "sha256": "17c97e6dc59fc957223567f7b7cadbb4b8a5c2f6716e2c699474bd98d4e38a04"
+    },
+    {
+      "path": "host/bluedroid/api/esp_a2dp_api.c",
+      "sha256": "4e95d8014c88fc98a2d1365e7a425899429cf3320be4008b9dbb6b2089ff0de3"
+    },
+    {
+      "path": "host/bluedroid/api/esp_gatts_api.c",
+      "sha256": "789cec3d36eedd7c549d8f9db73655ca2f59e136ea44f896d7b3b5de84878e36"
+    },
+    {
+      "path": "host/bluedroid/api/esp_spp_api.c",
+      "sha256": "5153064295a5849ca7b7a57bc5003e2832d7966e1187258026a4cc4619d2bbdf"
+    },
+    {
+      "path": "host/bluedroid/api/esp_sdp_api.c",
+      "sha256": "df64d896bf1e92f119356c078738990a97cccac0f13aa4459ac613ba8817cb8b"
+    },
+    {
+      "path": "host/bluedroid/api/esp_gap_ble_api.c",
+      "sha256": "4a5458bf102fe52fa2e08c2ecfa6ed4100f6703d36f1abd23f49461a5acb774f"
+    },
+    {
+      "path": "host/bluedroid/api/esp_opp_api.c",
+      "sha256": "c8e0fdb89b03b54a22537a2e0fdbb8265ada960260d4bb646acaeefa80e7c8b1"
+    },
+    {
+      "path": "host/bluedroid/api/esp_hf_client_api.c",
+      "sha256": "42e41fab8bb670c1b503ea84684ea7ffd057bd74d754d03b7c45914c439f7a0a"
+    },
+    {
+      "path": "host/bluedroid/api/esp_ble_cte_api.c",
+      "sha256": "8d92204e0f89f8a1f5159d1b08e41e6791adb613351a44838785021b218a0d85"
+    },
+    {
+      "path": "host/bluedroid/device/controller.c",
+      "sha256": "ac2e05a7c9ed447bb9738183c6b1a2ea065d68dec8a1debda494e7db31a4eccd"
+    },
+    {
+      "path": "host/bluedroid/device/bdaddr.c",
+      "sha256": "6f8c37e5943aa2862d1b0f630478fd706ea39238b9979969f6e0601c9da55a21"
+    },
+    {
+      "path": "host/bluedroid/device/interop.c",
+      "sha256": "21f1ec9404ac0b4bb43c3c8073798dfc60fadbb8c860fd59d2099028c70e5622"
+    },
+    {
+      "path": "host/bluedroid/main/bte_main.c",
+      "sha256": "28a5d3e52e58a4b4ae8ec4490dbdca9fad50508c9a45463ed1a3beae33859b29"
+    },
+    {
+      "path": "host/bluedroid/main/bte_init.c",
+      "sha256": "a488c96a1efeb854ee9c5ae1937b5a527f17a750125e73a9400d176498be8646"
+    },
+    {
+      "path": "host/bluedroid/stack/avrc/avrc_bld_ct.c",
+      "sha256": "abed12bef3ce85bfdad595044df28e3a9e8c93e4156c326f6eec136d77cecd72"
+    },
+    {
+      "path": "host/bluedroid/stack/avrc/avrc_utils.c",
+      "sha256": "09a80cfdc1bcb9d13bee216d7d51a101f83ebbd750b532311d78224352eca12f"
+    },
+    {
+      "path": "host/bluedroid/stack/avrc/avrc_pars_tg.c",
+      "sha256": "46d90404cf9ddf6c29286435f7afc3b08527b2837e5a6b11da49995f4d7f49bd"
+    },
+    {
+      "path": "host/bluedroid/stack/avrc/avrc_sdp.c",
+      "sha256": "b19cc10279b583dc7971b9aa705d98850f6b569ef0fbb57eef3046c9a62a0d62"
+    },
+    {
+      "path": "host/bluedroid/stack/avrc/avrc_bld_tg.c",
+      "sha256": "4e4e83b1b0e05a2d936587108b202f8b15f51f0d1a117f95c54b5917c7ef7f95"
+    },
+    {
+      "path": "host/bluedroid/stack/avrc/avrc_opt.c",
+      "sha256": "130be4c8a9ef35571a0399e40194aebabd7b3c6b224d6ef99d64740266064ea9"
+    },
+    {
+      "path": "host/bluedroid/stack/avrc/avrc_api.c",
+      "sha256": "34232c0495997954fdb11dab1a50dc33e7a3e7cb47d0903d6fc6f0ed8f1407a4"
+    },
+    {
+      "path": "host/bluedroid/stack/avrc/avrc_pars_ct.c",
+      "sha256": "778933d4a155045ec7ef1d58cd17469851af8612881a059ba5cf1ca18890e205"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_bredr_pwr_ctrl.c",
+      "sha256": "220fdf9be89b5bc55a646c3f02a95b1086e54fd2a7a4a7092a173c8f0fd8cc12"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_sco.c",
+      "sha256": "fd675c43f49041b301777bae2b225abcf94d2c0187e728ed8050fec41183cced"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_dev.c",
+      "sha256": "621e0b238ca9c9f5a616e1bf57c520ea88c9c1bcdf7d1abb4d121d61b7af8275"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_cte.c",
+      "sha256": "dadcbda16442fa329ef8976595c9749a0aba862fa20f001398eea441cc04cfbd"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_main.c",
+      "sha256": "8b304b2324201696b47302e46fe2ca0c59066bffc9ebe2e684bf2f0f71f28c57"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_pm.c",
+      "sha256": "1588d1c7e69dd2d5b7b5216c81052a486d23fcba69d9f3460ceac014056b6bc2"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble.c",
+      "sha256": "52c368626faddfb1ef993c98da9459c9936cd34b625d15457b15349a40b4a1fa"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_bgconn.c",
+      "sha256": "d2c87e5139760a13d670aa0f0d9843b0c7412071aecd9b13719a02b93fb8bef8"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_sec.c",
+      "sha256": "2be88ae7737dc3727071ab4bb92c9ac391eda87a9d0f56081a2baeb9812fd665"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_cont_energy.c",
+      "sha256": "395c45dc1fd5f308cbc2a07d0ccea05e179da9b62023b81c2e230e5e519d67e5"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_iso.c",
+      "sha256": "8fe252f557bfc7a0d3bccadbd8b6dba0601252e266ae3df320891bb7123547b8"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_acl.c",
+      "sha256": "f28d8dd2b2efe4cc6e3d7dabdef34af67aac32cc0a8a75e8739310aadb6e13a8"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_adv_filter.c",
+      "sha256": "8d5c8f26f1ddfaa3812f868bd4e7e3ca55f961ea4354f8c5153803660ba7975b"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_addr.c",
+      "sha256": "7504df24787f8eba1e109e3aced8fc035fbf5eb0b83865dad4641ecfb51005b9"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_pseudo.c",
+      "sha256": "228e97d14bd7f6dc16d40fa4008656d8bca4e2f23a1932c914785ec76e898494"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_batchscan.c",
+      "sha256": "cf9ccdc4e778e1483a4ad516c3cdb49a64fb5f1cf8057039ede2f35b2c1406f0"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_devctl.c",
+      "sha256": "1398b869e539a12b04aaec2e848ac8cbf148e779bcda081b0511995af8a7a0f9"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_5_gap.c",
+      "sha256": "1a66f46b009e328576550b08e011a2a5f36bc5e6072716b872890dfdbed17fbc"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_gap.c",
+      "sha256": "aa2317764f437c9658588d2858ce6ac4cb557fca3f61a865ca5447d8a030c409"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_multi_adv.c",
+      "sha256": "86357d6c5404feedc28d095e1e98f8a78ac2e5afd6f6c655021f5cd72f73aac7"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_ble_privacy.c",
+      "sha256": "30dbf02731da5d04cc8a90dba4b749b40831569018f402880aade2e0278b0a9d"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/btm_inq.c",
+      "sha256": "0b6f973be7569d5a5beb637aaf3279827f7a65380c522313abd22436613dc337"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_cl.c",
+      "sha256": "b8ade5dc045d6f99393f4c5cf5755d8973ce252be5fd9fbc07613ee73fd444b3"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_auth.c",
+      "sha256": "ba7a38f4f87ad5fc9ac7d96696fa0fde741a0f8e3c80980d9e51a84556aa757e"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_sr.c",
+      "sha256": "09583e9d69af12353fd0b3839ea95682ab79d272c46ab4a4c4fa8e824b929889"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_api.c",
+      "sha256": "06367afc28491e1832a1cf9364d5c7f8da8f2b9d5a1ef5bddfeebc6125d2381b"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_utils.c",
+      "sha256": "2eacf578251bd5236b5177627f99b2d0c777469616f116d95758a7f1283bc0b2"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_attr.c",
+      "sha256": "2874c3f9dae5667d0b40f2fda80e9495613de43502618c792ec97317766d56f6"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_eatt.c",
+      "sha256": "32ad7d72989273e628eae2ad7ae39d480c72f9403b1d81508fc9b818c85e41ac"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_main.c",
+      "sha256": "857ff1f2d8e31a75568ad4ad5281934f2757ed34871258259549cc26423d0c16"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_db.c",
+      "sha256": "748ef567cb165450006ab11f214ac1bb663a8d2a9c131f27ff1c2ea672746551"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/gatt_sr_hash.c",
+      "sha256": "1e614eb11cc292dae22f4379da85e83a7e894ceaa1d288d0b033932a80e9d666"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/att_protocol.c",
+      "sha256": "fbff44ba314a8c6393a1c80c5b5ccf4626e3a49c53f4f2d89bf43d9b54bbabaf"
+    },
+    {
+      "path": "host/bluedroid/stack/obex/obex_main.c",
+      "sha256": "015d0eaece6337cc29a38346554c3a29c04bb6b545c27e52d90b47d3bc91c628"
+    },
+    {
+      "path": "host/bluedroid/stack/obex/obex_tl_rfcomm.c",
+      "sha256": "7764fefb3614f79ea711977a49615165c7a373d16bb0baa0e55ae98f32cf5af8"
+    },
+    {
+      "path": "host/bluedroid/stack/obex/obex_api.c",
+      "sha256": "9d1b1596e8553cdbbdafad9dfb407298833fd8cca18a99004056f4371d556a3f"
+    },
+    {
+      "path": "host/bluedroid/stack/obex/obex_tl_l2cap.c",
+      "sha256": "5a05f4eb23e4fa44c5d90421e08eae9d68c3b1043e061196f2a0d2a218f878b6"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/rfc_l2cap_if.c",
+      "sha256": "bd0d2cc9ff6cb04ae81f517b544afa99b8c8b7180b378f74a7bc2c2a90ed08b4"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/port_api.c",
+      "sha256": "1d436d6bcace816034759306ec012942d851b3d1fd8c5206e9c003562bdb1165"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/port_utils.c",
+      "sha256": "8201fce282ae3ab77d27191be35d612a152c77ea30b2cd350bfe45487b4f5e36"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/port_rfc.c",
+      "sha256": "d65e119fffa1a3abcbf96ffaf60cc6aa0c71ac4eb18380337cc46ed0c1d5aca8"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/rfc_mx_fsm.c",
+      "sha256": "6f9cf0bd1a45c12f1f0c32286ff59e69413bb8013934293347d13c95329b827f"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/rfc_utils.c",
+      "sha256": "51bc7be5734dccaf0231008ebde3a9385db60a2bfdd5205130a7511ff0f9be24"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/rfc_port_if.c",
+      "sha256": "db302914535ccfe4f178cba9c59689165caae9c38f3ead4625a5030b332d9ee0"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/rfc_ts_frames.c",
+      "sha256": "96fb604eccb4e35baa52370d11a6fb4007ce209a28ca9c76fc010c141116af3f"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/rfc_port_fsm.c",
+      "sha256": "1d0efd8cc6ac168cd9cdeeb699a0105eb49c59d0e8dd825450d5d485dd0eb229"
+    },
+    {
+      "path": "host/bluedroid/stack/bnep/bnep_main.c",
+      "sha256": "fe09745c6663f2e940c776be37031739c5db71337cc9a2c628dddf7f4cfdd3a4"
+    },
+    {
+      "path": "host/bluedroid/stack/bnep/bnep_api.c",
+      "sha256": "f63c1a7a7e70a2e6ecdda895b22744e36fc63ed563c15076565adfd6c0719efd"
+    },
+    {
+      "path": "host/bluedroid/stack/bnep/bnep_utils.c",
+      "sha256": "9c48171d65e06e7634bbfe01cb2e7ad76be5891c0680431f089dd2bb08d48ba0"
+    },
+    {
+      "path": "host/bluedroid/stack/goep/goeps_main.c",
+      "sha256": "4a1fa83c33f7a3723992e95a8c16a9094cdb1475e39d6af733f3ae2fec21687f"
+    },
+    {
+      "path": "host/bluedroid/stack/goep/goepc_main.c",
+      "sha256": "89b750ed529b34a663aeae36a13fef4bc6d7188b3db84854dceeac1bd65fe96c"
+    },
+    {
+      "path": "host/bluedroid/stack/goep/goepc_api.c",
+      "sha256": "b010d1987e06fb54b240a53660be27b692821fbf70f6a8d84c6f51b81cecd3ef"
+    },
+    {
+      "path": "host/bluedroid/stack/goep/goeps_api.c",
+      "sha256": "99a0c737186b774bc0eda8966a6b7c727fa083b74f643342278b429b07a62dfe"
+    },
+    {
+      "path": "host/bluedroid/stack/btu/c2h_credit.c",
+      "sha256": "173b6c5001d4272b2817fa1d24f16db5f29218a0558537623282afb0642a3388"
+    },
+    {
+      "path": "host/bluedroid/stack/btu/btu_task.c",
+      "sha256": "c782611ebfadb1df42bc655e3827c9ff60edaaab24bf6451322f176a941cecc8"
+    },
+    {
+      "path": "host/bluedroid/stack/btu/btu_hcif.c",
+      "sha256": "cbadf52ea8ee4fa999d9cd1832d4164c51d1f0b02d468a935372e3c72785ae3b"
+    },
+    {
+      "path": "host/bluedroid/stack/btu/btu_init.c",
+      "sha256": "5c0cd0a443e67dfc4f26c79f3aeef55c29cf635013500a8ecaee7ceadbe9532c"
+    },
+    {
+      "path": "host/bluedroid/stack/gap/gap_utils.c",
+      "sha256": "7c96203492a8035d2f8b82d83944b5b56e7a185d4823e17e85141461f9cc947e"
+    },
+    {
+      "path": "host/bluedroid/stack/gap/gap_ble.c",
+      "sha256": "432ba62dd2c3c6c432fccb5913eee1ada8da6566810f940dc74644dc6430df6c"
+    },
+    {
+      "path": "host/bluedroid/stack/gap/gap_api.c",
+      "sha256": "730265767279fc6f57ab4edc13f7e917147511cb068f7e8df54072597fa65d39"
+    },
+    {
+      "path": "host/bluedroid/stack/gap/gap_conn.c",
+      "sha256": "5b870b9779a4e341a9ea0da572d9b7ec67031dc10c1dc86bea804c27ddf5e37b"
+    },
+    {
+      "path": "host/bluedroid/stack/sdp/sdp_discovery.c",
+      "sha256": "6f823732ac4d76d9417e86767ebcd8b1d4556b6e75d0166d54ad060dc540ed93"
+    },
+    {
+      "path": "host/bluedroid/stack/sdp/sdp_api.c",
+      "sha256": "9002fbd9b19c8e65886da35a7c5ebfb36574d79e2f5a2e791822ed4eafe43f93"
+    },
+    {
+      "path": "host/bluedroid/stack/sdp/sdp_utils.c",
+      "sha256": "f61700e36d891a1522d5ef7c04f3cb9644e9a7711e24b5ca64fced8ebaa0ecd2"
+    },
+    {
+      "path": "host/bluedroid/stack/sdp/sdp_server.c",
+      "sha256": "e713ce2936e4fe03261ed8da3b0e27afe2a5733bead16ae1575c9a6dcc4dd3c8"
+    },
+    {
+      "path": "host/bluedroid/stack/sdp/sdp_main.c",
+      "sha256": "c9200a4282fa372f0c0fe0e90bfcc5140158fc4e156e7141f771facd4c12aa5c"
+    },
+    {
+      "path": "host/bluedroid/stack/sdp/sdp_db.c",
+      "sha256": "9c19eb505cda76172e19207bb900c1a5d1f116855adaeba45aa97c4464cf5252"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/aes.c",
+      "sha256": "a47785e107f4f5eade7c662664e4229cc5f26802d9de87ee6972fb1d2c8f60cd"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/smp_act.c",
+      "sha256": "0ff9068b0427bac770b2362b19a7c9cf48e82cd33d99826c2810996a236be98b"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/smp_utils.c",
+      "sha256": "cc7dbfce372607d43aca48d67d444291b53c0dab20c71633fdeeff151c60dee1"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/smp_cmac.c",
+      "sha256": "8e8cc969dd9dcb7a07905e6a6a0f475ec4f2c497fe410be1c202185e5af9e8c8"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/smp_br_main.c",
+      "sha256": "88a5476604f572373114e5e24e220fcc21da66176bfa97191685fc64fe25c3af"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/p_256_multprecision.c",
+      "sha256": "f8b5346d586f32e78c0e9603ca9286cb2d34ba4d2a61b3b7e65c62d9c9c965fe"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/p_256_ecc_pp.c",
+      "sha256": "c00dc0d6d3dd58e747f142bd1bcdfa503e75fa4b5980169a024f0c6f600ce7f1"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/smp_api.c",
+      "sha256": "3c3b30b02f3478517dd47b77c00337876b086b65a6055386014a0536494ccbce"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/smp_main.c",
+      "sha256": "d401ed4d99bf62f183201e1d2b270ded69a1ea1f79bde39b42e7ece6e742e102"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/smp_keys.c",
+      "sha256": "f4216c159dc330d3bad3e7991cf12bedf59700549ed14d25571ee3bf78700010"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/smp_l2c.c",
+      "sha256": "64a774823b66d3524227fd6e00799748ceedac4360e462b04b5a2cd5e5a9a29e"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/p_256_curvepara.c",
+      "sha256": "8d4efe64bdc72830bc49be429a9894bce0d5ba363c556848367efdf077f63020"
+    },
+    {
+      "path": "host/bluedroid/stack/avct/avct_ccb.c",
+      "sha256": "dd80f70b0e30d062f01645a0de88caf71be208cc7b64dd0d886e0f93b0c010d8"
+    },
+    {
+      "path": "host/bluedroid/stack/avct/avct_lcb.c",
+      "sha256": "fb1ef61118b97abb8f09d7601c13796b84da7c15cf6a428e7bf722f09c209472"
+    },
+    {
+      "path": "host/bluedroid/stack/avct/avct_l2c.c",
+      "sha256": "ca0ded68d3009be62cede7cc2afc8ea6a4750d96b570234c4c9e006708e2427f"
+    },
+    {
+      "path": "host/bluedroid/stack/avct/avct_api.c",
+      "sha256": "79f52fad885969f28be2efbf5a25a4d6ed593fe8e3e0535b44c8f995006598dd"
+    },
+    {
+      "path": "host/bluedroid/stack/avct/avct_lcb_act.c",
+      "sha256": "6f819ca434e187f69be1bc6db88a3c61a3145ce5e77508d9151c4088d75c38ae"
+    },
+    {
+      "path": "host/bluedroid/stack/hid/hidd_api.c",
+      "sha256": "7f5247db656933dfd879b85b929f31c8545f96be8c934c8dbd2eabb15f498884"
+    },
+    {
+      "path": "host/bluedroid/stack/hid/hidh_api.c",
+      "sha256": "e0365a6e88331806b297466561a6b3713fb93467e46b3c55337ada8bc1ac9056"
+    },
+    {
+      "path": "host/bluedroid/stack/hid/hidh_conn.c",
+      "sha256": "2823202b11e30a44720e027e24c301e542d00eee59b448eb49a50ed3957d59de"
+    },
+    {
+      "path": "host/bluedroid/stack/hid/hidd_conn.c",
+      "sha256": "e2e29bb11cbc750b2df9d9373b76bed7731ecb0ed1989d1104c623d2c08e57df"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_ble.c",
+      "sha256": "abdf24d69ad7c3b84cfadc05d068ed700090e28cdfdbcf796cfc327ff5f116c2"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_link.c",
+      "sha256": "ff7cd96c962b595bd50202738666c1036121a6ecd6fd6e47970e55eb5b5a1ff4"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_csm.c",
+      "sha256": "2b3765f8c972ca5411643aa36d677aafe7630f5da79de146f85cff9c107d6c07"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2cap_client.c",
+      "sha256": "9df1ff0f920762aa4ab4dd8715f8363127af4f8d78a6f4fe46f07ee5194bf6bb"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_ble_ecfc.c",
+      "sha256": "be1ffe092eb96a0275d7947413af7dad23b48d519602badb67ed6bf7ed96b1da"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_ucd.c",
+      "sha256": "c34484503fc54d22793998cee53a02fa8a406f584e685a1821285adae23e5c1a"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_fcr.c",
+      "sha256": "02f664c0c55c588606425e27d00fe964b78ba39e247f76f6935e0e1abc46ce93"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_api.c",
+      "sha256": "64c6c99ee92ffb0c5cd0c521d20e6c29c66f85079c0523fecb4e9127ede96f65"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_ble_le_coc.c",
+      "sha256": "c9ccfc44cf2b30356e446b0dabe17c92af097f04de67a754c9615a3727075924"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_main.c",
+      "sha256": "0126f642fd8dbdb4e7aef8492aba1e671a3d55c41cdca7433f2bee574bedf3a0"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/l2c_utils.c",
+      "sha256": "46c760a8da2481429807080a6066e70781d616aa0742339ba5afffa5033b684e"
+    },
+    {
+      "path": "host/bluedroid/stack/a2dp/a2d_api.c",
+      "sha256": "c5e98fb487a9e33bfd00ea12b28b2be63f7c30e4245060a21f2990f184fff5d5"
+    },
+    {
+      "path": "host/bluedroid/stack/a2dp/a2d_m24.c",
+      "sha256": "4dcedda5f73928252a9286251f1390c0930b31c81b16db74edad6c95dd7019dd"
+    },
+    {
+      "path": "host/bluedroid/stack/a2dp/a2d_sbc.c",
+      "sha256": "49e6a424d6006c97d9126680c95c1dc19bbf94801865e18671515e3cd6c1007f"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/avdt_api.c",
+      "sha256": "2049dbf03331433fab96dd572c670c7eaff288e9bef3c3d3f2170daa1a4e9fb9"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/avdt_msg.c",
+      "sha256": "f66c1d912b558463095693869ed7677bdbb2debb1b1b8f8ae2d5d335ee6d0abf"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/avdt_ccb_act.c",
+      "sha256": "87cf1f4f2e802a1575f4ef9db1fc8fda1a2bb210c841846e9d3211f9bc7ac97a"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/avdt_l2c.c",
+      "sha256": "50db82d2007579bf5d3897dabd15e53bd053c27bae392fd5c12cef092825d4e9"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/avdt_scb.c",
+      "sha256": "54e498847bf8b516170695a455d31430ddbdac70334e49c6810f635ba3e6d0b1"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/avdt_ccb.c",
+      "sha256": "80d80d38fa7c6816d2ba74ecef36ed4f38349841f5839ac25aba9a42d842326b"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/avdt_scb_act.c",
+      "sha256": "cd0bde3e48c3cf6ca8e5c7fbd00967e6f47f4d71cd873547b7ceb4cc5302d41b"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/avdt_ad.c",
+      "sha256": "943ef66870808af231c7d40402d6a114c5c87e2dcc012b41cfc0801a918b470e"
+    },
+    {
+      "path": "host/bluedroid/stack/pan/pan_api.c",
+      "sha256": "a8c361c8eab374191d3ed9b0240cc60d1215102376a81a1863fd7730f3240a5b"
+    },
+    {
+      "path": "host/bluedroid/stack/pan/pan_main.c",
+      "sha256": "7eed188365955bbeec84a3e25cefd473b1726f7bfe514d27577920615eda69a9"
+    },
+    {
+      "path": "host/bluedroid/stack/pan/pan_utils.c",
+      "sha256": "0306038110500292633aff30af78da5a2659940733b37cafb2c6f61f1b16e51b"
+    },
+    {
+      "path": "host/bluedroid/stack/hcic/hciblecmds.c",
+      "sha256": "a63d7750a686b01d1287a6c9bd6474ea452e354271947c1a0924094e4f7bf1c5"
+    },
+    {
+      "path": "host/bluedroid/stack/hcic/hcicmds.c",
+      "sha256": "4504e8edcdeaa8dc66649559af6dc19fcee45a448da310bba31f4eb54b34b329"
+    },
+    {
+      "path": "host/bluedroid/stack/pan/include/pan_int.h",
+      "sha256": "cf1ce9f0495772f0fdde5d0195d3f017d04f80708a53e7aa6c3edf918cb9159a"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/include/avdt_int.h",
+      "sha256": "67f991945e4c1a6f4bc0f95dec53a64aa2696179dd08605e4e743ae52a6ac7fe"
+    },
+    {
+      "path": "host/bluedroid/stack/avdt/include/avdt_defs.h",
+      "sha256": "19e3d51c8fd6bca5f7bae01fbf2a72311a7bc9e8df32e5484376d60406a190bd"
+    },
+    {
+      "path": "host/bluedroid/stack/a2dp/include/a2d_int.h",
+      "sha256": "964b26c00eb7aea6dd28b9bc259e63c616d9dffdc0feb436ef6c3a679a252afa"
+    },
+    {
+      "path": "host/bluedroid/stack/l2cap/include/l2c_int.h",
+      "sha256": "2d7d4242ac52bb541f42b38f5983a3100b1e94bcf30c2b13166c7cf49990c779"
+    },
+    {
+      "path": "host/bluedroid/stack/hid/include/hid_int.h",
+      "sha256": "2865264111280d1efff9f67e83575d0add51af73ea2c2948039212fe88fd4907"
+    },
+    {
+      "path": "host/bluedroid/stack/hid/include/hid_conn.h",
+      "sha256": "51de3c79a76d9724215b27698b3ca1b05865c13530102b8e68adedc289ea33e8"
+    },
+    {
+      "path": "host/bluedroid/stack/avct/include/avct_int.h",
+      "sha256": "ed6ed7e6dea9237d0928f0f0a6f93ee2a9ebb96df96597f50705f4f75298c276"
+    },
+    {
+      "path": "host/bluedroid/stack/avct/include/avct_defs.h",
+      "sha256": "12808a74fa557da75397fbdcea3cdf906810cc5da17939f2c527fd33e78cb32b"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/include/aes.h",
+      "sha256": "08734e706d255085464aad549c03068602a8f9d6a6c698124e4b14536970c57e"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/include/smp_int.h",
+      "sha256": "d798c9cfbd4791ee90c118bb2dbbbc5daf533ec97225e25b436994845cd87e77"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/include/p_256_multprecision.h",
+      "sha256": "657f65ffcee76881642bf6da27b1093ddf011d7ccc1dd87626b1bd33f4c782e3"
+    },
+    {
+      "path": "host/bluedroid/stack/smp/include/p_256_ecc_pp.h",
+      "sha256": "223d202bf351cc8b2e2fb8d7582c86b8005ac0ff3131df93b2337d8019386c79"
+    },
+    {
+      "path": "host/bluedroid/stack/sdp/include/sdpint.h",
+      "sha256": "068c59952ea85f38bedb7c403ef565d619ff94efbf313c5c9141b423e9a5bcd2"
+    },
+    {
+      "path": "host/bluedroid/stack/gap/include/gap_int.h",
+      "sha256": "c3f8ff42051caab0761305be383977c8b221254b72b34eb5caacde155c5518b5"
+    },
+    {
+      "path": "host/bluedroid/stack/goep/include/goep_int.h",
+      "sha256": "88a8c46a1f88c130734aa859bb5247e69edf7eaaa8ba31a678d2596706682eed"
+    },
+    {
+      "path": "host/bluedroid/stack/goep/include/goeps_int.h",
+      "sha256": "98ce26991f1beb1fb1172272cddf458feb7682ec52c55b621eb41bf49f7ca301"
+    },
+    {
+      "path": "host/bluedroid/stack/bnep/include/bnep_int.h",
+      "sha256": "5cc319d1e72253859141cbb4cf1cc04678519761a572c37d4ad81102a9122dcf"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/include/port_int.h",
+      "sha256": "1c1fd68c6af746ea7082c051307f2a785e7707e17e9572a9291cc2b7294b3339"
+    },
+    {
+      "path": "host/bluedroid/stack/rfcomm/include/rfc_int.h",
+      "sha256": "59754e41d69b24ee9cf2c6b9f3bb12d40ca07e1216d253f53ca68915ac998086"
+    },
+    {
+      "path": "host/bluedroid/stack/obex/include/obex_tl_l2cap.h",
+      "sha256": "8e5da07863deb7ae5651148609acddce2b34e3c4c622412cb869eefc3b0847c7"
+    },
+    {
+      "path": "host/bluedroid/stack/obex/include/obex_tl.h",
+      "sha256": "e4842d75390d39c48e13e892309ad5f3cb42599f77e46983aa6676dd66128956"
+    },
+    {
+      "path": "host/bluedroid/stack/obex/include/obex_tl_rfcomm.h",
+      "sha256": "5f905b3388b4f0d5afcc6b57b4bb3dde27a3ab7cdc2996157c37416d43d66a41"
+    },
+    {
+      "path": "host/bluedroid/stack/obex/include/obex_int.h",
+      "sha256": "35c089ddccf644a15753afeb8c6b9ce89e97ac6495860ff0ada6768e188fde89"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/gap_api.h",
+      "sha256": "d5f9d4b887b981838d365c8099fda07fde64e679c617379ee924cec7242c1868"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/bt_types.h",
+      "sha256": "42bda1ceeaf7246ed6ef8fe449334ed48769de09afb04f187b090ceae7e9b80b"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/pan_api.h",
+      "sha256": "4d301656f231101e1af6fef2de07b60b00c564b43d14e20d712d992395043700"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/gattdefs.h",
+      "sha256": "b8118c0d10d04c0c9dc1df9c34a30afa070903c455525be851bae231840a32fe"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/hidh_api.h",
+      "sha256": "8d448bdd66d1094ddfd93d8cf3859572c9af669ec000fd74b1c007d9532cdc6f"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/obex_api.h",
+      "sha256": "d931935c6d3d84f822a38318231b9ccf2c2cd6af57a6ac96fb7c0e83b1b6902b"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/l2cap_hci_link_interface.h",
+      "sha256": "fd23bef3b147e718f48899f6d339dd5547f4bb2c7323d68f5bf9a3878c693042"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/smp_api.h",
+      "sha256": "225207f00e0d1b31cd47f14db0a0f7f8af8dc91717b869c1a21b9a13fd74b05d"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/l2c_api.h",
+      "sha256": "b385cd13d11551265113e7a5c9841974c5218629fecfbdc8f5eb2cb46e2bc602"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/sdpdefs.h",
+      "sha256": "c395a2dfe63605c2241d7b86ba020a62558604400c6888464cf90161117dd542"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/bnep_api.h",
+      "sha256": "28355916fa2027048a007ab5cd780d3e01c295b12c3b1ddcc8a13488b1906143"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/btm_ble_api.h",
+      "sha256": "1b610cb409603710d6417f49d928bf06af185dc1b89b26268a04b061c549f329"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/avrc_api.h",
+      "sha256": "3256e18dd014dd5091e5d292a8323c788c647a3015b883c57e19d8fb09536023"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/profiles_api.h",
+      "sha256": "5642c1e40ff6d99fa74cfe121fa8761a95fd7d6f809108d36a3bfed4fa35f4a2"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/avct_api.h",
+      "sha256": "fc1d52abc1481e9aa8f669dd997327fed81eb395d5de782486652fd81e60f005"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/goep_common.h",
+      "sha256": "ca604cbafab14165f0bbf1d42c1a5928653bdec90b967267a3dea2ecb310c6cb"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/btm_api.h",
+      "sha256": "594834498e424374c822c07c2c87244db905e77c92084b4da74ea0c187403b7a"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/goeps_api.h",
+      "sha256": "7e2281ee7b7b45235019cda780f5825c0cb58fae1e219983c8e0ddaa73f5dad3"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/acl_hci_link_interface.h",
+      "sha256": "dd7673bef42afa986c2c97c9217cd9fda95e99f087d646659724bc2035d24959"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/dyn_mem.h",
+      "sha256": "ebc0230a391c17a9936468b4d672f75118fa3d9cc262d9218eba28d5192466cf"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/hcidefs.h",
+      "sha256": "899f41e9c538d8c6105aa08d91963b08c689754d593e7814a24fe3015e29d687"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/avdt_api.h",
+      "sha256": "f52b2e46ff5f254fea21ba4da43c8f0c2f98f0a2091d4f1b78546befb4ecc991"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/avrc_defs.h",
+      "sha256": "6655633993768ddc35d0c0a9bc48238c47a7c78f481b05884cb2e7a8d91acbf2"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/c2h_credit.h",
+      "sha256": "70feae1d07a8465dd7f84a2c4cc45be26921d93731aecb772c56d6ad2f149ddd"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/a2d_api.h",
+      "sha256": "32a8b0219e346ec9b79173750e4082950e31ab64d1c141256d99def34d40d310"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/hiddefs.h",
+      "sha256": "04f713d8d4ba103335c9076321d9cbb6d75aaab381cd194147ecfead70172fbb"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/port_api.h",
+      "sha256": "a2784cc96c5e839f3c7c376ac9c964cf7723d1e28479979a448b795465679137"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/a2d_m24.h",
+      "sha256": "df94054db73a0083a2774c9d79da825fe8d6b368be6331d1661394fa726306f7"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/btu.h",
+      "sha256": "c1fca9231a30b84a3d63bfde9d77cfe6a9deb388ca3feaba4ccc914b56e24f63"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/goepc_api.h",
+      "sha256": "b1557a9f7e11c9806ebec2eaa13cada4d1d7f9268e24f36546f2aa012668045a"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/sdp_api.h",
+      "sha256": "44ae3204d896a9f97b3af2895ac664760c4f6611863bd33a6ee47ab232bb26ba"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/l2cap_client.h",
+      "sha256": "622dbc6ddca9e22808e5a21e0efee75f341b95f60d222efc2aed616a4c011812"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/l2cdefs.h",
+      "sha256": "3091ef665b9ada8e94295f5555f70b5e3a8fe77974b8167b44c27c6a880e3a5d"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/hcimsgs.h",
+      "sha256": "6498953cca467408d0dd54eb50d484e41aa015a3445bdaab89b561ce5aef8add"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/a2d_sbc.h",
+      "sha256": "a1eb169ba9e0564c6cc2ec835d2ce582d67ce9d309a7a7ab23db4234eb0f8aa5"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/hidd_api.h",
+      "sha256": "6cc23492f0f61117497c02f8f6fae42d2865e1bdbd9cd7ace87d0c1ae178b42a"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/gatt_api.h",
+      "sha256": "08a4effe4483e3a6e145b8da0c5b55b7545765694b49dca28b6d95e1c6f1e06d"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/avdtc_api.h",
+      "sha256": "264d05f8fe838a95b50f8f7e96708b3d005b481f2f6a7c119983dde5f8c0e27c"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/rfcdefs.h",
+      "sha256": "d492bb5698b05d5fc682fc96767b0ad3983d943707a621df6c5e4d0dfc57abb6"
+    },
+    {
+      "path": "host/bluedroid/stack/include/stack/port_ext.h",
+      "sha256": "9cfe45de22f45e704899e56185ad11e410440fd2d8a997869da6dcaee3161341"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/include/gatt_int.h",
+      "sha256": "f9ddc651a3c45c94229ed0bbf9e0fd7c38a0035c1cc892adbf928c2d68e7db84"
+    },
+    {
+      "path": "host/bluedroid/stack/gatt/include/gatt_eatt_int.h",
+      "sha256": "a1e05e2321878e7742bc53c41824ac668494f8cdbca23ebd7c1f8b7748596989"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/include/btm_ble_pseudo.h",
+      "sha256": "cb7d9ff636cc5d29cd98e9e1fabd4275429306c03549223ab2c924f64120fd59"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/include/btm_ble_int.h",
+      "sha256": "1ee8a130a23d9598c3ebfa2ba440dd60e8012c8a5defb524bbfbb13d36adc3ac"
+    },
+    {
+      "path": "host/bluedroid/stack/btm/include/btm_int.h",
+      "sha256": "02d192338c554c4925946ad203b0936655a75a7b6d69cf47df5afde9b637edde"
+    },
+    {
+      "path": "host/bluedroid/stack/avrc/include/avrc_int.h",
+      "sha256": "e97e08b90c5ef73f37cdf6ed9b2f19f347175a67e7ff87da5f9e259f3c0dd205"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/plc/sbc_plc.c",
+      "sha256": "fee0b123f0c71a3df9e065db00c1043876654597ae9d39336eee2841b24fb3ad"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_time.h",
+      "sha256": "2ba3b3108edf75338c8b189f167ebf55c6e5928170b9d6f7bc87a6c64062a1ce"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_bitstream.h",
+      "sha256": "6a40c43f62aaf7d345bd63e12568255074fac921ddb90ce6eca403e6bc012246"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_osinterface.h",
+      "sha256": "01bb6ff7ac7a055c4389e24822207fc297fac6e75a61bb9422c818bf86816739"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_codec_sbc.h",
+      "sha256": "ce7dc1330e1f3109f530f86a2606a1709b3ff790df3d2c2d747c01a353fea4a4"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_status.h",
+      "sha256": "df364028e17d0cca2b90d84b8e997228a447fe025001805e5d7d831f3670e17a"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_codec_sbc_private.h",
+      "sha256": "8282ca3a626bd20a171ec36f06356211d4efe0f3f805a099e64b04a6614e774d"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_cpu_dep.h",
+      "sha256": "18e1f78b3fb3289dccd18f8036d5ec29e241af297a553f2b641cd710bc1f3137"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_utils.h",
+      "sha256": "942f4471c90ff91a62c22ced9797a6d7b1b8443952e655fd256734050b0d2b7b"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_assert.h",
+      "sha256": "bb57dc32674946765652a2f9c8c96ba43c2be05263c3a17c971c35d9fb61dddf"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_stddefs.h",
+      "sha256": "9b99bb6249fc406dbf8282ef3ef08cd42f93c64a7fb8102edfd96ae516e640a6"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_string.h",
+      "sha256": "b0f48989f96dd9b9dc3699f2b9da729346f9b1b223b7767c15fa07a3f8e8105e"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_bt_spec.h",
+      "sha256": "7ee77fdacda11cb0cd8d09d5a06dd9c25a1473ded62bac1f1f3b85441c276fff"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_modules.h",
+      "sha256": "381ba68b7c341fab6c6f890c5203f2fb217e08d810e3b1f5518c08ee5f145bff"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/include/oi_common.h",
+      "sha256": "2418056716ff28a82a5bb35f5821f6f0ae84780db4717a12fbc322418749559e"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/oi_codec_version.c",
+      "sha256": "4fe4447bc5b553ef20b63687ddf98ba72ed8b31308d7097622b72451c4e67fa3"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/bitstream-decode.c",
+      "sha256": "3068f7db9f76e255ea3e1685559fb98c55e684afd7035618d3e5447cf71eaf64"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/synthesis-dct8.c",
+      "sha256": "48594579f5fd8dffc7b11b67a130e356395d78e671d4cdc0d13f1ab6f268d3e7"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/framing.c",
+      "sha256": "c5809d968bd2758dcdada3be3ae253cc17d9ff61120055a52182e061d91a70f8"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/decoder-sbc.c",
+      "sha256": "1cb5d58c3fa4ab00d643ee8b5a0a6225dacadb1d2bea87bd6819fc9c0c85cb4e"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/decoder-private.c",
+      "sha256": "a605dfc57d665d21adef0dbd4b42bcca95b858055d509285aef5553d833b12bf"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/bitalloc-sbc.c",
+      "sha256": "b8844523f85a2c0c786423b0915b1c4bc048c3877cc551e3cff7c46dde16593c"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/synthesis-8-generated.c",
+      "sha256": "a3be662f21808f4cd585038e5add666a0a4d072e681c245ac07112a75139bad5"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/dequant.c",
+      "sha256": "fb9cdcebc8ccbce65f627fef580c97d9d993e91fb9eeb1262ca37b2d7ce8e81c"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/decoder-oina.c",
+      "sha256": "442d28b2591e3a992f8b3d7743a5bd8cd3ab9915f655171c65c95c7daa2186de"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/alloc.c",
+      "sha256": "ecd547035eb0fba050c6d13bf9e718a790721d2d6b06ab633935b14bbc70c811"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/synthesis-sbc.c",
+      "sha256": "05cf5d8720bd4ebdb5659d760fbf9be618971dc968eb18e54ff4a1aadfaadc81"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/framing-sbc.c",
+      "sha256": "3ee504f1049627d8b85532670c7a3b7afff89d46a198faed6dd9eb2e54169f2b"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/bitalloc.c",
+      "sha256": "ff7efd977f3a508c3c0d6adf21d8610a3a312d76064a4e87c829d07ad3f2c2e7"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/include/sbc_encoder.h",
+      "sha256": "eee7708123ac8c9853848237abcb1a4b642f5b8806e4472a9df48534d5ebac8a"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/include/sbc_if.h",
+      "sha256": "aeef8ddbec033f9f35c5d5fd1b01e922d15e9bb76faf6af09ae9442103a931bc"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/include/sbc_dct.h",
+      "sha256": "279eb010b757bfab6b09103b2e6da22cba60b741014118726717b797056368c8"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/include/sbc_enc_func_declare.h",
+      "sha256": "dffe67f363413336cfc3161e953dcce37d2d0920a152458b50655aa7eb246324"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/include/sbc_types.h",
+      "sha256": "20e96eab14aec35cc26b1eeb796866d4bd9912ee32df1748f7e0bd1fc1328c4f"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/srce/sbc_packing.c",
+      "sha256": "798aa27e36a99e319fb57dc9b2491e08789e5fe79ecf2273b6531edf722af49b"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/srce/sbc_dct_coeffs.c",
+      "sha256": "83e4082f7c0acb601ef29956bb42d382833453fad93ac90dafefd87c9ffcac87"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/srce/sbc_enc_coeffs.c",
+      "sha256": "0e66f828fc3b996a159e4acdd1c0560273c1b92d04535178bb7761d2a46bec52"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/srce/sbc_dct.c",
+      "sha256": "36c43cb1df265dad5b0cb86adbce384c612f00d86549de33f785447352abc4e4"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/srce/sbc_enc_bit_alloc_ste.c",
+      "sha256": "8ce4aa1698af61e1aa12d54f65326cc996d3175187b91cc417ba161e9eab6ddc"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/srce/sbc_enc_bit_alloc_mono.c",
+      "sha256": "a6ad99d1030902c22fea19f72d79ad3f79217bd5fc161a51d765e4dfd9069d99"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/srce/sbc_encoder.c",
+      "sha256": "fd58a3b8d6d530cf0c51780f87e6ade5c18261fb522793e8bad19c946a74cb89"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/encoder/srce/sbc_analysis.c",
+      "sha256": "2366e5423f94bd2fe26f1918e1490b9406089c27f90174f45926b46e5d906d32"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/plc/include/sbc_plc.h",
+      "sha256": "c7a18125806b2892f0203b2386a03472ce9e9dc424aeb161f229568b145ce72c"
+    },
+    {
+      "path": "host/bluedroid/device/include/device/bdaddr.h",
+      "sha256": "8fc872956fe7744813592c2d344811f6c097257c28492adda74fad82e04ba4ed"
+    },
+    {
+      "path": "host/bluedroid/device/include/device/event_mask.h",
+      "sha256": "93daec6232ec64f1f9ca941dfa223218587b12977a7a1720dc740f7dbd40350c"
+    },
+    {
+      "path": "host/bluedroid/device/include/device/version.h",
+      "sha256": "0b901fda75570f636ee10709f98d931e4a4cc94c1e9dfbf369bf1182823cd0f2"
+    },
+    {
+      "path": "host/bluedroid/device/include/device/interop_database.h",
+      "sha256": "dd88ae6f43a98e92b73ab047a0c9465a2c400ad65cc86e9d1650e9373b14ce9e"
+    },
+    {
+      "path": "host/bluedroid/device/include/device/interop.h",
+      "sha256": "2a1b8fdd90899dd3764aa13bbb0829d67ca9914d04885c49366a16b86ea94f85"
+    },
+    {
+      "path": "host/bluedroid/device/include/device/device_features.h",
+      "sha256": "8b5320f362ecbefd63e61ce9c212cdc2debe56b100de71ff5d5a6e769336944c"
+    },
+    {
+      "path": "host/bluedroid/device/include/device/controller.h",
+      "sha256": "2b016167503aaf3b670443f1aef0e0a65c79c014c034394e4098dba404424e72"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_hf_ag_legacy_api.h",
+      "sha256": "36a45ee1b55be15de4ae0704c98c2f87f4514e633c0c1bd5d186f5bef7345168"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_pba_defs.h",
+      "sha256": "2ad2bc552a2d0675592616f372af6e9ea697093b0d158f3e0a769362dd8b48db"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_ble_l2cap_api.h",
+      "sha256": "821f03f5a7d0331fd5143156fab8fe0c2251223a502aa89500aa4adad942aba2"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_hf_ag_api.h",
+      "sha256": "caad2636b04613ae359984dec433ff5a5e05f9289c07ac04b3d166535f16462b"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_hidd_api.h",
+      "sha256": "76bd9f16044fd9b2e5190c6ed99b3c85bd91fb2f93eb4c9b86436c270704160d"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_ble_iso_api.h",
+      "sha256": "c2c712733b26eefea8a773dad3a893e91830d72d44a9308947e36eeec1c97302"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_a2dp_api.h",
+      "sha256": "d6acecf67a0e7f30946a7556d64068ba9b58ef4995909ff6218802847480d63a"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_gatts_api.h",
+      "sha256": "053004209f6960e1e713fbb867bcdcb81e5ccd53bcfb479585a45922be469577"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_l2cap_bt_api.h",
+      "sha256": "3a9922978d7b93a550ca7536a4c1d1f5a8024a3906c8b3d009fca80f8f6f9ce7"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_gatt_defs.h",
+      "sha256": "f5ec892f5ca7e7d3b10d54982c21efca514bc8139697b7a23b2d39405c904b33"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_ble_cte_api.h",
+      "sha256": "716f3e37962b4e69d96875f1def2568fd6db98eefe1d631f27abc90d03c4c561"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_hf_client_api.h",
+      "sha256": "98f3e619a9387cceeb4d4d777e1f66adcd7a6c711db267824452bbeed1a125aa"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_a2dp_legacy_api.h",
+      "sha256": "f4d05dcebb7dbfabfbf955dc60a7cb4970886ca7231ec86c992ebdc2c93cb0d2"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_opp_api.h",
+      "sha256": "b364548beb24320f6ac50f6ca73a706fc097880faace8ad78c6915b5bf3239ac"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_gap_ble_api.h",
+      "sha256": "69ab9ee6904953e3ce2b77b5587a239153815f84399a63f61f47f57581049b0e"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_sdp_api.h",
+      "sha256": "40436f2d356c59f030d07143f4c10eb56ceecc97f1f311e0a535784a743ff295"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_spp_api.h",
+      "sha256": "6cbc7c76f4e400b5bc8122a2ae12814eaae5a9fe56fe8acabfe80e0e7fe7fc5c"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_pbac_api.h",
+      "sha256": "b94ad37aa3d3c3998595ca62e3acd646f581db1f40e440dda6703e3391078e48"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_avrc_api.h",
+      "sha256": "1f4af72e6d6a97d9e94066ea6885f64c97156a5c748998e580d1189e83533fad"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_bt_defs.h",
+      "sha256": "d04d749055b02fd14b32d5c7bad947ddb1d2a2cb76c54e9d9f16e28a7e6783da"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_bt_main.h",
+      "sha256": "75a629f9704ea5574759c18c4596f8b0db1a16b25f0d915d619b0bc6a7013ae5"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_hf_defs.h",
+      "sha256": "23a9b1ab4435ee8a7c236b73251caab1ccc200ad95043905cdee5f6f54bff7d8"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_hf_client_legacy_api.h",
+      "sha256": "c47fdf76e2c3ee2e295d640e3700ea061b7d006fdb35fbaf6a494662fec4739d"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_bt_device.h",
+      "sha256": "d6da178dde2224fd6691a1cdcb61a75162ef353fd68238bb349dfd0a2ff6473a"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_pan_api.h",
+      "sha256": "c13cfbfd1956236ce7f66b35b4cd609f6f97da61120ea5cf169cf0db2660eeb9"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_gatt_common_api.h",
+      "sha256": "8e8407b18aca5f0f19f1c9794ee3958a5351787fd8b47ba0802ed01b95edea22"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_gattc_api.h",
+      "sha256": "6e28d49912f6d16e3b55a122209a59150a7cf392bb78b0366553d5b5888314ef"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_hidh_api.h",
+      "sha256": "5374d5bb5ac37e5e9a0936c45414888e2b690c81fb6be3408692545aa97b11d6"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_bluedroid_hci.h",
+      "sha256": "4eab85c82e3b6bc62a152aa818cfd71c6ab02d6ea8ae3f2a78d947a33e03d34e"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_ble_ead.h",
+      "sha256": "e3444b45357900bc321868da75588d300731a30d86c21068382abbc23fb4938a"
+    },
+    {
+      "path": "host/bluedroid/api/include/api/esp_gap_bt_api.h",
+      "sha256": "6595be9c2ad440e641f6d56878002db88c946f309ec1bda617a9acff6e1708d4"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_sbc.c",
+      "sha256": "3699a8032be1aa104b89b58ffc5ec74394c04e8608d982befcb1efa0323deaf8"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_cfg.c",
+      "sha256": "d00ad5aae67e638bf9a64af8e85ba0fa5f99c6015a987b8b9832b3926b181d2a"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_main.c",
+      "sha256": "6204e66f2ef766f415e6752e8626a01d0cec4bc3f3ba7898808dbe7ac777982c"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_m24.c",
+      "sha256": "c19ccc7e63800c23557fa3d17be7467e8f0f1c2a8aa67128a15f976bc54fd076"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_api.c",
+      "sha256": "fd72314aa60328179c135699a63d7e300176e40e54d5109f82958101e4b0e5f2"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_ca_act.c",
+      "sha256": "4298b20a7cea1d82da4282e72078f6f8d6e7bd8210b500a83f0602d658b0449e"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_ca_sm.c",
+      "sha256": "987f0ccbcc5766a55d966cf64415f01970fb86c99a548120c7e4fd8062fd8b78"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_ssm.c",
+      "sha256": "64663ec3ff7eb7ff1dc48f92f986433d0a085fee3d36718b4a2fa262c506bd9f"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_aact.c",
+      "sha256": "798f37c240ce63a549e7e296338079f038a8d2e87dca146933b6b7708bb301ea"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_act.c",
+      "sha256": "33812ee41312c98d599df0d25ac8f6adb368bb42390af6d0bf35b10fe70b47fe"
+    },
+    {
+      "path": "host/bluedroid/bta/av/bta_av_ci.c",
+      "sha256": "c90947a602e5d3686816088f775fc20778f86796d6a86694ac005c49c4f4f832"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gatts_api.c",
+      "sha256": "1078fb87f66ee7b44419ef3f3acdf86c599bc9837c2b1a1f3c8d9780e938b225"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gattc_act.c",
+      "sha256": "97a2ebad6ab6d3a1b21e8514ee9037dc2db1542606ca8d0913adfe64d26f746d"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gatts_utils.c",
+      "sha256": "b4b08c0b3d5d192427b78fdb2da4484e9d24eda0be05ea30cc50f45e45bf0f16"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gattc_co.c",
+      "sha256": "9bd6afa7a3b51c0a1d6109a201bd1dd5861dd8b5c40e1f5caa01960bd8690679"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gatts_main.c",
+      "sha256": "4876dd4f026828fe50639a7b209d9876d17dba7ee9503e9386700c59213c44b5"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gatt_common.c",
+      "sha256": "a3925d568c691fc28224520bdbdbe67b4b02a0f8f7d9f748d2b51b83b61f411a"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gattc_main.c",
+      "sha256": "409012f886947ede367d876eaa2e933eac7476d06ef3b5b3454e63887312ac9f"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gatts_act.c",
+      "sha256": "33dea5ee48628e93983230c586c27a94f042a1e38fb25b8f83294dc95831ce89"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gattc_api.c",
+      "sha256": "34839032c9aeda9a8135139978d3878448d83a23805f5797bb58f2b432de4f5b"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gatts_co.c",
+      "sha256": "a851a97c7239425ecbeb0a1e40dbff366a2594d2e04d2d2ac47fa40d68a3a106"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gattc_cache.c",
+      "sha256": "a6df72267e719f084cf98a16c429de37f974869481a45aa16ca193c8aa276cb5"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gattc_ci.c",
+      "sha256": "8ad14138998cf4ab5808dfab1c552477600489ed8b6d7566b0de8c9f747a99ea"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/bta_gattc_utils.c",
+      "sha256": "7c9d8d3b1e9f3aa856e8eb1debaca72edc2abfdd439d94bdc98622988c01c76b"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/bta_opp_common.c",
+      "sha256": "acecc7b571a22072d91a5bfc607f6986ac997a6a6437fa57f26654f4d340051f"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/bta_opp_server_api.c",
+      "sha256": "93fd013b095c93bbd63a574f5e1fb722670c7a08963c8c3c028d40dced0e818b"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/bta_opp_server_sdp.c",
+      "sha256": "454fd96e4e309f8663a9a42b60a2b1c85ea72db006891f947d34282f55d2f538"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/bta_opp_client_sdp.c",
+      "sha256": "2b9ba87d02c41551cf18e8d276e48c4048b03be900a6fe01a450997b089ca136"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/bta_opp_server_main.c",
+      "sha256": "8706ff755e31b52cedd75767909c1f45885beccf15c6c71abb78e01ccf75b0be"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/bta_opp_client_api.c",
+      "sha256": "471d7bb6f1c39e70e20f0790bd304b389323d2795b6bf0944cbf962e0dc9a53a"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/bta_opp_client_main.c",
+      "sha256": "41fbcfcaba9c88e6cea0507c4c191f6039ab9a067add3281e842abeed6e8fb1b"
+    },
+    {
+      "path": "host/bluedroid/bta/hd/bta_hd_api.c",
+      "sha256": "9fab1f7e1b72059e262654f3c8d888e45c56ebb483e51648a8d432d2ceff29d5"
+    },
+    {
+      "path": "host/bluedroid/bta/hd/bta_hd_main.c",
+      "sha256": "9d810a543b410ef918dd0654c20369a9820b12d6a9d533151b5e9dd62f39e74f"
+    },
+    {
+      "path": "host/bluedroid/bta/hd/bta_hd_act.c",
+      "sha256": "4b44b86fec754bb2c5db1e92c1d029af5cbe712ac85500e86b29b8820f3da0d7"
+    },
+    {
+      "path": "host/bluedroid/bta/sys/bta_sys_main.c",
+      "sha256": "9f014b7bb1bf0f901ef3a45d2cab2968dcf2bfb7c501e94fd6ea150fd69b3dac"
+    },
+    {
+      "path": "host/bluedroid/bta/sys/bta_sys_conn.c",
+      "sha256": "06a462b2e023863d19fec5dba25fcb568415947e20481fd7371efdaac5495811"
+    },
+    {
+      "path": "host/bluedroid/bta/sys/utl.c",
+      "sha256": "aac4dd4e649802b29d3ffb2285a6bc9e87a21534a7480c3c6254e773aafde53a"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/bta_dm_main.c",
+      "sha256": "1c9b19b8dff7e7cae8209c23d64816c96805bbcd24acb160b4fdc01abaadf09c"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/bta_dm_act.c",
+      "sha256": "24899ae7ed43461efb24010d9d858454e71daefe85b3ecece96023d5297556d6"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/bta_dm_pm.c",
+      "sha256": "a3dfbab65e7f2eea1893912613a7486b8ac2c096f76f01061d359a2e088a60f1"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/bta_dm_sco.c",
+      "sha256": "f18065c97316d3b5b85b6a8a235a984a5de0358d65f1881a9b7e53a6fc0e1475"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/bta_dm_ci.c",
+      "sha256": "01d8b15c1823d21cf18211fbca4ef935db0f51d0d1062a9e7b0b036d35f34687"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/bta_dm_api.c",
+      "sha256": "0c487319d0fa12a9d937fab8bc87b19d5e78fffc9dfec2cbd9458d6435a82a06"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/bta_dm_co.c",
+      "sha256": "12f0d7b9ca1f2149d8c4137555e407cd4fa17e14e4c7ab44b814e1be7173b1bd"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/bta_dm_cfg.c",
+      "sha256": "11610ef4b5f7ea2cfda4d9c34af56c7fb940ea1d5dabbb152125f10fd9d8b967"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/bta_dm_qos.c",
+      "sha256": "09003e36e4f85d09ed2be5cae7d316875617e62316ef66903678308d24049fc7"
+    },
+    {
+      "path": "host/bluedroid/bta/sdp/bta_sdp_act.c",
+      "sha256": "6b6894f56dd945c4a3f472bd5b875c70f3a1c8530b639c084982d71faeec744d"
+    },
+    {
+      "path": "host/bluedroid/bta/sdp/bta_sdp.c",
+      "sha256": "bd2afc4ac90d8e55663828a24acffa8ad5829e67bd25aa0ad1966678a2da517e"
+    },
+    {
+      "path": "host/bluedroid/bta/sdp/bta_sdp_cfg.c",
+      "sha256": "8f939a8a7e9246a8e2af6b3bce5575502c1322116e468a5e17805a10a1b261b4"
+    },
+    {
+      "path": "host/bluedroid/bta/sdp/bta_sdp_api.c",
+      "sha256": "90eb940091464dd3eaba46a361815bea66a0b07dbdde00d90c619cbd10228587"
+    },
+    {
+      "path": "host/bluedroid/bta/ar/bta_ar.c",
+      "sha256": "d71015f37540d194e92381841d502f3a5105c19d7754f282eb2cd8bc16481314"
+    },
+    {
+      "path": "host/bluedroid/bta/hh/bta_hh_main.c",
+      "sha256": "c3d211db411bbb2511b55dc7ed1d900844a3cc6e2d2fd973a37152d6dac3d611"
+    },
+    {
+      "path": "host/bluedroid/bta/hh/bta_hh_act.c",
+      "sha256": "90f58053aa880812bcf9434a711c299efd6239d3a82dcfe58a2b88a667843c8a"
+    },
+    {
+      "path": "host/bluedroid/bta/hh/bta_hh_cfg.c",
+      "sha256": "5190e4099113576ce276fac1f5ef1e77d1210b29afd0b05f5ae79eecd259c04a"
+    },
+    {
+      "path": "host/bluedroid/bta/hh/bta_hh_utils.c",
+      "sha256": "18704e20d096d21d1d767392a1e89d3f34c5b6424dd7283e2d01e797e8ec888e"
+    },
+    {
+      "path": "host/bluedroid/bta/hh/bta_hh_api.c",
+      "sha256": "26df367fc02b642912ace8040abeed187f5c002e0b82dd9e1b2fa6f8da9eec64"
+    },
+    {
+      "path": "host/bluedroid/bta/hh/bta_hh_le.c",
+      "sha256": "b3680b599d2e520559c9e2479fb1301b02b30cc180c3513cde1573a57f946eef"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/bta_hf_client_at.c",
+      "sha256": "4cc56f68faa8d907615d7edd6615f07ba389078da929a05940f8cb3288bbe261"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/bta_hf_client_sco.c",
+      "sha256": "b12eb004d0850197e6ec37b633ef8ce5bb4cfbbf28f587ffbc813669916d6219"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/bta_hf_client_act.c",
+      "sha256": "fd6cd265b0919bf4daeb28c53fcf23ac2eea3c7f9f855a9d80d7644633161989"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/bta_hf_client_sdp.c",
+      "sha256": "517baf26332ebb93e45b53f2c4a3696ca53ec0f11861c286286c093d60be713f"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/bta_hf_client_cmd.c",
+      "sha256": "7b5490af2cd956fa12571bfeccaeace0e4775a4acd2d970ed183df33bcbd0b94"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/bta_hf_client_rfc.c",
+      "sha256": "edd8758721feb979a6a51dab9f2f52a3d529351d1276164f14d5cd3303bc7db2"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/bta_hf_client_api.c",
+      "sha256": "4060034b57b2c0d0b53140bfddc64b6b5a7e8711a478c6d15243c3878b05b287"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/bta_hf_client_main.c",
+      "sha256": "9496f22f095dcdd22234c6bfc427bf106804e872aa71f34eaf978765ddf061d9"
+    },
+    {
+      "path": "host/bluedroid/bta/jv/bta_jv_act.c",
+      "sha256": "006775474ae8dfe4743c4a1adbb17f817ebd621dcb83018970385820db709a46"
+    },
+    {
+      "path": "host/bluedroid/bta/jv/bta_jv_main.c",
+      "sha256": "26fe408d40d77ddf06f0b65d735505e22f7a89190e63ad9cd4c01f1b7c1a2024"
+    },
+    {
+      "path": "host/bluedroid/bta/jv/bta_jv_api.c",
+      "sha256": "67c84d6f5fefd15c7e56b5cbda17bc3a8e4ae470000b6d421b8fa8e80b320530"
+    },
+    {
+      "path": "host/bluedroid/bta/jv/bta_jv_cfg.c",
+      "sha256": "a70056e15b132445561f40eea19bbc46b2af121d067a52f618d00d0c74025fd2"
+    },
+    {
+      "path": "host/bluedroid/bta/pan/bta_pan_api.c",
+      "sha256": "d0cb50ab29599798ae4dbf88a28f3d85b9d1566c933a6b17d83f2f2440604a87"
+    },
+    {
+      "path": "host/bluedroid/bta/pan/bta_pan_int.h",
+      "sha256": "c9a2a425f62cd958985a1dfd5b588890800462452a2341a9ca75d96e1dd83d67"
+    },
+    {
+      "path": "host/bluedroid/bta/pan/bta_pan_act.c",
+      "sha256": "30e0d6f356c8b1faa5e6eb7c82e1bdff69d20c14e7c6978169fb911907617907"
+    },
+    {
+      "path": "host/bluedroid/bta/pan/bta_pan_main.c",
+      "sha256": "a41254aafc9cfa0c9a488ff7f4bdf23489d15c7063e58e92c12444858d631c47"
+    },
+    {
+      "path": "host/bluedroid/bta/pan/bta_pan_ci.c",
+      "sha256": "8739c892717254c9306022797c40c49c7308d4b47f45f3e3fac880952adb3cdc"
+    },
+    {
+      "path": "host/bluedroid/bta/pba/bta_pba_client_act.c",
+      "sha256": "63b45ef055848996e2f44657443d24103573fdd181984a2cf8bd264a5dc5d309"
+    },
+    {
+      "path": "host/bluedroid/bta/pba/bta_pba_client_sdp.c",
+      "sha256": "1514bfa760a91d9003393a4584106164d66798a0cb2775cdf0a7a17a65432b60"
+    },
+    {
+      "path": "host/bluedroid/bta/pba/bta_pba_client_main.c",
+      "sha256": "0e3e8d5c81ec6457139e2632b41c76828e59dbb873f5b94193065d243d909a46"
+    },
+    {
+      "path": "host/bluedroid/bta/pba/bta_pba_client_api.c",
+      "sha256": "b7d94c75d4fb2ccda23bb4a38511210dfe643b516147660230f27a57c4b5ccb8"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/bta_ag_act.c",
+      "sha256": "63dd9d75e7a963c0cba138bc08043dea03b98884aaa18e9ef45eb9e89360c4e9"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/bta_ag_at.c",
+      "sha256": "3367f486601326dc38644f6d62125549a73a8fb4995b49cb5305bdf27e79fb33"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/bta_ag_sco.c",
+      "sha256": "2aaea62b5cab5b83e1ebf035d74cece625740618ac86586772c6a6742a305edd"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/bta_ag_main.c",
+      "sha256": "ec5cddd163f1f189e394155295521807c45ed14376278d8cfc5c495b79ea0f26"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/bta_ag_api.c",
+      "sha256": "4b77f1f00855232db1910b158ba14e7959bc4fdd3b64423cc1453a0f60d187de"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/bta_ag_cmd.c",
+      "sha256": "4e4100ddf4c4e2e284cb226ac84e0b1fbde3d2b3dba0dfc321b084c9bf5e1d6b"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/bta_ag_rfc.c",
+      "sha256": "23f71e22203c407528555adc092f9271b8d1e94ffe3878ef2c11ebdbb7f1cdbe"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/bta_ag_cfg.c",
+      "sha256": "e69bd7aeaec6f2d7ea4ebbeed8ff81a4705d52e821c9b0bef6a2854978a4d729"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/bta_ag_sdp.c",
+      "sha256": "53cc6f7d2280cf3c3d9c188c823e44ceeb7f646147f7b3a89b84bd184efb16ef"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/include/bta_ag_at.h",
+      "sha256": "d2bc8dd94349f29e40ce6c28b052a67a6f4bc01de46a1c0b76aec600ea501a70"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_ag/include/bta_ag_int.h",
+      "sha256": "6229ddba7f28295448577e1cad9219e38dd427097a11a807262bce89092cb060"
+    },
+    {
+      "path": "host/bluedroid/bta/pba/include/bta_pba_client_int.h",
+      "sha256": "7364c636b0c5ea6b8877d06bb42bf2e7bcc4967d9bcd4b0e65bd0bd26865ee8e"
+    },
+    {
+      "path": "host/bluedroid/bta/jv/include/bta_jv_int.h",
+      "sha256": "f19aae95882e36924a1d3bd84ae21a65fa91d379cf584372dd903dd81c1856b0"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/include/bta_hf_client_at.h",
+      "sha256": "c12b01e80df145ba11d29491219e7e28f9c23e9976b35744500816717fabdcf8"
+    },
+    {
+      "path": "host/bluedroid/bta/hf_client/include/bta_hf_client_int.h",
+      "sha256": "65fb9c0b77ebb4cad95971404d5e8bdb6b70a5641ab3a3ec8878135b75d0b979"
+    },
+    {
+      "path": "host/bluedroid/bta/hh/include/bta_hh_int.h",
+      "sha256": "edb239de13529c8e46caf668f79f28568b85b1631e4346748b0e0b5a9dff2a96"
+    },
+    {
+      "path": "host/bluedroid/bta/ar/include/bta_ar_int.h",
+      "sha256": "89edef55f1744a85672713195ca244a8669cba84e06374d8fe6ce4f1b6e03b67"
+    },
+    {
+      "path": "host/bluedroid/bta/sdp/include/bta_sdp_int.h",
+      "sha256": "26eb5466e12121587d2c44b5ab06e33760379fef8e5b9bc5eb4cd21b5ac81237"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/include/bta_dm_gap.h",
+      "sha256": "9b79be7c909dd0eaa716409ab6754d2ae124042288b4db3d9024646edcbac7c5"
+    },
+    {
+      "path": "host/bluedroid/bta/dm/include/bta_dm_int.h",
+      "sha256": "b426ad07647a97da4d44539a68989c34a8e03dcba7d59cf5eaeb2df8e2587bc9"
+    },
+    {
+      "path": "host/bluedroid/bta/sys/include/bta_sys_int.h",
+      "sha256": "813458b89549669853f7dccd764a39e56f27ebd0dd414be13c2dcaab6f68ece1"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_hh_co.h",
+      "sha256": "c0a321106815800c4c5409ed3831d6cb3cc17ded4ad7d7510d42bb339e7aef3a"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_gatts_co.h",
+      "sha256": "d1fff84f26b876f726e6389041a63ae848b644fa8c9552903c92037d46954291"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_ag_api.h",
+      "sha256": "be44c462213e86667a73594798ae62727ca58cc4fd4632709765bb3097617c16"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_hf_client_co.h",
+      "sha256": "9990a06b92fab559c4cf815179b45fc1ee710f7429496c4ab481429740a282a6"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_gattc_ci.h",
+      "sha256": "f3395159b5906cb03bfde97258f2008fe0f32556f50387c4886dc8d17c04e202"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_jv_api.h",
+      "sha256": "3b6b49f6f6924ad9cf1c50df308abb85bb459a904c2db552a2abaef9384b5a10"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_hf_client_api.h",
+      "sha256": "c7fdd8c95fcd64c808e70dc7cbb2ffeb83f77a748a672a36e1d0ba0189426c9c"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_opp_api.h",
+      "sha256": "4c7606eb75edbd7a5fbada4744676597c62159f8648225a80f9c647fbd141020"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_sdp_api.h",
+      "sha256": "c700665e766410bc9c079a23f77c1d6869c8656e5e4469bed3c91eb172387981"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/utl.h",
+      "sha256": "6492ce214cd4b9e996fee597d7596881194d93cdff436a82d574e467d8523431"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_dm_co.h",
+      "sha256": "a140cd4adfb49b83c8cb675c2e0351d114f31f45b8b4d623f1ffb1e0a1ed38a2"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_hh_api.h",
+      "sha256": "852909e2e7438ff95bc985369af72103e5dd97667d255bd7cedb1773d745f61a"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_pan_ci.h",
+      "sha256": "7ef481911bf655981b97d2748dbc7fefeec5c8b4ca4583e250ed3eba438a9f1e"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_jv_co.h",
+      "sha256": "1f51ade97e44823b86120f12fdff8e9fcd1a372a11d45771d5dfb9d030c561f6"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_av_ci.h",
+      "sha256": "efbc3ac25c21cfa3cbee1e6331cee8589b7d87366a657b398af792b7a0d523c2"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_ag_co.h",
+      "sha256": "078918e7145bc2d17095e5d862efc6c8eeb13f75d41b013b017cb8dce0853e76"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_pba_client_api.h",
+      "sha256": "f4cfeea8dc200a4b48be410c2a05102f2b20a02db7e6898f4ad87977723da3e7"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_av_sbc.h",
+      "sha256": "91db167a3484d40d2f87a235ea286ab4654f01661b3ca877cc4c4ab16e07df95"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_gatt_api.h",
+      "sha256": "18b19802bf794b5206655e3a8e166914a646a0be266bc9a04071fd3638e0672d"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_sys.h",
+      "sha256": "9b523238e73f0737727f10861e18d1d447e4b787654dec505937f701529e6085"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_pan_api.h",
+      "sha256": "a07de6c698e3f610f6b34c4a0f1a9d71bd9daadf625f16b6179984c08aa9829b"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_hd_api.h",
+      "sha256": "55f0f216845d5139d74eabb253030828988134dfa9f0e6aa6f6c82bd396ce908"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_gattc_co.h",
+      "sha256": "c5004a1292893381dd354c69fba531439dd1517cc9aa968f50707643c306a2ed"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_pba_defs.h",
+      "sha256": "8b685da14b8a2bb54dab70d13b331e5daa88afcef6a2e35f135d9e94340e6ac1"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_api.h",
+      "sha256": "f2528697f5ffe2aca3f4f94ca12a4b0349acf3d5e5e4bb3f1209743c5e3f149b"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_ar_api.h",
+      "sha256": "d83f17bd878a8d30766d1bd129f76a35767c90a6e2139953370243ca78513819"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_dm_ci.h",
+      "sha256": "eb08c41ba726701f085420ccc2b1af796a33e6f1966cf26a757f2129002b3dcb"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_gatt_common.h",
+      "sha256": "759382b63e5aa6046994170e333da72adda363d99ca0f34b5905817332f42f59"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_av_m24.h",
+      "sha256": "b3194edeb385528034d2179a8e1e3591ba42b2c4b9d52b469430dc8d2c848219"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_gap_bt_co.h",
+      "sha256": "07b81c85f8b8d1e2362dfcb4d791a099dd87c38eca51ab3865b9f6e6dd36446c"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_hfp_defs.h",
+      "sha256": "d5d9068d76c9676963e60882824ba0f1b391f45e557cde6a16511b6a5655996f"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_av_co.h",
+      "sha256": "82adc82256a1692b7456285a2c1c6a08d5fe68477ba340351bfb493e3e6dbd11"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_pan_co.h",
+      "sha256": "a80058d7ab4ac53bb963c9c27ed44ff3b6dfabbd7d100302ecad9379547c61fb"
+    },
+    {
+      "path": "host/bluedroid/bta/include/bta/bta_av_api.h",
+      "sha256": "6117abb57913cf042cb37edee2fce70e12bfd153d84f87b2d6ffd7d17110e62e"
+    },
+    {
+      "path": "host/bluedroid/bta/hd/include/bta_hd_int.h",
+      "sha256": "b737088968f9fd096c000dee059de9f90013d4d84c5d69b7e497db4c5615fa86"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/include/bta_opp_server_int.h",
+      "sha256": "43e817a2ef2f9bd7eb53e42ac682301dc0132cd1e003dc363a26258228c8e828"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/include/bta_opp_client_int.h",
+      "sha256": "e6586a6840582abfa9599b94c82355a92f7770c8eefeada40ca09558b244a42d"
+    },
+    {
+      "path": "host/bluedroid/bta/opp/include/bta_opp_int.h",
+      "sha256": "21d653509d8eff36a2167b2cceccc4dcd9720566039b01e983252b175bc1b294"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/include/bta_gatts_int.h",
+      "sha256": "d638d1c8475f9903dd8aa937a965e02fb0b905a8453c6bd49631190212a1f82f"
+    },
+    {
+      "path": "host/bluedroid/bta/gatt/include/bta_gattc_int.h",
+      "sha256": "4893ac321f3f5192868683143d2571cfbc44522419ca4c29cb3b0c0cf53c5fd5"
+    },
+    {
+      "path": "host/bluedroid/bta/av/include/bta_av_int.h",
+      "sha256": "320cf7319e8e212b01e054b1f9756d8149343e7886b78af136694cdc18fd0c94"
+    },
+    {
+      "path": "host/bluedroid/common/include/common/bte.h",
+      "sha256": "855c72895410ce8d68bc3f5168c4318b9dfa383082c4664f1a54608deab92fcb"
+    },
+    {
+      "path": "host/bluedroid/common/include/common/bt_common_types.h",
+      "sha256": "b53bdadbaf3b58cab2f5e2f14f9c3466a9650016a8c2337c070287fdd395db2c"
+    },
+    {
+      "path": "host/bluedroid/common/include/common/bt_vendor_lib.h",
+      "sha256": "73a5a895e1462e08b737d96437372cac29e2708ab2485b7c15cfe8a704a88343"
+    },
+    {
+      "path": "host/bluedroid/common/include/common/bluedroid_user_config.h",
+      "sha256": "1836e1f434a02d7348719123d35e09eb32d2242117c9f3afaf1b819fd1646520"
+    },
+    {
+      "path": "host/bluedroid/common/include/common/bte_appl.h",
+      "sha256": "5d6321019478651c70a8c3428762b7d853bd98ae68628f018b245df3dd6b36d7"
+    },
+    {
+      "path": "host/bluedroid/common/include/common/bt_defs.h",
+      "sha256": "234300d53c3145a3da75f10302ee4a386c5d42c223ec99a64659b6121e46d467"
+    },
+    {
+      "path": "host/bluedroid/common/include/common/bt_target.h",
+      "sha256": "fc352545f791e56ef81c559aa12904046285322eb3fef156f3224089ed3252d8"
+    },
+    {
+      "path": "host/bluedroid/common/include/common/bt_trace.h",
+      "sha256": "518a34365f3f3493d499173113f7fb116fedf99bb0e75d25d9c666a72e0ebc32"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/hci_layer.h",
+      "sha256": "3ba68649e93b816038cb8c71829e44ee5349597db5fdd51ea7d100b75056d369"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/bt_vendor_lib.h",
+      "sha256": "73a5a895e1462e08b737d96437372cac29e2708ab2485b7c15cfe8a704a88343"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/hci_hal.h",
+      "sha256": "98e33c87cedb2506e0bf310cb6d118e827a27bdfc18140d1e1e3ac35ed8e5801"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/hci_audio.h",
+      "sha256": "b835f93035b70c73346c1c1908b6be6bdce47bbbf7ad6e09a707b42cff8b5eff"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/hci_packet_factory.h",
+      "sha256": "f3ce558624a08d88305abc5ce47e33e230157fa7a824ae4cf218fd606bfbb84c"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/hci_packet_parser.h",
+      "sha256": "92c0488ed6f46a633e7ef61ec00069e04242234801c3302cb7b1c4c2593ffbe1"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/hci_trans_int.h",
+      "sha256": "05a2bf71d420a901d483fb98f619a8633e00a05dd47e9714da20ed6e9000f25d"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/packet_fragmenter.h",
+      "sha256": "2b0104377301a1b9533633429224cf5a56baa34e32ffc90ca2d3b1bf7197d5d9"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/hci_internals.h",
+      "sha256": "8d74c7e80bcde0249ccb083f62aaa31c97110bbab2553bb09cf801896e1459e5"
+    },
+    {
+      "path": "host/bluedroid/hci/include/hci/ble_hci_iso.h",
+      "sha256": "fb4eab95986003ab6e541e8e63ea2d9fb5ea2185ffb0982079bcc42faa60b0a3"
+    },
+    {
+      "path": "host/bluedroid/config/include/config/stack_config.h",
+      "sha256": "4cf80cd0dd400b6190997a4c736b02e6a9fbe21dc7bac4906cf855e5b4465c9f"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_ble_storage.c",
+      "sha256": "990e7a47965c92577fd86796958b9b28f47a532992224ae5417df3f8fbad528b"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_dm.c",
+      "sha256": "16e91ff95a984e398a8df2046f439223fe4627402b5dd6e99aaefdfcddb1bd8b"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_storage.c",
+      "sha256": "fa169b1844fe5d1e8e3e1bb71342570b3690aab72d66a1e1689cc13c0a94d704"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_profile_queue.c",
+      "sha256": "e9c080ff8a6b15fefab659d6ddbda145ed6c03cba1f60d7c6d8edc703c6799f8"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_sm.c",
+      "sha256": "821a7e2fce816af3224741975bc0c220a4688c8b51d744a2445f0396f4dc50e6"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_main.c",
+      "sha256": "9fe3a6e87afb65ddc42e425ece3a4d3ab1c188968f6cf8e0619f35858017b4e5"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_config.c",
+      "sha256": "ece706a9150a3b3144ba855f4f41b322c4ca3b4bbee84803a8c31a23069e3c7a"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_sec.c",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_dev.c",
+      "sha256": "1a3bd89f7415c8a37197774ed2f77c42e73ccb803627a41366df38931551f990"
+    },
+    {
+      "path": "host/bluedroid/btc/core/btc_util.c",
+      "sha256": "28173cf36727878ad3c7a7db006db348c17990f3e337a3adb68dc4a0c73c728c"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/spp/btc_spp.c",
+      "sha256": "4e52252104e27050c07e4bd1b775033f00d7bf31c7d728da3c1ff4affe302f18"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/avrc/bta_avrc_co.c",
+      "sha256": "df2acd585a23836c41c157ac8ae906ce8806d6020b15cbb2be5cfe04427556cc"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/avrc/btc_avrc.c",
+      "sha256": "7bfb42a5c2f95e5303d2879d5f58585a13f16be276b3ca2c6d36b9ebc4a03776"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/gatt/btc_gatts.c",
+      "sha256": "f15909fa1eddb086b2c79a34d8f2c88268f2062d2650819f93f7bc480eb8c760"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/gatt/btc_gatt_util.c",
+      "sha256": "b4a30ac0e997b9e840ef503492aa0178692d18c03f0f94af6502e338ee203d41"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/gatt/btc_gattc.c",
+      "sha256": "e937ddc0ef9a3f6fb40f382e9fe5f6cd478839a0cfdaf117a99ab5eb7cbd7d0b"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/gatt/btc_gatt_common.c",
+      "sha256": "a54d49f5723dc68970979e016e021d096df962ee8b7bc3aa6ae0d0a49205f2b2"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/iso/btc_iso_ble.c",
+      "sha256": "c1a353f03e5e02fa25bf1f82690376864cfeeb8ecb0626f3361230e6ef2a7c7c"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/opp/btc_opp.c",
+      "sha256": "2ac1950d8bc9f96c935e9fc9ff7c06211a6e49c80a4d3d00e3fdae59e16dfe95"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/opp/btc_opp_client.c",
+      "sha256": "156e9929bf630934fa00b1591fa76b14c8810f032f40c4f23152d626d119d431"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/opp/btc_opp_vfs.c",
+      "sha256": "0a96fe6c4ffa3a7246eefe1429d5e600c33583a9268ec965856866f6c038eaa2"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/opp/btc_opp_server.c",
+      "sha256": "2a17d644b03367be8cc04e7b3afbe590a9aa953d58525d4c91eb0ce2f18359c3"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_ble_cte.h",
+      "sha256": "eb2cfe3aed9eb9727b187afb6013157eac663a9218de1cd41132e075dad19083"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_a2dp_sink.h",
+      "sha256": "0f639233ab6adfa782c1453f6b69aad37729211dcca3c1bc6e53b67e3616f310"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_gatt_common.h",
+      "sha256": "74edf46d081b66afc7ceff75a005dfa77f3a487793a90009bd98f3daa842f1d1"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_gattc.h",
+      "sha256": "ba7b3f2873175916bfb7273c3efc8a91c6f89746b2846107a1c3fe2ab67fb992"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_avrc.h",
+      "sha256": "c558dfb843ee69958e8209052bb6fb33f6923b21790ad7ce605347fed7bb45bd"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_hd.h",
+      "sha256": "e54cc33e604ea08ddb41f8cc6f937542de8ab1cfdc1ce10eb83067739938dda4"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_l2cap.h",
+      "sha256": "a15788e741ce504d31014b8e523c3cbf2baecbf1ceacdbd7b8f4925864ba928c"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_av_api.h",
+      "sha256": "1eca8bacf9c3bc42a5bd7ee9f5800043021b9d622f62dd7397680a2857564b9e"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_iso_ble.h",
+      "sha256": "a284f7d0c44819d60ee6fc829c875d4d8dde221d70ab6e4801e75b8637665d78"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_pan.h",
+      "sha256": "9e1009a8d5e10859b0e89972ccc08233989f3792bde9bb3a72c1f298d2a88d37"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_spp.h",
+      "sha256": "01a79d5dc71a12a8c1292d1efb397eb398cb4d2af9eb15f607ac598fb73795d3"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/dis_api.h",
+      "sha256": "43cd48bbda4016ee85dd646fd2dcdcd58db7cc1c096c859b72124554ce65645d"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_gap_ble.h",
+      "sha256": "a9856c5d1feea23f152fcf35a52a933011e23372c8aa78dd80132a647008701e"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/bt_sdp.h",
+      "sha256": "e410f811a722f98fa6415ac9b3c74b0f3403347818c2b4a57189d408baf95222"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/srvc_api.h",
+      "sha256": "35be85e1cf89009dbb847a714ae0a39bcb9135de2ffcf9a1e9143c26023daa43"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_hf_client.h",
+      "sha256": "3e33fccbfc4d7f0fef486017b366d1db7ad9737b0abbe6d911ea2b4ab80c7d23"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_opp.h",
+      "sha256": "28da7c4f34a4e3efbf0833e2044027fd707505f402ad843c6a4ede34b717c224"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_gatts.h",
+      "sha256": "6c49bb325fb95f0e07fe6b50510fd6cc27dd4d11d744e4db7c95526e87a7eb91"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_a2dp_source.h",
+      "sha256": "724df36d40d188545789fcf4fd5159232dbee51962f7b2713f234757f2cdd90c"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_gap_bt.h",
+      "sha256": "107c059eb291509a6f55422d00a944295156c578fb6e48b3e7b9741a4ad3e733"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_ble_l2cap.h",
+      "sha256": "2d413f3116c62adbe6957b3a51f8fcf132e4df95f6f8466d2d772e292997dbc1"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_av.h",
+      "sha256": "abb1e099e9b5c0444678689c94006dbe9f10aa5c50718b990d7d82208151a527"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_a2dp.h",
+      "sha256": "f9915de2614eed5d4ae252d6773d3378b2aaeff45a1b9942c4fa54039869ad2c"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_hh.h",
+      "sha256": "82272f38ddd7f34b8d8c911b70aa977c1fa03249c8ce36dc916969b317dd33c6"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_hf_ag.h",
+      "sha256": "22b7a18efdc23d6cf1d3324b51015885ed2220a0ec868b273bc2b49115661e2f"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_gatt_util.h",
+      "sha256": "c3136f24f446d973b4e27e3141f5807d10c994ec3b6d9f72a2963bfdf9f63351"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_pba_client.h",
+      "sha256": "c30f8bf6e525abb9a88d5ecc751872da4a57a62d9cab5828927cdc5b6b5e5e46"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_a2dp_control.h",
+      "sha256": "ace68c37ee627a91a83185ac8b5c8f291428ea8ae64f36362b11b510fa3cbe8a"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/include/btc_sdp.h",
+      "sha256": "7bc435e766e14b7beda61df52812bf6082a8c2e7e38628bea6eba40df00cd3df"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/gap/btc_gap_ble.c",
+      "sha256": "603a2a572f5244d46f65da14d949c7286bfa0f41c76ae9db8393a6a41abb2eed"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/gap/bta_gap_bt_co.c",
+      "sha256": "0ee447a9f94e45b0ff162f38f420c15d3e90a2189c424453f5e3ca27c1829a7e"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/gap/btc_gap_bt.c",
+      "sha256": "dcdd856214143a61aaa50139de297b0d8e9c421eb0558cbf8e8dfb6f53083bbf"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/sdp/btc_sdp.c",
+      "sha256": "88f6c89eb33c749bcf9220567bf369a368aaae400dba8bd32c21f903be4d3cb4"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/smp/esp_app_sec.c",
+      "sha256": "65bacd482c526475f1f1d9425768e3c9baf090756f7e1a9353955f19a4da6dfd"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/dis/dis_profile.c",
+      "sha256": "58be96f3517c3089eace68af45c4d718e89179d607fe864eb8b904cf148c280d"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/hid/btc_hh.c",
+      "sha256": "0ab2e1ba6ddaf21c8aeda4d940c5a488e9f7637db52f1490a7e3e623faa31abd"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/hid/bta_hh_co.c",
+      "sha256": "bba9fce58bc73403a33237b9c7d25784508e6cc49d90cc61c5e84d47abbe2037"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/hid/btc_hd.c",
+      "sha256": "fcc95c74c062dfdeb0031109f9117a0c40d0f43513958adeb0e1a5aaff0e3f32"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/l2cap/btc_l2cap.c",
+      "sha256": "64ab9f3016f8aac01da18aefc2ece8faec626c1fb2b4282b0aff4f3052439964"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/ble_l2cap/btc_ble_l2cap.c",
+      "sha256": "c8eaf79165374f777320d4acaa23e71e32c8f06d7e703c116c89266a8dadd5fb"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/battery/battery_prf.c",
+      "sha256": "e2c15b560d1f661de6e6ebc589d5e813e1103f07d5141d9d8f610adedd98fd94"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source.c",
+      "sha256": "8e4280d8dfffefd84e49ee62368ba99b1031a8da131592ed4e396127ba116495"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/btc_a2dp_latm_raw.c",
+      "sha256": "88775d7adb19b4130fd1b5a4faadb417144abd3834faef6dd5f3ce2700364728"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/btc_a2dp.c",
+      "sha256": "f217b0653c672760a91f59d1eeda3319c0619461e61e9dd419808d4f3aa59a29"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/btc_av.c",
+      "sha256": "92ba1de7040e0e021b13249b944e224fc4be81f7d1fa08d5ec49cad51bf8d44e"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/btc_a2dp_source_ext_codec.c",
+      "sha256": "b2512fa282641255e2aedface752ff2bc8235a4b66b722a458b3892e70516ee7"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/btc_a2dp_control.c",
+      "sha256": "a3afe6a8451afa2cb4bbc8bc9fd85a5071f349c646d03a03738ade144fd2dd23"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/bta_av_co.c",
+      "sha256": "7d30c60401d5eea21a7ea03492134b09550c36d6424e2736f93ef1b71c94996a"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/btc_a2dp_sink_ext_codec.c",
+      "sha256": "461ff06645d7a18a3bd011c734d20df71bbdc82f4b41eb75a0028ddb53042ddb"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/btc_a2dp_sink.c",
+      "sha256": "a67c052e275c81f5def22ab153242f18765e5235cfc4824c7abc05d6a2df366f"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/cte/btc_ble_cte.c",
+      "sha256": "a00a7afd13b78048f99be9f9172625299343d5b500446fd99b6d40ee0f3d6f7c"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/hf_client/btc_hf_client.c",
+      "sha256": "b3bea01e2ecac0619693e7a4d3cee61ad19cd9a696ee8fbdf4f7462c848bc281"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/hf_client/bta_hf_client_co.c",
+      "sha256": "985df9a0fd258c64e030705e8c6bc15784d22f52685cd2b8845790688f786c20"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/pan/bta_pan_co.c",
+      "sha256": "5d0fc9e15046684ce3be6f229b55fb23558303cee1b7ac2012c911128645accd"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/pan/btc_pan.c",
+      "sha256": "2653e6c4678739df05e9ce7379e6887015a76ff72cd9f496af1178af78d252a3"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/pba/btc_pba_client.c",
+      "sha256": "391ee1d0237941ee9e28ea8fa872ba2f8fcc0da73d254d53bb46eaed273f422d"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/hf_ag/btc_hf_ag.c",
+      "sha256": "6a935715f213e1d111a4a5ac9470067c21d454b1d86d17c55a6a53d092d54a0f"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/hf_ag/bta_ag_co.c",
+      "sha256": "fb99d9a540bdec1c1f547eb56dc235e919fd0d8d6bbd0fa9660e86bcde56cdd8"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/include/btc_av_co.h",
+      "sha256": "3d589b288571bcd19589fe89ac4750ee47eca9b2e28cfaf6fef85151707b673b"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/a2dp/include/btc_a2dp_latm_raw.h",
+      "sha256": "ba7ad5003f47fad2918cbb9ff86c73a345ab24841025592366575c1fade63de5"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/battery/include/srvc_battery_int.h",
+      "sha256": "40266bf5662dbf3750d20b7a11ab8bba360e7dffc8f50c0990e940cab2c11367"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/dis/include/srvc_dis_int.h",
+      "sha256": "bd8081d333e97a28f4ae332c3f75eff3eb6e032d4912f238a6ebde2b2bf818a5"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/std/smp/include/esp_sec_api.h",
+      "sha256": "fec3675e5fceef8c4d8770f806c20af17fb99420a59cf82b47720df2fbbfea5b"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/esp/include/button_pro.h",
+      "sha256": "dfa5e8b0643dac2fbb6db7f364e0cc9b301b7b351c77507e2d834ee0d627abf5"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/esp/include/wx_airsync_prf.h",
+      "sha256": "74f7c716310af70353bf2d01bdcc58b4566033b36b9d4ecba50136802f2ebeb9"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/esp/ble_button/button_pro.c",
+      "sha256": "b654ca58e03884f21afd12edffc45716376ec62f34e79fec6d3f59c2ad84fb68"
+    },
+    {
+      "path": "host/bluedroid/btc/profile/esp/wechat_AirSync/wx_airsync_prf.c",
+      "sha256": "8f4696bdec41cc721c586819f283663c02a0ec01fc05277085d0e15456b4c4cc"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_config.h",
+      "sha256": "1a83ed76312897f9f4c37a7c22d81bf89259e1b8252dc47bdae1fcfe87669eff"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_util.h",
+      "sha256": "6d7205e9038435a1b6e68b32587b406626122cd579278fd8fe4740805784e665"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_dev.h",
+      "sha256": "9795c3397b82e8c4415a5f9888ad464e65b6f9f4cf49315f7f6815f002e79375"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_dm.h",
+      "sha256": "4156bf7b249be89043d2517c8b4db4364ff270b9727864b76574619d412e1f35"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_ble_storage.h",
+      "sha256": "dce98c97f4a82e30665a374cb580001d8e938b4e35ccf9ff509ba3a3b70d15f8"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_profile_queue.h",
+      "sha256": "649f2543af8e413c2103c43e3fa9b06d7bf55672efe3ede1a10a51ca601376ed"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_common.h",
+      "sha256": "0044ec01d567ecf96590ba65ab8e18a438913bcaa581df6334e783c6b3f93d1d"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_storage.h",
+      "sha256": "45a39c29d4d11da710eeeea29c364e8334c9aac4a2b140d10ca05d3fd9f54c99"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_sm.h",
+      "sha256": "dcd9537f9aec9faa2b4b824d10813d0d54c53d037526f12f1cde945e2fa5c189"
+    },
+    {
+      "path": "host/bluedroid/btc/include/btc/btc_main.h",
+      "sha256": "56ba19bd79475521fd68aff77dc1d04b71f8ea38eea11fa2e17f505d4cf42da1"
+    },
+    {
+      "path": "common/osi/allocator.c",
+      "sha256": "eb00b293fa0e7e91daffcc918f32e799ef2418682725812af3b6f716525d2629"
+    },
+    {
+      "path": "common/osi/thread.c",
+      "sha256": "e03679272cd590f8807ca6830dbae844649577234944db638c4068e93ad8e822"
+    },
+    {
+      "path": "common/osi/osi.c",
+      "sha256": "777e9e8e4d36825a34b3353f47b6c3d862c2e35ff3407c2dd17f3cd777f0bb1a"
+    },
+    {
+      "path": "common/osi/buffer.c",
+      "sha256": "82a92d2e0c082cf9f6f901c4c4ba573303eb57736bec281c75bc1548e2724383"
+    },
+    {
+      "path": "common/osi/list.c",
+      "sha256": "af733e418e4b1176e49a1fc988f63e70d8993e3c3b24280e898e3bd75aa22a76"
+    },
+    {
+      "path": "common/osi/mutex.c",
+      "sha256": "dddd9ac432ca004b4edfad9b7c0a48dc42a3b745ecb0594af4c1ca9e0c97e1a6"
+    },
+    {
+      "path": "common/osi/fixed_pkt_queue.c",
+      "sha256": "19d531f60f114a00eaac3bbe26564134bee55e24369f32afc38067aeff97c66a"
+    },
+    {
+      "path": "common/osi/fixed_queue.c",
+      "sha256": "1f83d24227c76891155ba0f90b24750c89f0dd18f88a4d0182ab1471146ddba6"
+    },
+    {
+      "path": "common/osi/semaphore.c",
+      "sha256": "4d2f32590c170177ea1de107808acd6f6ec909a91a75da25c2130ced137f31d3"
+    },
+    {
+      "path": "common/osi/pkt_queue.c",
+      "sha256": "49d1322ecf42f2b2db6fbcdf7c9b657a925803d7c218ad149acced08819cfa93"
+    },
+    {
+      "path": "common/osi/config.c",
+      "sha256": "2ac569c57dad097fa0c20fc3a4588362301a1ef41fb56c5cade7926ecfdfa3f6"
+    },
+    {
+      "path": "common/osi/hash_map.c",
+      "sha256": "52fe24ac515f1a5c0415e356741ac90283864dd9c5a77975cdf6e9d4389665ac"
+    },
+    {
+      "path": "common/osi/alarm.c",
+      "sha256": "ea0225357d0fa4536bab495cb31afddba51927f89deb1b5e62fd430a144ccce6"
+    },
+    {
+      "path": "common/osi/future.c",
+      "sha256": "c420a90e97c246f6790df0aea3886a79a89627822c71b54701f94f3abdbcdf97"
+    },
+    {
+      "path": "common/osi/hash_functions.c",
+      "sha256": "fdc9cd227b32eacb8e15cb88d2e7047efa24ee432eebf48e4f6de5621be58f3f"
+    },
+    {
+      "path": "common/osi/include/osi/semaphore.h",
+      "sha256": "fa9bfd1023bf4cadf29878276c3fbbce5198c153c4eff68c39a233323b94b11b"
+    },
+    {
+      "path": "common/osi/include/osi/fixed_queue.h",
+      "sha256": "2d907f23e0cd27039e83dbc2c656d265c7fb170f5602992a1a57ae4c32d92737"
+    },
+    {
+      "path": "common/osi/include/osi/future.h",
+      "sha256": "2ebf89d4ed8182b78c80daa26307c095d372b1347f984baa651ab5bbb9b07668"
+    },
+    {
+      "path": "common/osi/include/osi/alarm.h",
+      "sha256": "367dd60222f0768bb8fdab4b75a7bd0986f2e1567f025e5f445a9cb53ebbac01"
+    },
+    {
+      "path": "common/osi/include/osi/hash_map.h",
+      "sha256": "f3b3ab4287cb34186544d465c9a4d0ca745d4ec20f73846f57784b7b00dc8eba"
+    },
+    {
+      "path": "common/osi/include/osi/config.h",
+      "sha256": "d6db815447dec0816e8f8120625df7b26bd73937a2fc8c98e4580a92d172331d"
+    },
+    {
+      "path": "common/osi/include/osi/pkt_queue.h",
+      "sha256": "a62b9734af60120e47916d9ba98f9e04801ff702fb3165c7c8334dec5307b253"
+    },
+    {
+      "path": "common/osi/include/osi/hash_functions.h",
+      "sha256": "da1677698813960f795612c99c66a558ea1cff27c44faa353e5c349ee07a3a77"
+    },
+    {
+      "path": "common/osi/include/osi/osi.h",
+      "sha256": "4d73165b1cb15f59b9e76231fb2e4d04f189a01874a402df8659a5110eda892b"
+    },
+    {
+      "path": "common/osi/include/osi/list.h",
+      "sha256": "ddb2d0ac8d36e75479d127d2bbbde4fe66d5cd77a859d8ddf2f5f77c9c80b5f8"
+    },
+    {
+      "path": "common/osi/include/osi/buffer.h",
+      "sha256": "dd310f7169946685489c68266016ece5c6cb0b86723954e70ba75aeebc4247bc"
+    },
+    {
+      "path": "common/osi/include/osi/thread.h",
+      "sha256": "ec790e5ad4efca4e66cd4fb3f248ca85bc1dea3bb14a57e4a42a3d9bf2297fed"
+    },
+    {
+      "path": "common/osi/include/osi/allocator.h",
+      "sha256": "53aadac7d32faff6494b92ddd202a61d0458ede7c21a7303d6905439ae68bb5b"
+    },
+    {
+      "path": "common/osi/include/osi/fixed_pkt_queue.h",
+      "sha256": "2f164b18b78a34d1b4e2e4351f8aaca6b82947a9941f4631fdfa9ac58c170aa3"
+    },
+    {
+      "path": "common/osi/include/osi/mutex.h",
+      "sha256": "9d9a4493181aa728c1a5e985885e8d3b9dc0c5ce836955a7abe044a9c61961dc"
+    },
+    {
+      "path": "common/include/esp_assume.h",
+      "sha256": "6f747aa1175865ab8f0858a159165f81be7fed7bab30fdecd973de33af5e58d2"
+    },
+    {
+      "path": "common/include/bt_common.h",
+      "sha256": "f24598d750eb144adb8186bdc5508acd461fcfe5d3c3fcd6c5bcc2cee54cc3a6"
+    },
+    {
+      "path": "common/include/bt_user_config.h",
+      "sha256": "17178f5c4a0172c098fc9fc2979a01498b52916ee63839f7a6ccf965b164d6b7"
+    },
+    {
+      "path": "common/include/bt_ble_insights.h",
+      "sha256": "bf36b6cb88ff43caaa7b4f49635a062ac9d882cf14630745806962fe168d6b27"
+    },
+    {
+      "path": "common/api/esp_blufi_api.c",
+      "sha256": "6c3094d62400f0c67f6cf262512a71e05dc4e6b7f0e462379bbae884b8fb7361"
+    },
+    {
+      "path": "common/api/include/api/esp_blufi_api.h",
+      "sha256": "f974e024a31ccbb7447732684fc62302e5150e8a60e2397e64dd08093ce9188c"
+    },
+    {
+      "path": "common/btc/core/btc_alarm.c",
+      "sha256": "e970bc3c827833109c8f3a4b3895521fdf4e8c6b0d96e36e87cc77a12f836712"
+    },
+    {
+      "path": "common/btc/core/btc_task.c",
+      "sha256": "158f53a486ab10d20bc0f88fb573e57e1c9b9cd58baeb3665cf74b960c4231f8"
+    },
+    {
+      "path": "common/btc/core/btc_manage.c",
+      "sha256": "62edef133964f85d7f5e518f53354ec780571ff2d9907e9c2f943b3784b8199c"
+    },
+    {
+      "path": "common/btc/profile/esp/blufi/blufi_prf.c",
+      "sha256": "525c2229c2bf94898387e5ad96dc6fdda5b8f9a65081947ad8d04fce4f5dc5ce"
+    },
+    {
+      "path": "common/btc/profile/esp/blufi/blufi_protocol.c",
+      "sha256": "44f0d02beb4e8cac3f3a45c6296255f68fbb8584a40c4fb4301d187587e24cc9"
+    },
+    {
+      "path": "common/btc/profile/esp/include/btc_blufi_prf.h",
+      "sha256": "9dbfca3c693c1e5b17d289d1a43efd230fb242e3b3caceb403a698cb73e844e5"
+    },
+    {
+      "path": "common/btc/profile/esp/blufi/bluedroid_host/esp_blufi.c",
+      "sha256": "9545a8a2fdc3c6a0c36311f2a0aea6c72dd94a7fefa49f225717451ec4a900e4"
+    },
+    {
+      "path": "common/btc/profile/esp/blufi/include/blufi_int.h",
+      "sha256": "5d344d64724efbd1abf467b17adebc84def6513d7e3b388a68f7990f44c1beb9"
+    },
+    {
+      "path": "common/btc/profile/esp/blufi/include/esp_blufi.h",
+      "sha256": "28c3b077fe3d3f63e5b18cd7268a42142947c7ba81b08c43057f13173101fdbe"
+    },
+    {
+      "path": "common/btc/profile/esp/blufi/nimble_host/esp_blufi.c",
+      "sha256": "5f361eb036d6429d0a06cf172d3c0f596561016c3497411dfa0eca27161c1a74"
+    },
+    {
+      "path": "common/btc/include/btc/btc_manage.h",
+      "sha256": "2cdf89610ba96bef506daed9cb3f053f87da3eaacc5e33d0c1dfc517954eb97d"
+    },
+    {
+      "path": "common/btc/include/btc/btc_alarm.h",
+      "sha256": "d804d26aff648047521e9a0476274f68e4ff3a7947b2ee0c9f21d476f9a5c3ca"
+    },
+    {
+      "path": "common/btc/include/btc/btc_task.h",
+      "sha256": "fcc14f6f7fe4591ceb35f54ff4f6165cf5ca2c8a30de707dd27b259fece9c6cf"
+    },
+    {
+      "path": "common/hci_log/bt_hci_log_insights.c",
+      "sha256": "46cb6d861a64fd6085480d896192813280f5920c82ba2719839e079d3808d666"
+    },
+    {
+      "path": "common/hci_log/bt_hci_log.c",
+      "sha256": "212262b433b89aa2cf669478416e0b42158c502966124c2f98457c557aa46411"
+    },
+    {
+      "path": "common/hci_log/include/hci_log/bt_hci_log.h",
+      "sha256": "1e0031ef288859ad2082eb1f3f7f6fb3a63b756e629628220144180771d6588d"
+    },
+    {
+      "path": "common/osal/include/bt_osal_os.h",
+      "sha256": "39b71a1df26420a0ce018e4c59a261c5893fb37802736f84346e027edcb3ed5a"
+    },
+    {
+      "path": "common/osal/include/bt_osal_freertos.h",
+      "sha256": "350a79f605d55afa3b594ca26ea09c4f54b8ca93edd9d8361dcb9fedeeaf8af4"
+    },
+    {
+      "path": "common/osal/include/bt_osal.h",
+      "sha256": "0f39d3e5caa52e4e21156290ac968f73ba9d6459dabd362a35006fa8f338a147"
+    },
+    {
+      "path": "porting/include/mem_api.h",
+      "sha256": "982a7a77cca7f3f4b954a74f1f9a2b2c07ea7ab122fae49f0b1c5d85689dd307"
+    },
+    {
+      "path": "porting/include/bt_osi_mem.h",
+      "sha256": "88b82ecd1ce43ae3999925fd95dcf50f5d707b15f4ecfb013ddee02ccd67ecc3"
+    },
+    {
+      "path": "porting/include/os/os_mempool.h",
+      "sha256": "bf7bce7d8ee62edceb519664fe6cb58288ec766ca577c215390f42a1f75a30b4"
+    },
+    {
+      "path": "porting/include/os/endian.h",
+      "sha256": "0b58deb20099c7e8b1b9991774f981d55e645e18eb7ee0e49c06907ac7e91660"
+    },
+    {
+      "path": "porting/include/os/os.h",
+      "sha256": "a0253253ee0fb092c896d06815deba7d22190cec3171b223bb0e8d967fccfa59"
+    },
+    {
+      "path": "porting/include/os/util.h",
+      "sha256": "3991978b8a8b24396d58cd74810738980356c4426d8f93fb0c516ac2e24d305d"
+    },
+    {
+      "path": "porting/include/os/os_mbuf.h",
+      "sha256": "46843baf3b07b95138e8e35710cea6191a3f2a99f4e0ab8f0276dd1032bcc66e"
+    },
+    {
+      "path": "porting/include/os/os_error.h",
+      "sha256": "4a2f38720cb21a9c877ffb4284c3372945377a3af9aecb9c07bfe9c0dd7becc2"
+    },
+    {
+      "path": "porting/include/os/queue.h",
+      "sha256": "f90c50ddae161ee8babaa8a7b8201be04ea7945e624665f34554fa35f50ec568"
+    },
+    {
+      "path": "include/common/btdm_le.h",
+      "sha256": "07723eb41bfde82077dd94d316b4041d03d25e536aee563ac4782eddd5eab1a2"
+    },
+    {
+      "path": "include/common/btdm_bredr_vs.h",
+      "sha256": "37c4439d433b2b5ffc199271cc7d2cbf08cf503753a09b05e18348c3d9e24bfb"
+    },
+    {
+      "path": "include/common/btdm_bredr.h",
+      "sha256": "be01f2b2e8606c50e151a05f03a572b4a00bec39576530f464674e772d86ac7b"
+    },
+    {
+      "path": "include/common/btdm_le_vs.h",
+      "sha256": "9e6cabfeffb516ae9ac0cfb54f12be66007538459bb2e621cdeec9c607dcbe19"
+    },
+    {
+      "path": "include/common/btdm_common_vs.h",
+      "sha256": "8e464318e9788ff78ffdfb517f215e9d5499d43a98b380a67f322310347ef349"
+    },
+    {
+      "path": "include/esp32s31/include/esp_bt_vs.h",
+      "sha256": "a7a5fcd343f556713d4acab015dbfc33e867df5966258db8316fa2faadde535c"
+    },
+    {
+      "path": "include/esp32s31/include/esp_bt.h",
+      "sha256": "c42e287a6fb4b38cb72eac37e6d0cb6b02c8b4bacc0caaaaf358c660af07d52e"
+    },
+    {
+      "path": "include/esp32h2/include/esp_bt_vs.h",
+      "sha256": "f2ddae2bb2062e3199477b17e4dc03504c08c3a63ca34f3e03ae4d9cc689b8a2"
+    },
+    {
+      "path": "include/esp32h2/include/esp_bt.h",
+      "sha256": "27ba0bbbc3e9007aca70e3a4b0b52173167621ee83484aa4f5b7c77011a21ddc"
+    },
+    {
+      "path": "include/esp32h4/include/esp_bt_vs.h",
+      "sha256": "2866beb3d0aa92e2ada8437b5d5721a3bf3e2f2f339b906565779790b843a74e"
+    },
+    {
+      "path": "include/esp32h4/include/esp_bt.h",
+      "sha256": "fc2e0028a5c4c1e15dde929b45e75f3e6b272f8b776e5e9aaac91fb1aea4c51e"
+    },
+    {
+      "path": "include/esp32c6/include/esp_bt_vs.h",
+      "sha256": "f2ddae2bb2062e3199477b17e4dc03504c08c3a63ca34f3e03ae4d9cc689b8a2"
+    },
+    {
+      "path": "include/esp32c6/include/esp_bt.h",
+      "sha256": "a6fac2b4bb44a56df5a44d0b2a19f4e763266e8306fa8be0736c74d84de6e1a2"
+    },
+    {
+      "path": "include/esp32/include/esp_bt_vs.h",
+      "sha256": "16f54fb487377013cc3f446fec3bf54506a51becbb24eda1b05c59ff8b59cf37"
+    },
+    {
+      "path": "include/esp32/include/esp_bt.h",
+      "sha256": "f98514c9cf5ef765f15338f1576876ea8549dbf072fa543891563feb064935f6"
+    },
+    {
+      "path": "include/esp32c3/include/esp_bt_vs.h",
+      "sha256": "3816df945fc0e4b88a7bbf2a02bf253ad25502adefb206d687eb0d8e5a4d9c5f"
+    },
+    {
+      "path": "include/esp32c3/include/esp_bt.h",
+      "sha256": "22a348e6c9cf07280652ac4e755948e3677936f6b7473a97c4128b2249ae9cde"
+    },
+    {
+      "path": "include/esp32c5/include/esp_bt_vs.h",
+      "sha256": "f2ddae2bb2062e3199477b17e4dc03504c08c3a63ca34f3e03ae4d9cc689b8a2"
+    },
+    {
+      "path": "include/esp32c5/include/esp_bt.h",
+      "sha256": "3d3be26c9de1158b3b0d1b0df6bd89643a10d7caab50cce9dff557a3bf1f6e3c"
+    },
+    {
+      "path": "include/esp32c2/include/esp_bt_vs.h",
+      "sha256": "5041dc2b8a64c37b3e0e534151cb709c95f97cee8d6e7b7c6437b85d4370870f"
+    },
+    {
+      "path": "include/esp32c2/include/esp_bt.h",
+      "sha256": "383b1a12c48a90f0d234a7aeb722dd457729989ccc5425ae13905858cfb73bc5"
+    },
+    {
+      "path": "host/bluedroid/external/sbc/decoder/srce/readsamplesjoint.inc",
+      "sha256": "d90b27b0613fce0a17ca1822ad1e1a2b846cf5884ae81ed021130e6495b52573"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/utils.h",
+      "sha256": "64878c30949f18e98e77290b635880599ccb19206bff208591d4a101dccd21b0"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/ctr_prng.h",
+      "sha256": "2393c3311809e028ff03b88862d3227d8087426db7f975a8500ca651bd518121"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/ccm_mode.h",
+      "sha256": "1a7fc6913893168a6f25a029d8decc165c470e7f4bf93d0afea083e4f3f98372"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/cbc_mode.h",
+      "sha256": "437f8ffb0b302223408c21f455d9a19a248a963f59f0475f031bda93d46fa25a"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/sha256.h",
+      "sha256": "2fa6d13134a5140fa4bd86a20f03942a02296be431971f8a343d62c1b095454c"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/hmac_prng.h",
+      "sha256": "a5028855f0cc806779967e71043c0e2779b31a6f6eb1de02c7c2192a70755ea1"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/ecc_dh.h",
+      "sha256": "170a8f09a61e6b3f7975f346e8e213531b2981c5632c02bc69ed1d79e3cde990"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/ctr_mode.h",
+      "sha256": "a4b452a3946b802396913519c3aa8d14704fbd0a4ae40da7b5ac6629ecd816b8"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/constants.h",
+      "sha256": "37badcc85b2ec75465c5461e0c1fb4fc23af00d1fd4304afbc20d3769c1cfa37"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/hmac.h",
+      "sha256": "43136c2034a590876b7c3a5505e67ad69b900edf547370b93cc944abaf92d30a"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/aes.h",
+      "sha256": "a51c7dc32f6f5e5ff6654f6c6cda688d6441696bdc82b1c406f2e0fc4a92ec7b"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/cmac_mode.h",
+      "sha256": "e0393d8cb205d82e85bf0d47574e574e19e085fce4fba795af7db380c4ccec08"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/ecc.h",
+      "sha256": "b8b0c4b5491cc6f539c4cc4299d0429eb312db9f6c1e2e144922a9f06dd31141"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/ecc_platform_specific.h",
+      "sha256": "d7121881a1cf9c7130f85891b6994963b6b09dcf395e19e24863679a86c72305"
+    },
+    {
+      "path": "common/tinycrypt/include/tinycrypt/ecc_dsa.h",
+      "sha256": "155566ed5cb885559591fd1a8b680ec70d5a935aff31e6395cb6f0d75bb922d5"
+    },
+    {
+      "path": "common/tinycrypt/src/ecc.c",
+      "sha256": "0f193657a6b50cb494ad9368e03fd822f707ea7328150a1832ceb98fe588b277"
+    },
+    {
+      "path": "common/tinycrypt/src/ecc_dh.c",
+      "sha256": "c0cb59554bb0a20f143b861441218d27a90289fc25dc3fe9c221819cd5d84a58"
+    },
+    {
+      "path": "common/tinycrypt/src/sha256.c",
+      "sha256": "b63a8a0c67a9bbb5a317d9beb10261832aceed0080d009db009ca72b9af41765"
+    },
+    {
+      "path": "common/tinycrypt/src/hmac.c",
+      "sha256": "9e9a06e93566c629eb865bf36e982d2b28e48cf0319078638ef046ce0f42c9d4"
+    },
+    {
+      "path": "common/tinycrypt/src/utils.c",
+      "sha256": "890d4a64e8a16cec3f7da38af34cc90cb303a28be70baff56aed650e831a282c"
+    }
+  ]
+}

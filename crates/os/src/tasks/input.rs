@@ -87,6 +87,15 @@ pub async fn input_task(mut gpio6: Input<'static>, mut touch: Cst9220) {
     let mut last_x = 0u16;
     let mut last_y = 0u16;
     let mut errors: u32 = 0;
+    let mut press_at_us = 0;
+    let mut press_x = 0u16;
+    let mut press_y = 0u16;
+    let mut samples = 0u32;
+    let mut travel = 0u32;
+    let mut excursion = 0u16;
+    let mut press_errors = 0;
+    let mut last_report_us = 0;
+    let mut max_gap_us = 0;
 
     loop {
         // 边沿或回退定时器，任一先到都读取一次报告。`wait_for_falling_edge`
@@ -101,16 +110,39 @@ pub async fn input_task(mut gpio6: Input<'static>, mut touch: Cst9220) {
             Either::First(()) | Either::Second(()) => {}
         }
 
-        match touch.poll().await {
+        let poll_started = now_us();
+        let report = touch.poll().await;
+        let poll_us = now_us().saturating_sub(poll_started);
+        match report {
             Ok(TouchState::Down { x, y }) => {
+                let at_us = now_us();
+                super::power::wake();
                 if !pressed {
-                    info!("input_task: touch down at ({x}, {y})");
+                    info!(
+                        "input_task: touch down at ({x}, {y}) at_ms={} poll_us={poll_us}",
+                        at_us / 1000
+                    );
+                    press_at_us = at_us;
+                    press_x = x;
+                    press_y = y;
+                    samples = 0;
+                    travel = 0;
+                    excursion = 0;
+                    press_errors = errors;
+                    last_report_us = at_us;
+                    max_gap_us = 0;
                     pressed = true;
+                } else {
+                    travel += u32::from(x.abs_diff(last_x) + y.abs_diff(last_y));
                 }
+                samples += 1;
+                excursion = excursion.max(x.abs_diff(press_x) + y.abs_diff(press_y));
+                max_gap_us = max_gap_us.max(at_us.saturating_sub(last_report_us));
+                last_report_us = at_us;
                 last_x = x;
                 last_y = y;
                 publish(TouchEvent {
-                    at_us: now_us(),
+                    at_us,
                     x,
                     y,
                     pressed: true,
@@ -118,10 +150,18 @@ pub async fn input_task(mut gpio6: Input<'static>, mut touch: Cst9220) {
             }
             Ok(TouchState::Up) => {
                 if pressed {
-                    info!("input_task: touch release");
+                    let at_us = now_us();
+                    max_gap_us = max_gap_us.max(at_us.saturating_sub(last_report_us));
+                    info!(
+                        "input_task: touch release at_ms={} held_ms={} samples={samples} travel={travel} excursion={excursion} errors={} max_gap_ms={} poll_us={poll_us}",
+                        at_us / 1000,
+                        at_us.saturating_sub(press_at_us) / 1000,
+                        errors.saturating_sub(press_errors),
+                        max_gap_us / 1000,
+                    );
                     pressed = false;
                     publish(TouchEvent {
-                        at_us: now_us(),
+                        at_us,
                         x: last_x,
                         y: last_y,
                         pressed: false,

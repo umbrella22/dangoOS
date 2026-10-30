@@ -5,7 +5,11 @@ use alloc::{rc::Rc, string::String, vec::Vec};
 pub const MAGIC: &[u8; 8] = b"MSKIN01\0";
 pub const HEADER: usize = 36;
 pub const MAX_BYTES: usize = 1024 * 1024;
-pub const POSES: usize = 20;
+/// A legacy whole-package wrapper retains the original format's decoded
+/// resource limit. Version 2 leaves inactive images compressed in memory.
+pub const MAX_DECODED_BYTES: usize = MAX_BYTES;
+const COMPRESSED_MAGIC: &[u8; 8] = b"MSKINZ1\0";
+pub const POSES: usize = 25;
 pub const GROUPS: usize = 11;
 
 #[derive(Debug)]
@@ -46,7 +50,9 @@ impl<'a> From<&'a Pose> for PoseView<'a> {
 struct Package {
     palette: Vec<u16>,
     poses: Vec<OwnedPose>,
-    blob: Vec<u8>,
+    bytes: Vec<u8>,
+    blob_start: usize,
+    indexed_zlib: bool,
 }
 #[derive(Debug)]
 pub struct Skin {
@@ -63,13 +69,25 @@ impl Skin {
         self.package.as_ref().map_or(&data::PALETTE, |p| &p.palette)
     }
     pub fn blob(&self) -> &[u8] {
-        self.package.as_ref().map_or(data::BLOB, |p| &p.blob)
+        self.package.as_ref().map_or(data::BLOB, |p| &p.bytes[p.blob_start..])
+    }
+    pub(crate) fn indexed_zlib(&self) -> bool {
+        self.package.as_ref().is_some_and(|p| p.indexed_zlib)
+    }
+    pub(crate) fn decode_indexed(&self, img: &Img, pixels: &mut [u8]) {
+        let source = &self.blob()[img.off as usize..img.off as usize + img.len as usize];
+        let written = miniz_oxide::inflate::decompress_slice_iter_to_slice(
+            pixels, core::iter::once(source), true, false);
+        // Both stream and output dimensions were validated before this
+        // immutable resource was published. A render cannot change either.
+        assert_eq!(written, Ok(pixels.len()));
     }
     pub fn pose(&self, pose: FoxPose) -> PoseView<'_> {
         let Some(package) = &self.package else {
             return pose.data().into();
         };
-        let p = &package.poses[pose as usize];
+        let p = package.poses.get(pose as usize)
+            .unwrap_or_else(|| &package.poses[pose.legacy_fallback() as usize]);
         let g = &p.groups;
         PoseView {
             base: p.base,
@@ -85,11 +103,26 @@ impl Skin {
         }
     }
     pub fn parse(bytes: Vec<u8>) -> Result<Rc<Self>, String> {
-        if bytes.len() < HEADER || bytes.len() > MAX_BYTES || &bytes[..8] != MAGIC {
+        if bytes.len() > MAX_BYTES {
+            return Err("skin transfer size".into());
+        }
+        let bytes = if bytes.starts_with(COMPRESSED_MAGIC) {
+            if bytes.len() < 12 { return Err("skin compressed header".into()); }
+            let size = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+            if !(HEADER..=MAX_DECODED_BYTES).contains(&size) {
+                return Err("skin decoded size".into());
+            }
+            let decoded = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&bytes[12..], size)
+                .map_err(|_| String::from("skin compressed data"))?;
+            if decoded.len() != size { return Err("skin decoded length".into()); }
+            decoded
+        } else { bytes };
+        if bytes.len() < HEADER || &bytes[..8] != MAGIC {
             return Err("skin binary magic/size".into());
         }
         let mut r = Reader { b: &bytes, at: 8 };
-        if r.u32()? != 1 || r.u16()? as usize != W || r.u16()? as usize != H {
+        let version = r.u32()?;
+        if ![1, 2].contains(&version) || r.u16()? as usize != W || r.u16()? as usize != H {
             return Err("skin binary version/canvas".into());
         }
         let colors = r.u16()? as usize;
@@ -100,7 +133,7 @@ impl Skin {
         let reserved = r.u32()?;
         if colors == 0
             || colors > 255
-            || poses != POSES
+            || ![20, POSES].contains(&poses)
             || reserved != 0
             || meta > 65536
             || HEADER
@@ -118,8 +151,8 @@ impl Skin {
         let palette = (0..colors)
             .map(|_| r.u16())
             .collect::<Result<Vec<_>, _>>()?;
-        let mut table = Vec::with_capacity(POSES);
-        for id in 0..POSES {
+        let mut table = Vec::with_capacity(poses);
+        for id in 0..poses {
             if r.u16()? as usize != id {
                 return Err("skin missing/duplicate/out-of-order pose".into());
             }
@@ -145,9 +178,9 @@ impl Skin {
             {
                 return Err("skin base dimensions".into());
             }
-            validate_img(&base, &bytes[end..], colors, true)?;
+            validate_img(&base, &bytes[end..], colors, true, version == 2)?;
             for img in groups.iter().flatten() {
-                validate_img(img, &bytes[end..], colors, false)?;
+                validate_img(img, &bytes[end..], colors, false, version == 2)?;
             }
             table.push(OwnedPose { base, groups });
         }
@@ -155,12 +188,13 @@ impl Skin {
             return Err("skin trailing metadata".into());
         }
         // All metadata and RLE have been checked before the resource can exist.
-        let blob = bytes[end..].to_vec();
         Ok(Rc::new(Self {
             package: Some(Package {
                 palette,
                 poses: table,
-                blob,
+                bytes,
+                blob_start: end,
+                indexed_zlib: version == 2,
             }),
         }))
     }
@@ -206,7 +240,7 @@ fn validate_layers(id: usize, g: &[Vec<Img>; GROUPS]) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_img(img: &Img, blob: &[u8], colors: usize, opaque: bool) -> Result<(), String> {
+fn validate_img(img: &Img, blob: &[u8], colors: usize, opaque: bool, indexed_zlib: bool) -> Result<(), String> {
     if img.w == 0
         || img.h == 0
         || img.x < 0
@@ -221,6 +255,16 @@ fn validate_img(img: &Img, blob: &[u8], colors: usize, opaque: bool) -> Result<(
         .checked_add(img.len as usize)
         .ok_or("skin RLE offset overflow")?;
     let b = blob.get(start..end).ok_or("skin RLE outside blob")?;
+    if indexed_zlib {
+        let size = img.w as usize * img.h as usize;
+        let pixels = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(b, size)
+            .map_err(|_| String::from("skin indexed zlib data"))?;
+        if pixels.len() != size || pixels.iter().any(|&v|
+            (v as usize >= colors && v != 255) || (opaque && v == 255)) {
+            return Err("skin indexed length/palette/opacity".into());
+        }
+        return Ok(());
+    }
     if b.is_empty() || b.len() % 2 != 0 {
         return Err("skin RLE length".into());
     }
@@ -292,11 +336,21 @@ impl Reader<'_> {
     }
 }
 
+/// Serialize the complete default art for the read-only system resource volume.
+#[cfg(not(target_os = "none"))]
+pub fn builtin_binary() -> Vec<u8> {
+    let plain = fixture_with(0, |_, _| {});
+    let mut bytes = Vec::from(*COMPRESSED_MAGIC);
+    bytes.extend((plain.len() as u32).to_le_bytes());
+    bytes.extend(miniz_oxide::deflate::compress_to_vec_zlib(&plain, 9));
+    bytes
+}
+
 #[cfg(test)]
 pub(crate) fn fixture(xor: u16) -> Vec<u8> {
     fixture_with(xor, |_, _| {})
 }
-#[cfg(test)]
+#[cfg(not(target_os = "none"))]
 fn fixture_with(xor: u16, mut change: impl FnMut(usize, &mut [Vec<Img>; GROUPS])) -> Vec<u8> {
     fn img(b: &mut Vec<u8>, i: &Img) {
         for n in [i.x as u16, i.y as u16, i.w, i.h] {
@@ -337,7 +391,7 @@ fn fixture_with(xor: u16, mut change: impl FnMut(usize, &mut [Vec<Img>; GROUPS])
     }
     let mut out = Vec::from(*MAGIC);
     out.extend(1u32.to_le_bytes());
-    for n in [W as u16, H as u16, data::PALETTE.len() as u16, POSES as u16] {
+    for n in [W as u16, H as u16, data::PALETTE.len() as u16, data::POSES.len() as u16] {
         out.extend(n.to_le_bytes());
     }
     for n in [meta.len() as u32, data::BLOB.len() as u32, 0, 0] {
@@ -348,7 +402,7 @@ fn fixture_with(xor: u16, mut change: impl FnMut(usize, &mut [Vec<Img>; GROUPS])
     fix_crc(&mut out);
     out
 }
-#[cfg(test)]
+#[cfg(not(target_os = "none"))]
 pub(crate) fn fix_crc(b: &mut [u8]) {
     let crc = crate::hub::push::crc32(&b[HEADER..]);
     b[28..32].copy_from_slice(&crc.to_le_bytes());
@@ -358,6 +412,78 @@ mod tests {
     use super::*;
     use crate::fox::{FoxAnimator, FoxInput, FoxRenderer, Scene, PIXELS};
     use alloc::vec;
+    #[test]
+    #[ignore = "requires private assets/dango-family artwork"]
+    fn family_packages_keep_independent_colours_and_decode_only_one_image_at_a_time() {
+        let mut signatures = Vec::new();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/dango-family");
+        let receipt: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("import.json")).unwrap()).unwrap();
+        let keys = ["idle", "sleep", "curious", "happy", "puzzled", "confused", "surprised", "panic", "angry", "satisfied", "listening", "thinking", "speaking", "error", "tired", "dying", "annoyed", "charging", "peering", "dazzled", "network-disconnected", "network-connected", "bluetooth-disconnected", "bluetooth-connected", "music-playing"];
+        for (index, id) in ["eclipse", "normal", "black-blue"].into_iter().enumerate() {
+            let bytes = std::fs::read(root.join("skins").join(id).join("fox.bin")).unwrap();
+            let skin = Skin::parse(bytes.clone()).unwrap();
+            assert!(skin.indexed_zlib());
+            assert_eq!(skin.package.as_ref().unwrap().bytes.len(), bytes.len());
+            assert_eq!(skin.package.as_ref().unwrap().poses.len(), POSES);
+            assert_eq!(skin.pose(FoxPose::Idle).blink.len(), 2);
+            let mut renderer = FoxRenderer::new();
+            let mut frame = vec![0; PIXELS];
+            for pose in FoxPose::ALL {
+                renderer.render(&Scene::with_skin(pose, Rc::clone(&skin)), &mut frame);
+                assert!(frame.iter().any(|&v| v != 0));
+                assert!(frame.iter().all(|v| skin.palette().contains(v)));
+                let actual = crate::hub::push::crc32(&frame.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>());
+                assert_eq!(actual as u64, receipt["characters"][index]["pose_rgb565_crc32"][keys[pose as usize]].as_u64().unwrap(), "character {index}, pose {pose:?}");
+            }
+            let scene = Scene::with_skin(FoxPose::Idle, Rc::clone(&skin));
+            renderer.render(&scene, &mut frame);
+            signatures.push(crate::hub::push::crc32(&frame.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>()));
+            let reused = renderer.reused;
+            renderer.render(&scene, &mut frame);
+            assert_eq!(renderer.reused, reused + 1, "breathing does not inflate the base again");
+            // Corrupt compressed pixel data while preserving the outer CRC:
+            // validation must still reject it before publishing a resource.
+            let mut bad = bytes.to_vec();
+            let start = HEADER + u32::from_le_bytes(bad[20..24].try_into().unwrap()) as usize;
+            bad[start] = 0;
+            fix_crc(&mut bad);
+            assert!(Skin::parse(bad).is_err());
+        }
+        assert!(signatures[0] != signatures[1] && signatures[1] != signatures[2] && signatures[0] != signatures[2]);
+    }
+    #[test]
+    fn legacy_twenty_pose_skin_keeps_its_own_art_for_new_business_expressions() {
+        let mut bytes = fixture(0);
+        let meta = u32::from_le_bytes(bytes[20..24].try_into().unwrap()) as usize;
+        let end = HEADER + meta;
+        // Locate the first twenty entries structurally: business poses can
+        // contain their own blink/animation layers as the artwork evolves.
+        let mut table = Reader { b: &bytes[..end], at: HEADER + data::PALETTE.len() * 2 };
+        for _ in 0..20 {
+            table.u16().unwrap();
+            table.img().unwrap();
+            for _ in 0..GROUPS {
+                let count = table.u16().unwrap();
+                for _ in 0..count { table.img().unwrap(); }
+            }
+        }
+        let legacy_end = table.at;
+        let removed = end - legacy_end;
+        bytes.drain(legacy_end..end);
+        bytes[18..20].copy_from_slice(&20u16.to_le_bytes());
+        bytes[20..24].copy_from_slice(&((meta - removed) as u32).to_le_bytes());
+        fix_crc(&mut bytes);
+        let legacy = Skin::parse(bytes).unwrap();
+        for pose in [FoxPose::NetworkConnected, FoxPose::BluetoothDisconnected, FoxPose::MusicPlaying] {
+            assert_eq!(legacy.pose(pose).base.off, legacy.pose(pose.legacy_fallback()).base.off);
+        }
+        let compressed = builtin_binary();
+        assert!(compressed.len() < MAX_BYTES);
+        assert_eq!(Skin::parse(compressed).unwrap().blob(), data::BLOB);
+        let mut bomb = Vec::from(*COMPRESSED_MAGIC);
+        bomb.extend((MAX_DECODED_BYTES as u32 + 1).to_le_bytes());
+        assert!(Skin::parse(bomb).is_err());
+    }
     #[test]
     fn packed_default_is_pixel_identical_and_recolor_changes_pixels_with_cache_invalidation() {
         let default = Skin::parse(fixture(0)).unwrap();

@@ -114,6 +114,8 @@ impl Frame {
 
 /// One canvas upload.
 pub struct PlaneJob {
+    /// Only the full terminal warning can acknowledge the reserve countdown.
+    pub shutdown_low_battery: bool,
     /// Set only for Sleep frames after the entrance finished during shutdown.
     pub shutdown_sleep: bool,
     /// Exclusive read access to the rendered frame for the whole upload.
@@ -133,6 +135,16 @@ pub struct PlaneJob {
 }
 
 static JOBS: Signal<CriticalSectionRawMutex, PlaneJob> = Signal::new();
+static POWER_REQUEST: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+static POWER_DONE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
+/// Only the UI power coordinator calls this, serially. The plane services it
+/// between completed uploads, so commands never race a live DMA transfer.
+pub async fn set_sleep(sleep: bool) -> bool {
+    POWER_DONE.reset();
+    POWER_REQUEST.signal(sleep);
+    POWER_DONE.wait().await
+}
 
 /// UI-side handle: publishes frames to the upload task.
 pub struct PlaneUi {
@@ -204,9 +216,9 @@ impl PlaneDisplay {
 /// Moves the async panel driver onto the plane's interrupt executor.
 ///
 /// esp-hal marks `Async` drivers `!Send` because their DMA wakers are bound
-/// to the core whose interrupt handlers were installed. The firmware runs on
-/// core 0 only and both executors live there, so handing the driver from the
-/// thread executor to the interrupt executor never crosses a core.
+/// to the core whose interrupt handlers were installed. Panel initialization
+/// and its interrupt executor both stay on Core0. Core1 only submits canvas
+/// leases; the driver never crosses a core.
 pub struct PanelOwner(Display<esp_hal::Async>);
 
 impl PanelOwner {
@@ -258,9 +270,48 @@ async fn run_plane(
     let mut window_frames: u32 = 0;
     let mut window_transfer_us: u64 = 0;
     let mut applied_brightness: Option<u8> = None;
+    let mut sleeping = false;
+    let mut full_after_wake = false;
+    let mut restored_cycle = 0;
 
     loop {
-        let job = display.next_job().await;
+        let mut job = match select(POWER_REQUEST.wait(), display.next_job()).await {
+            Either::First(sleep) => {
+                // Return every queued canvas lease before acknowledging standby.
+                JOBS.reset();
+                let cycle = super::power::cycle();
+                let result = if sleep {
+                    panel.sleep_in().await
+                } else {
+                    panel.sleep_out().await
+                };
+                // Failed entry/resume leaves panel state uncertain. Suppress all
+                // uploads until the coordinator explicitly restores it.
+                sleeping = sleep || result.is_err();
+                if !sleep && result.is_ok() {
+                    restored_cycle = cycle;
+                    super::power::panel_ready(cycle);
+                    full_after_wake = true;
+                    applied_brightness = None;
+                    window_start = Instant::now();
+                    window_frames = 0;
+                    window_transfer_us = 0;
+                }
+                if let Err(error) = &result {
+                    warn!("plane: standby={sleep} failed: {error:?}");
+                }
+                POWER_DONE.signal(result.is_ok());
+                continue;
+            }
+            Either::Second(job) => job,
+        };
+        if sleeping {
+            continue;
+        }
+        if full_after_wake {
+            job.damage = None;
+            job.clear_outside = matches!(job.canvas, Frame::Pool(_));
+        }
         #[cfg(feature = "native-ui-diagnostics")]
         let profile_id = job.canvas.profile_id();
         #[cfg(feature = "native-ui-diagnostics")]
@@ -415,6 +466,13 @@ async fn run_plane(
             }
         }
         super::buttons::frame_uploaded(job.shutdown_sleep, completed);
+        if job.shutdown_low_battery { super::buttons::warning_uploaded(completed); }
+        if completed {
+            if full_after_wake {
+                super::power::frame_done(restored_cycle);
+            }
+            full_after_wake = false;
+        }
 
         let elapsed_us = started.elapsed().as_micros();
         let elapsed_ms = (elapsed_us / 1000) as u32;
@@ -429,6 +487,7 @@ async fn run_plane(
             match panel.set_brightness_async(target).await {
                 Ok(()) => {
                     applied_brightness = Some(target);
+                    super::power::brightness_done(restored_cycle);
                     if !BRIGHTNESS_RESTORED.swap(true, Ordering::Relaxed) {
                         info!("plane: brightness restored after the first canvas");
                     } else {

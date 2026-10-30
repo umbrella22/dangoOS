@@ -100,6 +100,10 @@ static POINTER_X: AtomicI32 = AtomicI32::new(0);
 static POINTER_Y: AtomicI32 = AtomicI32::new(0);
 static POINTER_DOWN: AtomicBool = AtomicBool::new(false);
 
+pub fn active_or_pending() -> bool {
+    STATE.load(Ordering::Acquire) != 0 || START.signaled()
+}
+
 /// Run `app` (the UI opened its page). Stops a running app first.
 pub fn start(app: LuaApp) {
     if MANAGEMENT.load(Ordering::Acquire) {
@@ -367,7 +371,8 @@ pub async fn lua_task() {
 /// when a start request arrived meanwhile.
 async fn run(app: LuaApp) -> Option<LuaApp> {
     STATE.store(1, Ordering::Release);
-    let ready = ::fs::global::with(|vfs| Ok(os::hub::uninstall::ensure_ready(vfs, &app.id)));
+    let id = app.id.clone();
+    let ready = crate::service_executor::run(move || ::fs::global::with(|vfs| Ok(os::hub::uninstall::ensure_ready(vfs, &id)))).await;
     if !matches!(ready, Ok(Ok(()))) {
         warn!("lua[{}]: pending recovery or unavailable storage", app.id);
         STATE.store(2, Ordering::Release);
@@ -389,7 +394,8 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
         }
     };
     let root = alloc::format!("/data/appdata/{}", app.id);
-    let root_ready = ::fs::global::with(|vfs| vfs.create_dir_all(&root));
+    let owned_root = root.clone();
+    let root_ready = crate::service_executor::run(move || ::fs::global::with(|vfs| vfs.create_dir_all(&owned_root))).await;
     if let Err(e) = root_ready
         .map_err(|e| alloc::format!("{e}"))
         .and_then(|()| vm.set_storage_root(&root))

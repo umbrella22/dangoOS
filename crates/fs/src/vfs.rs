@@ -41,6 +41,7 @@ pub struct Space {
 #[derive(Default)]
 pub struct Vfs {
     mounts: Vec<Mount>,
+    aliases: Vec<(String, usize)>,
     files: Vec<Option<OpenFile>>,
     dirs: Vec<Option<OpenDir>>,
 }
@@ -68,6 +69,7 @@ impl Vfs {
     pub const fn new() -> Self {
         Self {
             mounts: Vec::new(),
+            aliases: Vec::new(),
             files: Vec::new(),
             dirs: Vec::new(),
         }
@@ -82,7 +84,17 @@ impl Vfs {
     }
 
     pub fn mount_names(&self) -> impl Iterator<Item = &str> {
-        self.mounts.iter().map(|m| m.prefix.as_str())
+        self.mounts.iter().map(|m| m.prefix.as_str()).chain(self.aliases.iter().map(|(name, _)| name.as_str()))
+    }
+
+    /// A second path to the same filesystem and descriptor namespace. The
+    /// filesystem is owned once; cross-alias rename remains atomic.
+    pub fn alias(&mut self, name: &str, target: &str) -> Result<(), Errno> {
+        if name.is_empty() || name.contains('/') { return Err(Errno::INVAL); }
+        if self.mount_names().any(|m| m == name) { return Err(Errno::EXIST); }
+        let index = self.mounts.iter().position(|m| m.prefix == target).ok_or(Errno::NOENT)?;
+        self.aliases.push((name.into(), index));
+        Ok(())
     }
 
     /// Split a path into (mount index, path inside the mount). `None` for
@@ -96,6 +108,7 @@ impl Vfs {
             .mounts
             .iter()
             .position(|m| m.prefix == *first)
+            .or_else(|| self.aliases.iter().find(|(name, _)| name == first).map(|(_, index)| *index))
             .ok_or(Errno::NOENT)?;
         let mut inner = String::from("/");
         inner.push_str(&rest.join("/"));
@@ -175,10 +188,9 @@ impl Vfs {
     pub fn read_dir(&mut self, path: &str) -> Result<Vec<DirEntry>, Errno> {
         match self.resolve(path)? {
             None => Ok(self
-                .mounts
-                .iter()
-                .map(|m| DirEntry {
-                    name: m.prefix.clone(),
+                .mount_names()
+                .map(|name| DirEntry {
+                    name: name.into(),
                     meta: Metadata {
                         kind: Kind::Dir,
                         size: 0,

@@ -26,6 +26,7 @@ pub mod fox_widget;
 pub mod hub_font;
 pub mod hub_view;
 pub mod splash;
+mod settings_view;
 
 use crate::hub::uninstall::{Identity, Operation};
 use alloc::rc::Rc;
@@ -70,6 +71,8 @@ pub enum Screen {
     Splash,
     /// The fox is on screen (possibly still dropping in).
     Fox,
+    /// Terminal reserve warning; navigation cannot replace it.
+    LowBattery,
 }
 
 /// Whether the custom `ikaros` wordmark plays before the fox.
@@ -81,7 +84,7 @@ pub enum Screen {
 pub const SHOW_SPLASH: bool = false;
 
 /// Messages consumed by the application.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppMsg {
     /// The splash finished or was skipped; switch to the fox.
     SplashDone,
@@ -97,10 +100,37 @@ pub enum AppMsg {
     Gesture(SystemGesture),
     /// Settings: panel brightness, percent.
     Brightness(i32),
+    AudioVolume(i32),
+    AudioMute(bool),
     /// Settings: interaction-board lights.
     Lights(bool),
     /// Settings: vibration motor.
     Haptics(bool),
+    CameraCapture,
+    CameraRetry,
+    SettingsPage(crate::hub::settings::Page),
+    SettingsBack,
+    SelectSkin(String),
+    CameraMirror(bool),
+    JpegQuality(u8),
+    WifiScan,
+    WifiChoose(crate::radio::Network),
+    WifiPassword(crate::hub::settings::Password),
+    WifiPasswordHidden(bool),
+    AutoUpdateCheck(bool),
+    UpdateProxyToggle(bool),
+    UpdateProxyText(String),
+    UpdateProxyApply,
+    UpdateProxySet(Option<crate::update::HttpProxy>),
+    Update(crate::update::Command),
+    WifiConnect,
+    WifiSavedConnect,
+    WifiForget,
+    WifiReenterPassword,
+    WifiAutomatic(bool),
+    Wifi(bool),
+    Bluetooth(bool),
+    ScreenOff,
     /// Timer: select a preset (index into `PRESETS_MIN`).
     TimerPreset(usize),
     /// Timer: start, pause or resume.
@@ -121,6 +151,8 @@ pub struct MosaicoApp {
     management: Option<Operation>,
     management_busy: bool,
     toast: Option<String>,
+    camera_action: Option<crate::camera::Command>,
+    settings_session: crate::hub::settings::Session,
 }
 
 impl MosaicoApp {
@@ -146,6 +178,8 @@ impl MosaicoApp {
             management: None,
             management_busy: false,
             toast: None,
+            camera_action: None,
+            settings_session: crate::hub::settings::Session::default(),
         }
     }
 
@@ -230,27 +264,43 @@ impl MosaicoApp {
         self.confirmation
     }
     pub fn go(&mut self, page: Page) {
+        if self.screen.get() == Screen::LowBattery { return; }
         self.confirmation = None;
         if page == self.hub.page {
             return;
         }
         self.hub.page = page;
+        self.settings_session.password=crate::hub::settings::Password::default();
+        self.hub.settings_page=crate::hub::settings::Page::Root;
         if page == Page::Home && self.screen.get() == Screen::Fox {
             self.control.start_entrance();
         }
     }
 
+    pub fn take_camera_action(&mut self)->Option<crate::camera::Command>{self.camera_action.take()}
+    pub fn settings_session(&self)->&crate::hub::settings::Session{&self.settings_session}
+    pub fn settings_session_mut(&mut self)->&mut crate::hub::settings::Session{&mut self.settings_session}
+    pub fn take_settings_action(&mut self)->Option<crate::hub::settings::Action>{self.settings_session.action.take()}
+    fn settings_back(&mut self){
+        self.settings_session.password=crate::hub::settings::Password::default();
+        self.settings_session.password_hidden=false;
+        self.hub.settings_page=self.hub.settings_page.back();
+    }
+
     /// Move to the fox screen and start the entrance.
     pub fn enter_fox(&self) {
+        if self.screen.get() == Screen::LowBattery { return; }
         self.screen.set(Screen::Fox);
         self.control.start_entrance();
     }
+    pub fn show_low_battery(&self) { self.screen.set(Screen::LowBattery); }
 }
 
 impl App for MosaicoApp {
     type Msg = AppMsg;
 
     fn update(&mut self, msg: AppMsg) {
+        if self.screen.get() == Screen::LowBattery { return; }
         match msg {
             AppMsg::SplashDone => {
                 if self.screen.get() == Screen::Splash {
@@ -325,6 +375,9 @@ impl App for MosaicoApp {
                 if self.confirmation.take().is_some() {
                     return;
                 }
+                if gesture==SystemGesture::Back && self.page()==Page::App(AppId::Settings) && self.hub.settings_page!=crate::hub::settings::Page::Root {
+                    self.settings_back();return;
+                }
                 if self.screen.get() == Screen::Fox {
                     let next = self.hub.page.after(gesture);
                     self.go(next);
@@ -333,6 +386,89 @@ impl App for MosaicoApp {
             AppMsg::Brightness(percent) => self.hub.settings.set_brightness(percent),
             AppMsg::Lights(on) => self.hub.settings.lights = on,
             AppMsg::Haptics(on) => self.hub.settings.haptics = on,
+            AppMsg::CameraCapture => self.camera_action=Some(crate::camera::Command::Capture),
+            AppMsg::CameraRetry => self.camera_action=Some(crate::camera::Command::Start),
+            AppMsg::SettingsPage(page)=>{
+                self.hub.settings_page=page;self.settings_session.message=None;
+                if page == crate::hub::settings::Page::Proxy {
+                    self.settings_session.proxy_address = self.hub.settings.update_proxy.map(crate::update::HttpProxy::address).unwrap_or_default();
+                }
+            },
+            AppMsg::SettingsBack=>self.settings_back(),
+            AppMsg::SelectSkin(id)=>{
+                if !self.settings_session.info.busy && self.settings_session.info.storage_ready
+                    && self.settings_session.loading_skin.is_none() && id != self.settings_session.selected_skin
+                {
+                    self.settings_session.loading_skin=Some(id.clone());
+                    self.settings_session.message=None;
+                    self.settings_session.action=Some(crate::hub::settings::Action::SelectSkin(id));
+                }
+            },
+            AppMsg::AudioVolume(value)=>self.hub.settings.audio_volume=value.clamp(0,100) as u8,
+            AppMsg::AudioMute(on)=>self.hub.settings.audio_muted=on,
+            AppMsg::CameraMirror(on)=>self.hub.settings.camera_mirror=on,
+            AppMsg::JpegQuality(quality)=>if [75,85,95].contains(&quality){self.hub.settings.jpeg_quality=quality;},
+            AppMsg::WifiScan=>self.settings_session.action=Some(crate::hub::settings::Action::Radio(crate::radio::Command::WifiScan)),
+            AppMsg::Wifi(on)=>self.settings_session.action=Some(crate::hub::settings::Action::Radio(if on{crate::radio::Command::WifiOn}else{crate::radio::Command::WifiOff})),
+            AppMsg::Bluetooth(on)=>self.settings_session.action=Some(crate::hub::settings::Action::Radio(if on{crate::radio::Command::BtOn}else{crate::radio::Command::BtOff})),
+            AppMsg::ScreenOff=>{self.go(Page::Home);self.settings_session.action=Some(crate::hub::settings::Action::ScreenOff);},
+            AppMsg::WifiChoose(network)=>{
+                let known=self.settings_session.wifi_saved.networks.contains(&network.ssid);
+                self.settings_session.selected=Some(network);self.settings_session.password=crate::hub::settings::Password::default();
+                self.settings_session.password_hidden=false;
+                self.settings_session.message=None;self.hub.settings_page=if known{crate::hub::settings::Page::KnownNetwork}else{crate::hub::settings::Page::Password};
+            },
+            AppMsg::WifiAutomatic(on)=>self.settings_session.action=Some(crate::hub::settings::Action::Radio(crate::radio::Command::WifiAutomatic(on))),
+            AppMsg::WifiReenterPassword=>{
+                self.settings_session.password=crate::hub::settings::Password::default();
+                self.settings_session.message=None;self.hub.settings_page=crate::hub::settings::Page::Password;
+            },
+            AppMsg::WifiSavedConnect | AppMsg::WifiForget=>{
+                if let Some(network)=&self.settings_session.selected {
+                    let command=if matches!(msg,AppMsg::WifiForget){crate::radio::Command::WifiForget(network.ssid.clone())}else{crate::radio::Command::WifiSavedConnect(network.ssid.clone())};
+                    self.settings_session.action=Some(crate::hub::settings::Action::Radio(command));
+                    self.settings_session.password=crate::hub::settings::Password::default();
+                    self.settings_session.message=None;self.hub.settings_page=crate::hub::settings::Page::Wifi;
+                }
+            },
+            AppMsg::WifiPassword(password)=>{self.settings_session.password=password;self.settings_session.message=None;},
+            AppMsg::WifiPasswordHidden(hidden)=>self.settings_session.password_hidden=hidden,
+            AppMsg::AutoUpdateCheck(on)=>self.hub.settings.auto_update_check=on,
+            AppMsg::UpdateProxyToggle(on)=>{
+                if on && self.hub.settings.update_proxy.is_none() {
+                    self.hub.settings_page=crate::hub::settings::Page::Proxy;
+                    self.settings_session.proxy_address.clear();
+                } else { self.hub.settings.update_proxy_enabled=on; }
+            },
+            AppMsg::UpdateProxyText(text)=>{self.settings_session.proxy_address=text;self.settings_session.message=None;},
+            AppMsg::UpdateProxyApply=>{
+                match crate::update::HttpProxy::parse(&self.settings_session.proxy_address) {
+                    Ok(proxy)=>{
+                        self.hub.settings.update_proxy=Some(proxy);
+                        self.hub.settings.update_proxy_enabled=true;
+                        self.hub.settings_page=crate::hub::settings::Page::Update;
+                        self.settings_session.message=None;
+                    },
+                    Err(error)=>self.settings_session.message=Some(error),
+                }
+            },
+            AppMsg::UpdateProxySet(proxy)=>{
+                self.hub.settings.update_proxy_enabled=proxy.is_some();
+                if let Some(proxy)=proxy {self.hub.settings.update_proxy=Some(proxy);}
+            },
+            AppMsg::Update(command)=>self.settings_session.action=Some(crate::hub::settings::Action::Update(command)),
+            AppMsg::WifiConnect=>{
+                if let Some(network)=&self.settings_session.selected {
+                    match crate::radio::Credentials::wpa2(network.ssid.clone(),self.settings_session.password.0.as_bytes().to_vec()) {
+                        Ok(credentials)=>{
+                            self.settings_session.action=Some(crate::hub::settings::Action::Radio(crate::radio::Command::WifiConnect(credentials)));
+                            self.settings_session.password=crate::hub::settings::Password::default();self.settings_session.message=None;
+                            self.hub.settings_page=crate::hub::settings::Page::Wifi;
+                        },
+                        Err(_)=>self.settings_session.message=Some("密码需为 8–63 个英文字符"),
+                    }
+                }
+            },
             AppMsg::TimerPreset(index) => self.hub.countdown.select(index),
             AppMsg::TimerToggle => {
                 let now = self.hub.now_ms;
@@ -344,6 +480,7 @@ impl App for MosaicoApp {
 
     fn view(&self, theme: &Theme) -> View<AppMsg> {
         match self.screen.get() {
+            Screen::LowBattery => hub_view::low_battery(),
             // The splash has no touch target: the wordmark and the drop must
             // play out on their own, so a finger on the glass changes nothing.
             Screen::Splash => rs_lvgl_ui::obj()
@@ -361,6 +498,7 @@ impl App for MosaicoApp {
                     self.management_busy,
                     self.toast.as_deref(),
                 ),
+                Page::App(AppId::Settings) => hub_view::settings_pages(&self.hub,&self.settings_session),
                 Page::App(app) => hub_view::app(&self.hub, &self.registry, app),
             },
         }
@@ -567,7 +705,7 @@ mod tests {
                     .collect(),
             }
         }
-        // Two filesystem apps follow the three native Rust applications.
+        // Two filesystem apps follow the four native Rust applications.
         app.set_registry(system_apps());
         ui.mount(&app).expect("mount");
 
@@ -577,8 +715,9 @@ mod tests {
             (104, 140, AppId::Settings),
             (240, 140, AppId::Sensors),
             (376, 140, AppId::Timer),
-            (172, 298, AppId::Lua(0)),
-            (308, 298, AppId::Lua(1)),
+            (104, 298, AppId::Camera),
+            (240, 298, AppId::Lua(0)),
+            (376, 298, AppId::Lua(1)),
         ];
         for (x, icon_y, id) in tiles {
             for y in [icon_y, icon_y + 72] {
@@ -606,19 +745,31 @@ mod tests {
         assert_eq!(app.page(), Page::App(AppId::Settings), "scrolling grid");
         app.set_registry(system_apps());
 
-        // Settings: the slider, then both switches.
+        // Settings: display, audio and feedback controls all dispatch to the hub.
         app.go(Page::App(AppId::Settings));
         ui.mark_dirty();
         run(&mut ui, &mut app, 60);
+        tap(&mut ui, &mut app, 240, 196);
+        assert_eq!(app.hub().settings_page, crate::hub::settings::Page::Display);
         tap(&mut ui, &mut app, 240, 166);
         let brightness = app.hub().settings.brightness;
         assert!(
             (40..=80).contains(&brightness),
             "slider tap set {brightness}%"
         );
-        tap(&mut ui, &mut app, 388, 233);
+        tap(&mut ui, &mut app, 60, 48);
+        tap(&mut ui, &mut app, 240, 268);
+        assert_eq!(app.hub().settings_page, crate::hub::settings::Page::Audio);
+        tap(&mut ui, &mut app, 240, 166);
+        assert!((40..=80).contains(&app.hub().settings.audio_volume));
+        tap(&mut ui, &mut app, 388, 240);
+        assert!(app.hub().settings.audio_muted, "the mute switch toggles");
+        tap(&mut ui, &mut app, 60, 48);
+        tap(&mut ui, &mut app, 240, 340);
+        assert_eq!(app.hub().settings_page, crate::hub::settings::Page::Feedback);
+        tap(&mut ui, &mut app, 388, 126);
         assert!(!app.hub().settings.lights, "the lights switch toggles");
-        tap(&mut ui, &mut app, 388, 309);
+        tap(&mut ui, &mut app, 388, 202);
         assert!(!app.hub().settings.haptics, "the haptics switch toggles");
 
         // Timer: pick the 1-minute chip, then start.

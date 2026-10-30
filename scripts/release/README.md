@@ -11,19 +11,53 @@ CI 使用源码提交时间作为固件的构建时间，避免同一提交仅�
 | `partitions.csv` | ESP-Mosaico 16 MiB A/B 布局，与设备迁移契约逐字段核对 |
 | `bootstrap.py` | 安装 Linux CI 的固定 GCC 和 espflash，并覆盖本机工具链路径 |
 | `package.py` | 生成和校验 OTA BIN、全量 BIN、两个 ZIP、manifest、安装说明与校验和 |
+| `install.py` | 校验解压后的发布包，可先刷写全量 NOR，再通过运行时 USB 安装 NAND 团子 |
 | `publish.py` | 验证远程 tag 与源码提交，上传并回读附件，再公开 Release |
 | `notes/` | 各 tag 的发布说明 |
 
 ## 镜像边界
 
-OTA 包只含应用镜像，通过运行时控制台写入非活动槽。它不更新 BL、分区表或 system。
-全量包从固定哈希的公开官方底包提取 BL、Vibe Mode 和工厂 UI 资源，使用仓库源码构建
-system，填充 A/B 分区与 slot 0 应用。初始 OTA 记录为 `sequence=1, state=Valid`。
-其余空间以 `0xff` 初始化，包含空白 slot 1、用户 data、NVS 和崩溃记录。
+OTA BIN 是应用镜像，通过运行时 USB 控制台或 Wi-Fi HTTPS 下载写入非活动槽。无线更新从 GitHub Releases 读取 manifest，支持无认证 HTTP CONNECT 代理，设备只向用户提供更高且兼容的稳定版本。它不更新 BL、分区表或 system。
+全量包从固定哈希的公开官方底包提取 BL 和 Vibe Mode，使用仓库源码构建 system，
+填充双 6 MiB A/B 分区与 slot 0 应用。原工厂 UI 区域用于扩大应用槽，不进入新镜像。
+初始 OTA 记录为 `sequence=1, state=Valid`。其余空间以 `0xff` 初始化，包含空白
+slot 1、NVS 和崩溃记录。可写 data 位于独立 SPI NAND，不占 NOR 分区。
 
 打包过程校验芯片、应用版本、A/B 标记、应用校验和、分区表 MD5、各组件偏移与边界、
-system 文件树和全部附件 SHA-256。全量镜像固定 16 MiB，从地址 0x0 写入，会清除用户数据。
+system 文件树、完整默认皮肤和全部附件 SHA-256。全量镜像固定 16 MiB，从地址 0x0
+写入并替换 NOR 内容，不改写 NAND。新 NAND 在固件运行后使用 `nand-format` 显式初始化。
 实际设备上的首装、BL 和恢复路径验收单独记录；构建通过不替代硬件验收。
+
+## NAND 团子分发
+
+公开构建输入为根目录 [`dango-skin/`](../../dango-skin/)，每个角色目录只包含生成后的
+`fox.bin` 和 `skin.json`。鸣潮 · 心月狐团子写入 NOR 的 `/system/skins/default.bin`；玄灵 · 月蚀、
+玄灵 · 常态、智谱团子分别安装到 NAND 的 `/data/skins/<id>/`，不占用 A/B 固件槽或 system 分区。
+构建和发布只读取这些生成产物，不依赖原图、提示词或私有制作工具。
+
+`app-pack skins dango-skin` 使用设备同一套清单解析器和图像解码器校验每个资源包。
+打包器将全部 BIN/JSON 放入 OTA 和全量两个 ZIP，并在 `manifest.json.nand_skins` 中
+记录版本、大小和 SHA-256。独立验证器重新检查归档内资源、清单 CRC 和哈希。
+
+发布 ZIP 解压后执行：
+
+```sh
+python3 -m pip install -r requirements.txt
+# 仅安装或更新 NAND 团子
+python3 install.py --port RUNTIME_PORT
+# 全量安装：设备先进入 ROM 下载模式
+python3 install.py --flash-port ROM_PORT --port RUNTIME_PORT
+```
+
+NOR 和 NAND 是两个独立介质。安装器完成 NOR 刷写并等待运行时 USB 就绪后，通过既有
+`skin-begin → file → skin-commit` 协议逐套写入 NAND。每套提交前由设备校验，
+保留其他用户文件及 `/data/skins/.selected`，不会自动更换当前团子。
+设备启动时的 NAND 挂载探测结束后才允许安装；探测期间安装器只轮询只读状态。
+NAND 未挂载时默认退出，只有显式增加 `--format-nand` 才会格式化未挂载的卷。
+该操作会擦除 NAND 数据，已挂载的卷不受此参数影响。
+
+无线 OTA 只取独立应用 BIN，保留已有 NAND 资源；需要更新团子资源时使用 ZIP 内的
+USB 安装器。默认狐狸及内置 Lua 应用的更新通过全量包交付。
 
 ## 本地验证与发布
 

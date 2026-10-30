@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/espressif/esp-video-components",
+  "commit": "cd6194c97c43d6997eee13faf9e4c2ac4cae0c26",
+  "license": "Apache-2.0",
+  "files": [
+    {
+      "path": "esp_cam_sensor/sensors/ov3640/private_include/ov3640_dvp_8bit_24Minput_640x480_yuv422_uyvy_30fps.h",
+      "sha256": "440cae0ece54074c6707e9e9e71945e3e70ad8fe285eb4462037b81b56023025"
+    },
+    {
+      "path": "esp_cam_sensor/sensors/sc101iot/private_include/sc101iot_dvp_8bit_20Minput_640x480_yuv422_uyvy_15fps.h",
+      "sha256": "6ae7e7d1449fb5bb5b071709dd722b352f0dd1e56e9e6c40dc0c78939275e5d5"
+    }
+  ],
+  "adaptation": "Rust pairs preserve table order, resolve SC101IOT UYVY=0x02, and omit the OV3640 zero-address tail sentinel. SC101IOT PCLK delay is applied separately as in the Mosaico BSP patch."
+}

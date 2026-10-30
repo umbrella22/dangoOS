@@ -14,6 +14,7 @@
 
 pub mod affect;
 pub mod brain;
+pub mod business;
 pub mod magnet;
 pub mod mood_light;
 pub mod personality;
@@ -21,7 +22,7 @@ pub mod runtime;
 
 pub use runtime::Runtime;
 
-/// The 18 expressions the behavior engines can ask for.
+/// Expressions the behavior engines can ask for, including business state.
 ///
 /// `Tired` and `Dying` are battery baselines: they replace the resting face,
 /// not a reaction. The fox has two more poses of its own (see
@@ -50,10 +51,15 @@ pub enum Expression {
     Peering,
     /// Sudden bright light: eyes squeezed shut, a paw shading them.
     Dazzled,
+    NetworkDisconnected,
+    NetworkConnected,
+    BluetoothDisconnected,
+    BluetoothConnected,
+    MusicPlaying,
 }
 
 impl Expression {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 23] = [
         Self::Idle,
         Self::Sleep,
         Self::Curious,
@@ -72,6 +78,11 @@ impl Expression {
         Self::Dying,
         Self::Peering,
         Self::Dazzled,
+        Self::NetworkDisconnected,
+        Self::NetworkConnected,
+        Self::BluetoothDisconnected,
+        Self::BluetoothConnected,
+        Self::MusicPlaying,
     ];
 }
 

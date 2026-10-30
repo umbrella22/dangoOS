@@ -16,12 +16,16 @@
 //! - [`storage`]: the `/system` and `/data` LittleFS mounts.
 
 pub mod battery;
+pub mod audio;
+pub mod camera;
 pub mod display;
 pub mod geometry;
 pub mod imu;
 pub mod libc;
 pub mod lvgl_port;
 pub mod memory;
+pub mod nand;
+pub mod radio;
 pub mod shared_i2c;
 pub mod storage;
 pub mod subboard;

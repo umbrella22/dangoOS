@@ -12,12 +12,17 @@
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use log::{info, warn};
 
 const MAGIC: u32 = 0x4D53_5031; // "MSP1"
+// #region debug-point C:classic-audio-routing-full-trap
+#[cfg(feature = "radio-hang-diagnostics")]
+const TEXT: usize = 1536;
+#[cfg(not(feature = "radio-hang-diagnostics"))]
 const TEXT: usize = 248;
+// #endregion
 
 #[repr(C)]
 struct Record {
@@ -63,6 +68,9 @@ impl Stage {
 }
 
 static CURRENT: AtomicU32 = AtomicU32::new(Stage::Running as u32);
+// A second panic, including an interrupt on the recording core, cannot borrow
+// the RTC record while the first panic formats its message and resets.
+static RECORDING: AtomicBool = AtomicBool::new(false);
 /// Stage of the previous boot's panic; `u32::MAX` when it did not panic.
 static LAST: AtomicU32 = AtomicU32::new(u32::MAX);
 
@@ -99,8 +107,13 @@ impl Write for Sink<'_> {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // SAFETY: the panicking core is the only one still running Rust code
-    // that touches RECORD (boot reads it before tasks start).
+    if RECORDING.swap(true, Ordering::AcqRel) {
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+    // SAFETY: RECORDING admits only one panicking context across both cores.
+    // Boot reads RECORD before either core starts concurrent tasks.
     let rec = unsafe { &mut *addr_of_mut!(RECORD) };
     // `count` is only meaningful while the record is uninitialised RAM at
     // power-on; cap it so garbage reads as "many".

@@ -2,7 +2,7 @@
 # Device runtime components and the host-side application packaging tool.
 members = ["crates/os", "crates/lua-engine", "crates/fs", "tools/app-pack"]
 resolver = "2"
-exclude = ["vendor/embassy-usb-synopsys-otg"]
+exclude = ["vendor/embassy-usb-synopsys-otg", "vendor/esp-wifi-sys-esp32s31", "vendor/esp-radio", "vendor/esp-radio-rtos-driver", "vendor/esp-bluedroid"]
 
 [workspace.package]
 version = "0.2.1"
@@ -26,42 +26,47 @@ rs_lvgl_ui = { version = "0.2.0", default-features = false, features = [
     "widget-image",
     "widget-msgbox",
     "widget-slider",
+    "widget-spinner",
     "widget-switch",
+    "widget-textarea",
+    "widget-keyboard",
     "font-montserrat-48",
 ] }
 log = "0.4"
 critical-section = "1"
-esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = [
+esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = [
     "esp32s31",
     "unstable",
 ] }
-esp-storage = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = [
+esp-storage = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = [
     "esp32s31",
 ] }
-esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = [
+esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = [
     "esp32s31",
 ] }
 # The PAC esp-hal itself uses, for blocks esp-hal does not drive yet (touch).
-esp32s31 = { version = "0.2", features = [
+esp32s31 = { version = "0.3", features = [
     "critical-section",
-], git = "https://github.com/esp-rs/esp-pacs", rev = "5cd68d2" }
-esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = [
+], git = "https://github.com/esp-rs/esp-pacs", rev = "5cb8c50" }
+esp-alloc = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = [
     "esp32s31",
 ] }
-esp-println = { version = "0.18", default-features = false, features = [
+esp-println = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", default-features = false, features = [
     "esp32s31",
     "log-04",
     "jtag-serial",
     "colors",
 ] }
-# esp-rtos 0.4.0 from the pinned esp-hal revision. Taking it from the esp-hal
-# repository (rather than crates.io) keeps esp-hal and esp-rom-sys at the exact
-# same revision: the registry esp-rtos links a second esp-rom-sys, which Cargo
-# rejects because both packages declare `links = "esp_rom_sys"`.
-esp-rtos = { version = "0.4.0", git = "https://github.com/esp-rs/esp-hal", rev = "bb239a0f4adc45b2571586c3ea55f56ecc712e00", features = [
+# Keep HAL, RTOS, PHY, radio and ROM bindings on one reviewed revision.
+# Mixing registry and git variants can link two incompatible esp_rom_sys crates.
+esp-rtos = { version = "0.4.0", git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = [
     "esp32s31",
     "embassy",
+    "esp-radio",
     "log-04",
+] }
+esp-radio = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = [
+    "esp32s31", "wifi", "ble", "coex", "unstable", "log-04",
 ] }
 embassy-executor = "0.10"
 embassy-time = "0.5"
@@ -75,3 +80,13 @@ codegen-units = 1
 [patch.crates-io]
 # Preserve the actual 0.4.0 source and local reconnect patches; terminate stale IN transfers on reset.
 embassy-usb-synopsys-otg = { path = "vendor/embassy-usb-synopsys-otg" }
+
+[patch."https://github.com/esp-rs/esp-wifi-sys.git"]
+# Pinned S31 blobs/bindings; build-only formatter namespace for Lua/newlib.
+esp-wifi-sys-esp32s31 = { path = "vendor/esp-wifi-sys-esp32s31" }
+
+[patch."https://github.com/esp-rs/esp-hal"]
+# S31 controller linked-list buffers require internal RAM even with a PSRAM heap.
+esp-radio = { path = "vendor/esp-radio" }
+# Keep native radio tasks, including the shared timer worker, on Core0.
+esp-radio-rtos-driver = { path = "vendor/esp-radio-rtos-driver" }

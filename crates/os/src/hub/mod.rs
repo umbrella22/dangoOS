@@ -14,6 +14,7 @@ pub mod push;
 pub mod registry;
 pub mod skins;
 pub mod snapshot;
+pub mod settings;
 pub mod transition;
 
 use countdown::Countdown;
@@ -35,6 +36,9 @@ pub fn reaches_fox_off_home(kind: &crate::behavior::affect::EventKind) -> bool {
             | EventKind::ModuleInserted(_)
             | EventKind::ModuleRemoved(_)
             | EventKind::Activity(_)
+            | EventKind::NetworkConnection(_)
+            | EventKind::BluetoothConnection(_)
+            | EventKind::MusicPlayback(_)
             | EventKind::KeyUp
             | EventKind::MagneticRelease
     )
@@ -49,11 +53,12 @@ pub enum AppId {
     Settings,
     Sensors,
     Timer,
+    Camera,
     Lua(u8),
 }
 
 impl AppId {
-    pub const NATIVE: [AppId; 3] = [AppId::Settings, AppId::Sensors, AppId::Timer];
+    pub const NATIVE: [AppId; 4] = [AppId::Settings, AppId::Sensors, AppId::Timer, AppId::Camera];
 
     /// Name of a native app under its icon and in the page title.
     pub const fn title(self) -> &'static str {
@@ -61,6 +66,7 @@ impl AppId {
             AppId::Settings => "设置",
             AppId::Sensors => "传感器",
             AppId::Timer => "计时器",
+            AppId::Camera => "相机",
             AppId::Lua(_) => "Lua",
         }
     }
@@ -71,6 +77,7 @@ impl AppId {
             AppId::Settings => "app-settings",
             AppId::Sensors => "app-sensors",
             AppId::Timer => "app-timer",
+            AppId::Camera => "app-camera",
             AppId::Lua(_) => "app-lua",
         }
     }
@@ -112,7 +119,7 @@ impl Page {
     }
 }
 
-/// User settings. Not persisted yet: a reboot restores the defaults.
+/// User preferences persisted by the settings service on the data volume.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// Panel brightness, percent `MIN_BRIGHTNESS..=100`.
@@ -121,6 +128,13 @@ pub struct Settings {
     pub lights: bool,
     /// The vibration motor.
     pub haptics: bool,
+    pub camera_mirror: bool,
+    pub jpeg_quality: u8,
+    pub audio_volume: u8,
+    pub audio_muted: bool,
+    pub auto_update_check: bool,
+    pub update_proxy_enabled: bool,
+    pub update_proxy: Option<crate::update::HttpProxy>,
 }
 
 impl Settings {
@@ -133,6 +147,13 @@ impl Settings {
             brightness: Self::DEFAULT_BRIGHTNESS,
             lights: true,
             haptics: true,
+            camera_mirror: false,
+            jpeg_quality: 85,
+            audio_volume: 50,
+            audio_muted: false,
+            auto_update_check: true,
+            update_proxy_enabled: false,
+            update_proxy: None,
         }
     }
 
@@ -163,6 +184,9 @@ pub struct Hub {
     pub snapshot: SystemSnapshot,
     pub countdown: Countdown,
     pub about: About,
+    pub camera: crate::camera::Snapshot,
+    pub radio: crate::radio::Snapshot,
+    pub settings_page: settings::Page,
     /// The clock the views read, ms (same clock as [`Countdown`]).
     pub now_ms: u64,
 }
@@ -180,6 +204,9 @@ impl Hub {
             settings: Settings::new(),
             snapshot: SystemSnapshot::new(),
             countdown: Countdown::new(),
+            camera: crate::camera::Snapshot::new(),
+            radio: crate::radio::Snapshot::new(),
+            settings_page: settings::Page::Root,
             about: About {
                 uptime_s: 0,
                 free_kib: 0,

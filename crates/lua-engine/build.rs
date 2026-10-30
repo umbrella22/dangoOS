@@ -213,6 +213,7 @@ fn main() {
         .include(root.join("vendor/stb"))
         .file(png.join("lodepng.c"))
         .file(root.join("csrc/mosaico_image.c"))
+        .file(root.join("csrc/mosaico_jpeg_encode.c"))
         .file(root.join("csrc/mosaico_lvgl.c"));
     modules.compile("mosaico_lua_modules");
 

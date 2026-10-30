@@ -1,6 +1,6 @@
 # os：ESP32-S31 固件与系统库
 
-面向 ESP-Mosaico v1.2 狐狸团子终端的固件与主机可测试系统库。
+面向 ESP-Mosaico v1.2 团子终端的固件与主机可测试系统库。
 `src/lib.rs` 提供 `os` 库，使用 `no_std + alloc`，承载不直接访问硬件的逻辑，
 可以在主机运行 `cargo test`。`src/main.rs` 是 `os-fw` 固件入口，编排驱动和
 Embassy 任务。完整目录见 [源码结构](../../docs/architecture/project-structure.md)。

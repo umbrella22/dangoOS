@@ -236,3 +236,21 @@ fn c_entry_points_reach_the_installed_vfs() {
     let nested = global::with(|_| Ok(global::with(|_| Ok(()))));
     assert_eq!(nested, Ok(Err(Errno::BUSY)));
 }
+
+#[test]
+fn aliases_share_descriptors_and_atomic_rename_without_double_mounting() {
+    let mut v = two_mounts();
+    v.alias("nand", "data").unwrap();
+    assert_eq!(v.alias("nand", "data"), Err(Errno::EXIST));
+    v.write_file("/data/shared.tmp", b"same media").unwrap();
+    v.rename("/nand/shared.tmp", "/data/shared.bin").unwrap();
+    let fd = v.open("/nand/shared.bin", OpenFlags::READ).unwrap();
+    let mut buf = [0; 10];
+    assert_eq!(v.read(fd, &mut buf).unwrap(), 10);
+    v.close(fd).unwrap();
+    assert_eq!(&buf, b"same media");
+    assert_eq!(v.read_file("/data/shared.bin").unwrap(), buf);
+    assert_eq!(v.space("/nand"), v.space("/data"));
+    assert_eq!(v.rename("/nand/shared.bin", "/system/shared.bin"), Err(Errno::XDEV));
+    assert!(v.read_dir("/").unwrap().iter().any(|e| e.name == "nand"));
+}

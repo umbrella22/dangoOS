@@ -85,25 +85,21 @@ impl Cst9220 {
 
     /// 读一份报告。错误单独返回，避免制造虚假的 PointerReleased。
     ///
-    /// 报告读是一笔独立事务（写寄存器地址 + 裸读），ACK 是下一笔事务。
+    /// 地址写入、裸读和 ACK 保持独立事务，但共用一次总线租约。
     pub async fn poll(&mut self) -> Result<TouchState, TouchError> {
         let mut report = [0u8; REPORT_LEN];
-        self.read_reg(REG_REPORT, &mut report)
-            .await
-            .map_err(|e| TouchError::I2c {
-                stage: "report",
-                error: e,
-            })?;
-
-        // 释放当前帧: 非 legacy 协议读后必须 ACK，否则控制器保持报告到内部超时
-        if self.ack_reports {
-            self.write_reg_raw(REG_REPORT, &[REPORT_ACK])
-                .await
-                .map_err(|e| TouchError::I2c {
-                    stage: "report_ack",
-                    error: e,
-                })?;
-        }
+        super::shared_i2c::touch_report_async(
+            self.addr,
+            REG_REPORT,
+            &mut report,
+            self.ack_reports.then_some(REPORT_ACK),
+        )
+        .await
+        .unwrap_or(Err(I2cError::FifoExceeded))
+        .map_err(|e| TouchError::I2c {
+            stage: "report",
+            error: e,
+        })?;
 
         protocol::decode(&report, crate::board::LCD_WIDTH, crate::board::LCD_HEIGHT)
             .map_err(TouchError::InvalidReport)

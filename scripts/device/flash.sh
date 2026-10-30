@@ -14,7 +14,7 @@ PORT="${1:?port required}"
 NAME="${2:-os-fw}"
 ELF=target/riscv32imafc-unknown-none-elf/release/os-fw
 IMAGE="target/${NAME}.bin"
-IMAGE_MAX=$((0x300000))
+IMAGE_MAX=$((0x600000))
 cargo fw --offline
 espflash save-image --chip esp32s31 --flash-size 16mb --flash-mode dio --flash-freq 40mhz "$ELF" "$IMAGE"
 python3 - "$IMAGE" <<'PY'
@@ -26,7 +26,7 @@ PY
 shasum -a 256 "$IMAGE"
 SIZE=$(wc -c < "$IMAGE" | tr -d ' ')
 if [ "$SIZE" -gt "$IMAGE_MAX" ]; then
-    echo "error: image $SIZE exceeds 3 MiB slot ($IMAGE_MAX)" >&2
+    echo "error: image $SIZE exceeds 6 MiB slot ($IMAGE_MAX)" >&2
     exit 1
 fi
 echo "ROM recovery: slot zero at 0x210000, $SIZE bytes; otadata selection is unchanged."

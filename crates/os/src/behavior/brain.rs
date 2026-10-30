@@ -19,7 +19,7 @@ pub const CALLBACK_HOOKS: u32 = 2_000; // 200,000 instructions, across slices/pc
 pub const CALLBACK_US: u64 = 20_000;
 const COMPLETE: u32 = 0xB001;
 const IDLE: u32 = 0xB002;
-const NAMES: [&str; 18] = [
+const NAMES: [&str; 23] = [
     "Idle",
     "Sleep",
     "Curious",
@@ -38,8 +38,13 @@ const NAMES: [&str; 18] = [
     "Dying",
     "Peering",
     "Dazzled",
+    "NetworkDisconnected",
+    "NetworkConnected",
+    "BluetoothDisconnected",
+    "BluetoothConnected",
+    "MusicPlaying",
 ];
-const POSES: [&str; 20] = [
+const POSES: [&str; 25] = [
     "Idle",
     "Sleep",
     "Curious",
@@ -60,6 +65,11 @@ const POSES: [&str; 20] = [
     "Charging",
     "Peering",
     "Dazzled",
+    "NetworkDisconnected",
+    "NetworkConnected",
+    "BluetoothDisconnected",
+    "BluetoothConnected",
+    "MusicPlaying",
 ];
 const HAPTICS: [HapticPattern; 13] = [
     HapticPattern::Panic,
@@ -210,8 +220,14 @@ impl Input {
                         c.push_number(n as f64);
                         Ret::Values(5)
                     }
-                    EventKind::Presence(value) => {
-                        c.push_str("Presence");
+                    EventKind::Presence(value) | EventKind::NetworkConnection(value)
+                    | EventKind::BluetoothConnection(value) | EventKind::MusicPlayback(value) => {
+                        c.push_str(match e.kind {
+                            EventKind::Presence(_) => "Presence",
+                            EventKind::NetworkConnection(_) => "NetworkConnection",
+                            EventKind::BluetoothConnection(_) => "BluetoothConnection",
+                            _ => "MusicPlayback",
+                        });
                         c.push_bool(value);
                         Ret::Values(5)
                     }
@@ -676,6 +692,32 @@ mod tests {
         assert_eq!(brain.output().unwrap().expression, Expression::Curious);
     }
     #[test]
+    fn async_commit_failure_or_cancellation_keeps_active_vm_and_output() {
+        use core::{future::Future, pin::pin, task::{Context, Poll, Waker}};
+        let old = "return {on_event=function()end,tick=function()fox.set_expression('Happy')end}";
+        let next = "return {on_event=function()end,tick=function()fox.set_expression('Curious')end}";
+        let mut brain = Controller::new(old, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let mut change = pin!(brain.replace_with_commit_async(next, 1, async || Err("disk full".into())));
+            assert!(matches!(change.as_mut().poll(&mut cx), Poll::Ready(Err(_))));
+        }
+        assert_eq!(brain.source(), old);
+        assert_eq!(brain.output().unwrap().expression, Expression::Happy);
+        {
+            let mut change = pin!(brain.replace_with_commit_async(next, 2, async || core::future::pending().await));
+            assert!(change.as_mut().poll(&mut cx).is_pending());
+        }
+        assert_eq!(brain.source(), old);
+        assert_eq!(brain.output().unwrap().expression, Expression::Happy);
+        {
+            let mut change = pin!(brain.replace_with_commit_async(next, 3, async || Ok(())));
+            assert!(matches!(change.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+        }
+        assert_eq!(brain.source(), next);
+        assert_eq!(brain.output().unwrap().expression, Expression::Curious);
+    }
+    #[test]
     fn restricted_gc_and_string_colon_paths_cannot_run_unbounded_code() {
         let source = r#"
             local mt={__gc=function()while true do end end}
@@ -749,6 +791,12 @@ mod tests {
             LightLevel(255),
             Presence(false),
             Presence(true),
+            NetworkConnection(true),
+            NetworkConnection(false),
+            BluetoothConnection(true),
+            BluetoothConnection(false),
+            MusicPlayback(true),
+            MusicPlayback(false),
             KeyDown,
             KeyUp,
             ButtonShort,
@@ -1007,6 +1055,18 @@ impl Controller {
     pub fn source(&self) -> &str {
         &self.source
     }
+    /// Keep candidate VM/output private across an asynchronous durable commit.
+    pub async fn replace_with_commit_async(
+        &mut self, source: &str, now: u64,
+        commit: impl AsyncFnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let candidate = BrainVm::new(source, now, self.allocator, self.clock)?;
+        commit().await?;
+        self.active = Some(candidate);
+        self.source = source.into();
+        self.error = None;
+        Ok(())
+    }
     pub fn active(&self) -> bool {
         self.active.is_some()
     }
@@ -1086,6 +1146,9 @@ fn sensor_json(e: SensorEvent) -> String {
         EventKind::LightLevel(v) => format!("{{\"type\":\"LightLevel\",\"args\":[{v}]}}"),
         EventKind::BatteryLevel(v) => format!("{{\"type\":\"BatteryLevel\",\"args\":[{v}]}}"),
         EventKind::Presence(v) => format!("{{\"type\":\"Presence\",\"args\":[{v}]}}"),
+        EventKind::NetworkConnection(v) => format!("{{\"type\":\"NetworkConnection\",\"args\":[{v}]}}"),
+        EventKind::BluetoothConnection(v) => format!("{{\"type\":\"BluetoothConnection\",\"args\":[{v}]}}"),
+        EventKind::MusicPlayback(v) => format!("{{\"type\":\"MusicPlayback\",\"args\":[{v}]}}"),
         EventKind::ModuleInserted(v) => {
             format!("{{\"type\":\"ModuleInserted\",\"args\":[\"{v:?}\"]}}")
         }

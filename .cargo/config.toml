@@ -6,7 +6,7 @@ fw-run = "run -p os --bin os-fw --features firmware --release --target riscv32im
 
 [target.riscv32imafc-unknown-none-elf]
 runner = "espflash flash --monitor --chip esp32s31"
-rustflags = ["-C", "link-arg=-Tlinkall.x"]
+rustflags = ["-C", "link-arg=-Tmosaico-link.x"]
 
 [env]
 ESP_LOG = "info"

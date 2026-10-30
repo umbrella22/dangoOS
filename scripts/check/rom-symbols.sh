@@ -7,8 +7,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-ROM=$(ls -d ~/.cargo/git/checkouts/esp-hal-*/*/esp-rom-sys/ld/esp32s31/rom 2>/dev/null | head -1)
-[ -n "$ROM" ] || { echo "esp-rom-sys ROM scripts not found" >&2; exit 2; }
+# Resolve the package used by this firmware. Several HAL revisions may coexist
+# in Cargo's cache; choosing the first directory can silently check an old ROM.
+ROM=$(cargo metadata --locked --offline --format-version 1 \
+    --filter-platform riscv32imafc-unknown-none-elf | python3 -c '
+import json, pathlib, sys
+packages = [p for p in json.load(sys.stdin)["packages"] if p["name"] == "esp-rom-sys"]
+if len(packages) != 1:
+    sys.exit("expected one resolved esp-rom-sys package")
+print(pathlib.Path(packages[0]["manifest_path"]).parent / "ld/esp32s31/rom")
+')
+[ -d "$ROM" ] || { echo "resolved esp-rom-sys ROM scripts not found" >&2; exit 2; }
 NM=${NM:-$(command -v riscv32-esp-elf-nm || echo ~/esp-tools/riscv32-esp-elf/bin/riscv32-esp-elf-nm)}
 BUILD=target/riscv32imafc-unknown-none-elf/release/build
 
@@ -16,7 +25,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 sed -nE 's/^[[:space:]]*(PROVIDE[[:space:]]*\([[:space:]]*)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\2/p' \
     "$ROM"/*.ld | sort -u > "$tmp/rom"
-libs=$(ls "$BUILD"/fs-*/out/*.a "$BUILD"/lua-engine-*/out/*.a 2>/dev/null || true)
+libs=$(ls "$BUILD"/fs-*/out/*.a "$BUILD"/lua-engine-*/out/*.a "$BUILD"/esp-bluedroid-*/out/*.a 2>/dev/null || true)
 [ -n "$libs" ] || { echo "no C libraries under $BUILD; run cargo fw first" >&2; exit 2; }
 for a in $libs; do "$NM" --defined-only -g "$a" 2>/dev/null | awk 'NF==3{print $3}'; done \
     | sort -u > "$tmp/ours"

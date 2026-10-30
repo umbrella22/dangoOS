@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "normal",
+  "name": "玄灵 · 常态",
+  "version": "2026-10-29-business-family-v1",
+  "canvas": [
+    352,
+    336
+  ],
+  "binary_bytes": 687795,
+  "binary_crc32": 3928808474
+}

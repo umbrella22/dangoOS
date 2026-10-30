@@ -10,6 +10,11 @@
 //!   └─ every 250 ms:  left/right slot EEPROM probe   -> module insert/remove
 //! ```
 //!
+//! Optional `imu-irq int1|int2` diagnostics map the BMI FIFO watermark to the
+//! selected pin. GPIO2 edges then trigger a source-checked FIFO drain, with a
+//! 100 ms fallback. Other sensors stay on the original ticker. Default is off
+//! until the board's connected BMI interrupt pin is verified on hardware.
+//!
 //! The task owns the sensor *protocol*, not the bus: every transaction goes
 //! through [`crate::drivers::shared_i2c`], which serialises I2C0 with the touch
 //! task and enforces the 100 ms per-transaction timeout. The subboard EEPROM
@@ -42,12 +47,15 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use embassy_futures::select::{select, Either};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_time::{Duration, Ticker};
+use esp_hal::gpio::Input;
 use log::{info, warn};
 use os::behavior::affect::{EventKind, EventSource, SensorEvent};
 use os::behavior::magnet::{MagReading, MagneticClassifier, MagneticEvent};
 use os::behavior::mood_light::Side;
+use os::imu_interrupt::{DrainPolicy, Route, WATERMARK};
 
 use crate::drivers::battery::Bq27220;
 use crate::drivers::imu::{self, Bmi270, Bmm150, ImuSample, MagSample};
@@ -99,8 +107,40 @@ const STATS_PERIOD_MS: u64 = 1_000;
 /// after boot still sees the bus/address result.
 const SCAN_SUMMARY_PERIOD_MS: u64 = 10_000;
 
+// The sensor task is the sole register owner. Requests are last-wins desired
+// configuration; USB reports requested separately from applied/read-back state.
+static IRQ_REQUESTED: AtomicU32 = AtomicU32::new(0);
+static IRQ_REQUEST_REV: AtomicU32 = AtomicU32::new(0);
+static IRQ_APPLIED_REV: AtomicU32 = AtomicU32::new(0);
+static IRQ_APPLIED: AtomicU32 = AtomicU32::new(254); // 254 init, 255 unavailable, 3 fault
+static IRQ_EDGES: AtomicU32 = AtomicU32::new(0);
+static IRQ_SOURCES: AtomicU32 = AtomicU32::new(0);
+static IRQ_FALLBACKS: AtomicU32 = AtomicU32::new(0);
+static IRQ_ERRORS: AtomicU32 = AtomicU32::new(0);
+static IRQ_LOW: AtomicU32 = AtomicU32::new(0);
+static IRQ_STATUS: AtomicU32 = AtomicU32::new(0);
+
+pub fn irq_command(route: Option<Route>) -> alloc::string::String {
+    if let Some(route) = route {
+        if IRQ_APPLIED.load(Ordering::Acquire) >= 254 {
+            return "@err imu-irq IMU unavailable or initializing".into();
+        }
+        IRQ_REQUESTED.store(route as u32, Ordering::Release);
+        let revision = IRQ_REQUEST_REV
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        return alloc::format!("@ok imu-irq requested={} rev={revision}", route.name());
+    }
+    alloc::format!("@ok imu-irq-status req={} applied={} rev={}/{} edges={} fwm={} fb={} err={} low={} raw={:04x}",
+        IRQ_REQUESTED.load(Ordering::Acquire),IRQ_APPLIED.load(Ordering::Acquire),
+        IRQ_REQUEST_REV.load(Ordering::Acquire),IRQ_APPLIED_REV.load(Ordering::Acquire),
+        IRQ_EDGES.load(Ordering::Relaxed),IRQ_SOURCES.load(Ordering::Relaxed),IRQ_FALLBACKS.load(Ordering::Relaxed),
+        IRQ_ERRORS.load(Ordering::Relaxed),IRQ_LOW.load(Ordering::Relaxed),IRQ_STATUS.load(Ordering::Relaxed))
+}
+
 #[embassy_executor::task]
-pub async fn sensor_task(mut subboard: Subboard) {
+pub async fn sensor_task(mut subboard: Subboard, mut gpio2: Input<'static>) {
+    if !super::battery::wait_boot().await { return; }
     info!(
         "sensor_task: IMU 50 Hz, BMM150 25 Hz poll, slot {} ms scan (queue={})",
         subboard::SCAN_PERIOD_MS,
@@ -123,6 +163,7 @@ pub async fn sensor_task(mut subboard: Subboard) {
     }
 
     let mut mags = Bmm150::probe_all().await;
+    IRQ_APPLIED.store(if imu.is_some() { 0 } else { 255 }, Ordering::Release);
     for slot in 0..mags.len() {
         let failed = match &mut mags[slot] {
             Some(device) => match device.configure().await {
@@ -195,31 +236,103 @@ pub async fn sensor_task(mut subboard: Subboard) {
     let mut imu_batch = [ImuSample::default(); imu::FIFO_MAX_FRAMES];
     let mut imu_batch_max = 0usize;
     let mut last_imu_at = 0u64;
+    let mut irq_route = Route::Off;
+    let mut last_irq_request = 0;
+    let mut irq_drain = DrainPolicy::new();
 
     loop {
-        ticker.next().await;
+        // A held shared line is serviced on the normal ticker, not a ready
+        // level future that could spin forever. GPIO edges only schedule work.
+        let on_tick = if irq_route != Route::Off && !gpio2.is_low() {
+            match select(ticker.next(), gpio2.wait_for_falling_edge()).await {
+                Either::First(()) => true,
+                Either::Second(()) => {
+                    IRQ_EDGES.fetch_add(1, Ordering::Relaxed);
+                    false
+                }
+            }
+        } else {
+            ticker.next().await;
+            true
+        };
+        let revision = IRQ_REQUEST_REV.load(Ordering::Acquire);
+        let requested = IRQ_REQUESTED.load(Ordering::Acquire);
+        if revision != last_irq_request {
+            last_irq_request = revision;
+            let target = match requested {
+                1 => Route::Int1,
+                2 => Route::Int2,
+                _ => Route::Off,
+            };
+            if let Some(device) = &mut imu {
+                if device.configure_interrupt(target).await.is_ok() {
+                    irq_route = target;
+                    IRQ_APPLIED.store(target as u32, Ordering::Release);
+                } else {
+                    // Best-effort unmap; retain a fault receipt even if cleanup
+                    // fails. Normal polling continues without trusting the pin.
+                    let _ = device.configure_interrupt(Route::Off).await;
+                    irq_route = Route::Off;
+                    IRQ_APPLIED.store(3, Ordering::Release);
+                    IRQ_ERRORS.fetch_add(1, Ordering::Relaxed);
+                }
+                IRQ_APPLIED_REV.store(revision, Ordering::Release);
+            }
+        }
         let loop_start_us = now_us();
-        late_us = loop_start_us.saturating_sub(next_tick_us);
+        late_us = if on_tick {
+            loop_start_us.saturating_sub(next_tick_us)
+        } else {
+            0
+        };
         if late_us > late_max_us {
             late_max_us = late_us;
         }
-        if late_us >= tick_period_us {
+        if on_tick && late_us >= tick_period_us {
             // Count one stall episode, not every catch-up iteration: `Ticker`
             // fires immediately until it is back on the grid.
             if !tick_late_active {
                 missed_ticks = missed_ticks.saturating_add((late_us / tick_period_us) as u32);
                 tick_late_active = true;
             }
-        } else {
+        } else if on_tick {
             tick_late_active = false;
         }
         // Follow the ideal grid exactly like `Ticker::expires_at`; no resync,
         // so the reported lateness stays comparable across iterations.
-        next_tick_us = next_tick_us.saturating_add(tick_period_us);
-        tick = tick.wrapping_add(1);
+        if on_tick {
+            next_tick_us = next_tick_us.saturating_add(tick_period_us);
+            tick = tick.wrapping_add(1);
+        }
 
         // ---- IMU: drain the BMI270 FIFO (every sample at the sensor ODR) ----
-        if let Some(device) = &mut imu {
+        let mut irq_status = 0;
+        let irq_low = gpio2.is_low();
+        IRQ_LOW.store(irq_low as u32, Ordering::Relaxed);
+        if irq_route != Route::Off && (!on_tick || irq_low) {
+            if let Some(device) = &imu {
+                match device.interrupt_status().await {
+                    Ok(status) => {
+                        irq_status = status;
+                        IRQ_STATUS.store(status as u32, Ordering::Relaxed);
+                        if status & WATERMARK != 0 {
+                            IRQ_SOURCES.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    Err(_) => {
+                        IRQ_ERRORS.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+        if let Some(device) = imu
+            .as_mut()
+            .filter(|_| irq_drain.due(now_ms(), irq_route != Route::Off, irq_status))
+        {
+            if irq_route != Route::Off && irq_status & WATERMARK == 0 {
+                IRQ_FALLBACKS.fetch_add(1, Ordering::Relaxed);
+            }
+            irq_drain.drained(now_ms());
             let read_started_us = now_us();
             let result = device.read_all(&mut imu_batch).await;
             if result.is_err() {
@@ -297,6 +410,12 @@ pub async fn sensor_task(mut subboard: Subboard) {
                     imu_errors = imu_errors.saturating_add(1);
                 }
             }
+        }
+
+        if !on_tick {
+            // IRQ work must not accelerate module/magnet/battery polling.
+            store_lua_snapshot(hardware);
+            continue;
         }
 
         // ---- BMM150: 25 Hz poll, one event only on a classified edge ----
@@ -469,6 +588,7 @@ pub async fn sensor_task(mut subboard: Subboard) {
             next_battery_ms = now.saturating_add(BATTERY_PERIOD_MS);
         }
 
+        subboard.service_camera();
         // ---- Expansion slots: 250 ms presence scan ----
         if now >= next_scan_ms {
             for change in subboard.scan().await.into_iter().flatten() {

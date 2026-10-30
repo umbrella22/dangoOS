@@ -22,8 +22,27 @@ const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 
 
 /// Decode `img` into a `stride`-wide index buffer at (`x0`, `y0`), clipped,
 /// skipping transparent runs.
-fn stamp(buf: &mut [u8], stride: usize, rows: usize, img: &Img, skin: &Skin, x0: i32, y0: i32) {
+fn stamp(buf: &mut [u8], stride: usize, rows: usize, img: &Img, skin: &Skin, x0: i32, y0: i32, decoded: &mut Vec<u8>) {
     let rle = &skin.blob()[img.off as usize..img.off as usize + img.len as usize];
+    if skin.indexed_zlib() {
+        // Reuse one image-sized buffer. All streams and palette indices were
+        // checked at load; the package remains immutable throughout rendering.
+        decoded.resize(img.w as usize * img.h as usize, TRANSPARENT);
+        skin.decode_indexed(img, decoded);
+        for row in 0..img.h as usize {
+            let y = y0 + row as i32;
+            if y < 0 || y as usize >= rows { continue; }
+            let start = row * img.w as usize;
+            for x in 0..img.w as usize {
+                let px = decoded[start + x];
+                let dx = x0 + x as i32;
+                if px != TRANSPARENT && dx >= 0 && (dx as usize) < stride {
+                    buf[y as usize * stride + dx as usize] = px;
+                }
+            }
+        }
+        return;
+    }
     let w = img.w as i32;
     let mut i = 0;
     for row in 0..img.h as i32 {
@@ -50,6 +69,7 @@ fn stamp(buf: &mut [u8], stride: usize, rows: usize, img: &Img, skin: &Skin, x0:
 pub struct FoxRenderer {
     idx: Vec<u8>,
     scratch: Vec<u8>,
+    decoded: Vec<u8>,
     signature: u64,
     skin: Option<Rc<Skin>>,
     /// Frames that reused the composed index buffer.
@@ -61,6 +81,7 @@ impl FoxRenderer {
         Self {
             idx: vec![0; PIXELS],
             scratch: Vec::new(),
+            decoded: Vec::new(),
             signature: 0,
             skin: None,
             reused: 0,
@@ -82,7 +103,13 @@ impl FoxRenderer {
         self.signature = sig;
         self.skin = Some(Rc::clone(&scene.skin));
         let pose = scene.skin.pose(scene.pose);
-        stamp(&mut self.idx, W, H, &pose.base, &scene.skin, 0, 0);
+        if scene.skin.indexed_zlib() {
+            // Base poses are validated opaque and canvas-sized: inflate
+            // directly into the composition buffer, with no second canvas.
+            scene.skin.decode_indexed(&pose.base, &mut self.idx);
+        } else {
+            stamp(&mut self.idx, W, H, &pose.base, &scene.skin, 0, 0, &mut self.decoded);
+        }
         for l in scene.under.iter() {
             self.layer_into_idx(l, &scene.skin);
         }
@@ -99,13 +126,14 @@ impl FoxRenderer {
                 skin,
                 img.x as i32 + l.dx as i32,
                 img.y as i32 + l.dy as i32,
+                &mut self.decoded,
             );
             return;
         }
         let (w, h) = (img.w as usize, img.h as usize);
         self.scratch.clear();
         self.scratch.resize(w * h, TRANSPARENT);
-        stamp(&mut self.scratch, w, h, img, skin, 0, 0);
+        stamp(&mut self.scratch, w, h, img, skin, 0, 0, &mut self.decoded);
         let s = l.scale_q8.max(16) as i32;
         let nw = (w as i32 * s + 128) >> 8;
         let nh = (h as i32 * s + 128) >> 8;
@@ -193,6 +221,7 @@ impl FoxRenderer {
                 &scene.skin,
                 0,
                 0,
+                &mut self.decoded,
             );
             for sy in 0..img.h as i32 {
                 let y = y0 + sy;

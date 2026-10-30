@@ -212,6 +212,12 @@ impl ImageVerifier {
         }
         Ok(())
     }
+    pub fn version(&self) -> Option<&str> {
+        if !self.appdesc { return None; }
+        let version=&self.descriptor[16..48];
+        let end=version.iter().position(|b|*b==0)?;
+        core::str::from_utf8(&version[..end]).ok()
+    }
     pub fn ab_layout(&self) -> bool {
         self.ab_layout
     }

@@ -1,0 +1,51 @@
+{
+  "repository": "https://github.com/esp-rs/esp-hal",
+  "revision": "33f9b0f7c36ac47edbd015808b5399090fc1f9b6",
+  "package": "esp-radio-rtos-driver",
+  "files_before_patch": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "379edb5373e9d112ecf4d8aae06d4e4a2b17119f46bd70441642cbf7971c90ae"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "4df3ba16456285beff1b32db0fe4c88d97b55f93ee957e9aa190525f2d721c02"
+    },
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "2bf4fe1a37e545c3b4f7bfaa2326c99f153af32ef8d112fbaa4bff7fb2a575bd"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "7b2165c6740592038d887d51d56d122b0b563337a7756b424f19eecc7a936ef1"
+    },
+    {
+      "path": "README.md",
+      "sha256": "e188402abce3a020b78fad210cbb4948b10f181014880e43b8bcb2caf5913bf6"
+    },
+    {
+      "path": "src/fmt.rs",
+      "sha256": "fdbf6e46b04a608d2b1aaf3788a6ea6a616f89fc063be96261506e660065b18b"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c47a53e37c486c5385dcfdbce4d8e672586feeae0a133105a39fce1b5f314354"
+    },
+    {
+      "path": "src/queue.rs",
+      "sha256": "f192e3f207d9c7b65562f669bbe7d435d03e141773958f98244224558e02a41c"
+    },
+    {
+      "path": "src/semaphore.rs",
+      "sha256": "1e4443ceefa800f501841e5342d6d6e4a55da462dd39b170a4f44017e3a3bb0d"
+    },
+    {
+      "path": "src/timer.rs",
+      "sha256": "a49611fe7ba4f662b55a64c9f4ad5d5b98929e2088a0205c5c706b93af195599"
+    },
+    {
+      "path": "src/wait_queue.rs",
+      "sha256": "c2b8ec194b32360490b17ff99828ef5a54f362c84db040097dcb460b9761a1a5"
+    }
+  ]
+}

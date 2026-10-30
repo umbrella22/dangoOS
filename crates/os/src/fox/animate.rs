@@ -396,6 +396,12 @@ impl FoxAnimator {
                     }
                 }
             }
+            FoxPose::MusicPlaying => {
+                dx = round(3.0 * sin(TAU * phase(t, 1200, 0)));
+                dy = -round(3.0 * (0.5 + 0.5 * sin(TAU * phase(t, 600, 0))));
+            }
+            FoxPose::NetworkDisconnected | FoxPose::NetworkConnected
+            | FoxPose::BluetoothDisconnected | FoxPose::BluetoothConnected => {}
             FoxPose::Satisfied => {
                 dx = round(2.0 * sin(TAU * phase(t, 3600, 0)));
             }

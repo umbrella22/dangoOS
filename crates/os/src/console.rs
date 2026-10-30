@@ -37,6 +37,7 @@ use crate::tasks::{apps, input, ui};
 const LOG_LINE_BYTES: usize = 160;
 /// Text capacity leaves room for the two-byte CRLF terminator.
 const LOG_TEXT_BYTES: usize = LOG_LINE_BYTES - 2;
+const _: () = assert!(os::telemetry::power::STATUS_LINE_BYTES <= LOG_TEXT_BYTES);
 /// Bounded log queue. New records are dropped when the CDC pump is behind.
 const LOG_CHANNEL_DEPTH: usize = 96;
 /// How often the console pump reports connection state and drop counters.
@@ -225,6 +226,13 @@ pub async fn pump<'a>(class: &mut Sender<'a, Driver<'a>>) {
         let _ = usb_write!(class, &status.bytes[..status.len as usize]);
 
         loop {
+            // Closing a CDC client drops DTR without disabling the USB endpoint.
+            // Wake the bounded standby service on either form of disconnect.
+            if !class.dtr() {
+                CONNECTED.store(false, Ordering::Relaxed);
+                crate::tasks::power::wake();
+                break;
+            }
             #[cfg(feature = "usb-session-diagnostics")]
             if USB_DIAG_RX_GATE.take_ready() {
                 if let Some(previous) = os::telemetry::usb_session::take_previous() {
@@ -332,13 +340,30 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
     let mut session = Session::new();
     let mut ota = crate::ota_runtime::DeviceUpdater::new();
     let mut no_mounts = ::fs::Vfs::new();
+    let mut pending_packet = None;
     loop {
         usb_trace!(RxWait, 0);
         class.wait_connection().await;
         usb_trace!(RxReady, 0);
+        while !class.dtr() {
+            Timer::after_millis(20).await;
+        }
         loop {
+            // Closing a CDC client does not disable the USB OUT endpoint.
+            // Observe DTR even when no further packet arrives, so a partial
+            // file cannot consume commands from the next client as its body.
+            if !class.dtr() {
+                break;
+            }
             usb_trace!(RxRead, 0);
-            let n = match class.read_packet(&mut buf).await {
+            let result = match pending_packet.take() {
+                Some(n) => Ok(n),
+                None => match select(class.read_packet(&mut buf), Timer::after_millis(20)).await {
+                    Either::First(result) => result,
+                    Either::Second(()) => continue,
+                },
+            };
+            let n = match result {
                 Ok(n) => {
                     usb_trace!(RxPacket, n as u32);
                     #[cfg(feature = "usb-session-diagnostics")]
@@ -358,6 +383,7 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
             // command boundary before processing the packet's remaining bytes.
             let mut consumed = 0;
             while consumed < n {
+                session.set_ota_active(crate::ota_runtime::active() || crate::tasks::update::busy());
                 session.set_management_busy(apps::is_managing());
                 let mut effects = Vec::new();
                 usb_trace!(Feed, (n - consumed) as u32);
@@ -375,18 +401,148 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                 };
                 usb_trace!(Fed, consumed as u32);
                 for effect in effects {
+                    let passive = matches!(
+                        effect,
+                        Effect::Power(_)
+                            | Effect::NandInfo
+                            | Effect::NandRead(_)
+                            | Effect::NandStatus
+                            | Effect::ImuIrq(None)
+                    ) || matches!(&effect, Effect::Audio(os::audio::Command::Status)) || matches!(&effect, Effect::Radio(command) if command.status())
+                        || matches!(&effect, Effect::Update(os::update::Command::Status));
+                    if !passive {
+                        crate::tasks::power::wake();
+                    }
                     match effect {
+                        Effect::Audio(command) => reply(&crate::tasks::audio::execute(command).await).await,
+                        Effect::Camera(command) => reply(&crate::tasks::camera::execute(command).await).await,
+                        Effect::Radio(command) => reply(&crate::tasks::radio::execute(command).await).await,
+                        Effect::Update(command) => {
+                            let response=if command==os::update::Command::Status {crate::tasks::update::status()}
+                                else if crate::tasks::update::submit(command) {"@ok update queued".into()}
+                                else {"@err update busy or unavailable".into()};
+                            reply(&response).await;
+                        }
+                        Effect::NandStatus => reply(&crate::drivers::nand::volume::status()).await,
+                        Effect::NandFormat => {
+                            let result = if crate::ota_runtime::active() {
+                                Err(::fs::Errno::BUSY)
+                            } else if !crate::tasks::power::ensure_awake().await {
+                                Err(::fs::Errno::IO)
+                            } else {
+                                crate::drivers::nand::volume::format_volume().await
+                            };
+                            let text = match result {
+                                Ok(()) => {
+                                    crate::drivers::storage::finish_data_init();
+                                    crate::tasks::apps::request(true, None);
+                                    "@ok nand-format mounted=1".into()
+                                },
+                                Err(error) => alloc::format!("@err nand-format {error}"),
+                            };
+                            reply(&text).await;
+                        }
+                        Effect::NandTest(phase) => {
+                            let text = crate::drivers::nand::volume::test(&phase)
+                                .unwrap_or_else(|e| alloc::format!("@err nand-test {phase} {e}"));
+                            reply(&text).await;
+                        }
+                        Effect::NandBench(phase) => {
+                            let result = if crate::tasks::power::ensure_awake().await {
+                                crate::drivers::nand::bench::run(&phase).await
+                            } else { Err(::fs::Errno::IO) };
+                            let text = result.unwrap_or_else(|e| alloc::format!("@err nand-bench {phase} {e}"));
+                            reply(&text).await;
+                        }
+                        Effect::NandInfo => {
+                            let text = match crate::drivers::nand::identify().await {
+                                Ok(id) => {
+                                    let profile = if let Some(model) = id.model() {
+                                        use crate::drivers::nand;
+                                        alloc::format!(
+                                            "model={model} geometry={}+{}x{}x{} ecc=8/512",
+                                            nand::DATA_BYTES,
+                                            nand::SPARE_BYTES,
+                                            nand::PAGES_PER_BLOCK,
+                                            nand::BLOCKS
+                                        )
+                                    } else {
+                                        alloc::string::String::from(
+                                            "model=unknown geometry=unknown ecc=unknown",
+                                        )
+                                    };
+                                    alloc::format!("@ok nand-info id={:02x}{:02x}{:02x}{:02x} a0={:02x} b0={:02x} c0={:02x} {profile} readonly=1",
+                                        id.id[0], id.id[1], id.id[2], id.id[3], id.protection, id.configuration, id.status)
+                                }
+                                Err(error) => alloc::format!("@err nand-info {}", error.name()),
+                            };
+                            reply(&text).await;
+                        }
+                        Effect::NandRead(page) => {
+                            use crate::drivers::nand;
+                            let mut buffer = alloc::vec![0; nand::PAGE_BYTES];
+                            let text = match nand::read_page(page, &mut buffer).await {
+                                Ok(status) => {
+                                    let marker = if page.is_multiple_of(nand::PAGES_PER_BLOCK) {
+                                        alloc::format!("{:02x}", buffer[nand::DATA_BYTES])
+                                    } else {
+                                        alloc::string::String::from("na")
+                                    };
+                                    let extended = status
+                                        .extended_status
+                                        .map(|v| alloc::format!("{v:02x}"))
+                                        .unwrap_or_else(|| alloc::string::String::from("na"));
+                                    alloc::format!("@ok nand-read page={page} bytes={} crc={:08x} oob_crc={:08x} c0={:02x} f0={extended} corrected={}:{} marker={marker} readonly=1",
+                                        nand::DATA_BYTES, os::hub::push::crc32(&buffer[..nand::DATA_BYTES]), os::hub::push::crc32(&buffer[nand::DATA_BYTES..]), status.status, status.corrected_min, status.corrected_max)
+                                }
+                                Err(error) => {
+                                    alloc::format!("@err nand-read page={page} {}", error.name())
+                                }
+                            };
+                            reply(&text).await;
+                        }
+                        Effect::Power(command) => {
+                            reply(&crate::tasks::power::execute(command).await).await
+                        }
+                        Effect::ImuIrq(route) => {
+                            reply(&crate::tasks::sensors::irq_command(route)).await
+                        }
                         Effect::OtaCancel => {
                             ota.abort();
                             session.set_ota_active(false);
                         }
                         Effect::Ota(command) => {
+                            if !matches!(command, os::ota::Command::Status) && crate::tasks::update::busy() {
+                                reply("@err OTA network update busy").await;
+                                continue;
+                            }
+                            if matches!(command, os::ota::Command::Begin { .. }) {
+                                if let Err(error) = ota.reserve() {
+                                    reply(&alloc::format!("@err ota-begin: {error}")).await;
+                                    continue;
+                                }
+                            }
+                            if matches!(command, os::ota::Command::Begin { .. }) && !crate::tasks::camera::quiesce().await {
+                                ota.abort();
+                                reply("@err OTA camera shutdown failed").await;
+                                continue;
+                            }
+                            if matches!(command, os::ota::Command::Begin { .. }) && !crate::tasks::radio::quiesce().await {
+                                ota.abort();
+                                reply("@err OTA wireless shutdown failed").await;
+                                continue;
+                            }
+                            if !crate::tasks::power::ensure_awake().await {
+                                ota.abort();
+                                reply("@err OTA display restore failed").await;
+                                continue;
+                            }
                             let result = ota.execute(command).await;
                             session.set_ota_active(crate::ota_runtime::active());
                             match result {
                                 Ok((text, reboot)) => {
                                     if reboot {
-                                        if reboot_reply_sent(&text).await {
+                                        if reboot_reply_sent(&text).await && !crate::tasks::buttons::shutdown_requested() {
                                             esp_hal::system::software_reset();
                                         } else {
                                             // The candidate is selected, but no successful ACK
@@ -454,10 +610,16 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                             }
                         }
                         Effect::Reboot => {
+                            if crate::tasks::buttons::shutdown_requested() {
+                                reply("@err reboot shutdown pending").await;
+                                continue;
+                            }
                             warn!("push: reboot requested");
                             // Let the reply and the log line go out first.
                             Timer::after_millis(300).await;
-                            esp_hal::system::software_reset();
+                            if !crate::tasks::buttons::shutdown_requested() {
+                                esp_hal::system::software_reset();
+                            }
                         }
                     }
                 }
@@ -465,7 +627,25 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
             // A continuously ready USB read does not yield to other thread tasks.
             embassy_futures::yield_now().await;
         }
+        if !class.dtr() {
+            // CDC close leaves already queued OUT packets enabled. Drain them
+            // before resetting the parser, so old file bytes cannot poison the
+            // next client's control lines. Preserve its first packet if it
+            // opens while this drain is waiting for an idle endpoint.
+            loop {
+                match select(class.read_packet(&mut buf), Timer::after_millis(20)).await {
+                    Either::First(Ok(n)) => {
+                        if class.dtr() {
+                            pending_packet = Some(n);
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        }
         ota.abort();
+        crate::tasks::power::wake();
         // The host went away mid-push: drop the staged files.
         usb_trace!(SessionReset, 0);
         let _reset_result = ::fs::global::with(|vfs| {

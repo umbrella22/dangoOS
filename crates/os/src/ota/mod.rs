@@ -5,8 +5,8 @@ use sha2::{Digest, Sha256};
 pub mod image;
 pub mod layout;
 pub mod status;
-pub const AB_LAYOUT_MARKER: &[u8] = b"MOSAICO_S31_AB_LAYOUT_V1\0";
-pub const SLOT_SIZE: u32 = 0x300000;
+pub const AB_LAYOUT_MARKER: &[u8] = b"MOSAICO_S31_AB_LAYOUT_V2_6M_NAND\0";
+pub const SLOT_SIZE: u32 = 0x600000;
 pub const SECTOR: usize = 4096;
 pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,7 +40,7 @@ pub trait Flash {
 pub fn slot_offset(slot: u8) -> Result<u32> {
     match slot {
         0 => Ok(0x210000),
-        1 => Ok(0x510000),
+        1 => Ok(0x810000),
         _ => Err(Error::State("unknown slot")),
     }
 }

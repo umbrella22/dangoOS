@@ -52,25 +52,24 @@ fn table(ab: bool) -> Vec<u8> {
     let mut b = Vec::new();
     let mut rows = vec![
         ("otadata", 1, 0, 0x9000u32, 0x2000u32),
+        ("phy_init", 1, 1, 0xb000, 0x1000),
+        ("sysmeta", 1, 2, 0xc000, 0x14000),
         ("vibe_mode", 0, 0x20, 0x20000, 0x1c0000),
-        (
-            "main_app",
-            0,
-            0x10,
-            0x210000,
-            if ab { SLOT_SIZE } else { 0x7d0000 },
-        ),
+        ("coredump", 1, 3, 0x1e0000, 0x20000),
+        ("nvs", 1, 2, 0x200000, 0x6000),
+        ("main_app", 0, 0x10, 0x210000, if ab { 0x600000 } else { 0x7d0000 }),
     ];
     if ab {
         rows.extend([
-            ("ota_1", 0, 0x11, 0x510000, SLOT_SIZE),
-            ("data", 1, 0x83, 0x810000, 0x1d0000),
+            ("ota_1", 0, 0x11, 0x810000, 0x600000),
+            ("system", 1, 0x83, 0xe10000, 0x1f0000),
+        ]);
+    } else {
+        rows.extend([
+            ("ui_apps", 1, 0x41, 0x9e0000, 0x320000),
+            ("system", 1, 0x83, 0xd00000, 0x300000),
         ]);
     }
-    rows.extend([
-        ("ui_apps", 1, 0x41, 0x9e0000, 0x320000),
-        ("system", 1, 0x83, 0xd00000, 0x300000),
-    ]);
     for (name, kind, subtype, offset, size) in rows {
         let mut e = [0; 32];
         e[..4].copy_from_slice(&[0xaa, 0x50, kind, subtype]);
@@ -132,12 +131,10 @@ fn image_streaming_every_fragment_and_metadata() {
     assert!(parse_sha(&"é".repeat(32)).is_err());
 }
 #[test]
-fn known_layout_only_and_legacy_data_safe() {
-    let old = layout::parse(&table(false), 16 << 20).unwrap();
-    assert_eq!(old.data, Some((0x7e0000, 0x200000)));
-    assert!(!old.ab);
+fn current_layout_only_with_data_on_nand() {
+    assert!(layout::parse(&table(false), 16 << 20).is_err());
     let new = layout::parse(&table(true), 16 << 20).unwrap();
-    assert_eq!(new.data, Some((0x810000, 0x1d0000)));
+    assert_eq!(new.data, None);
     assert!(new.ab);
     let mut corrupted = table(true);
     corrupted[20] ^= 1;
@@ -158,7 +155,7 @@ fn ota_real_nor_activation_baseline_readback_and_confirmation() {
     updater
         .chunk(&mut flash, 0, &image, crate::hub::push::crc32(&image))
         .unwrap();
-    assert!(flash.writes.iter().all(|&a| a >= 0x510000 && a < 0x810000));
+    assert!(flash.writes.iter().all(|&a| a >= 0x810000 && a < 0xe10000));
     updater.start_verify().unwrap();
     assert!(updater.verify_step(&mut flash).unwrap());
     let entries = read_entries(&mut flash).unwrap();
@@ -191,7 +188,7 @@ fn corrupt_transport_image_and_missing_marker_never_activate() {
             .chunk(&mut flash, 0, &image, crate::hub::push::crc32(&image))
             .unwrap();
         if marker {
-            flash.bytes[0x510100] ^= 1;
+            flash.bytes[0x810100] ^= 1;
         }
         updater.start_verify().unwrap();
         assert!(updater.verify_step(&mut flash).is_err());

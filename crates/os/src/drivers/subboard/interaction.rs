@@ -44,7 +44,8 @@ pub struct InteractionInputs {
 
 /// LDR on one ADC unit. The pin is switched to analog only while active.
 struct Ldr<P, A> {
-    adc: Adc<'static, A, Blocking>,
+    adc: Option<Adc<'static, A, Blocking>>,
+    peripheral: Option<A>,
     idle: Option<P>,
     active: Option<AdcPin<P, A>>,
     filter: LdrFilter,
@@ -58,9 +59,11 @@ where
     fn new(pin: P, adc: A) -> Self {
         let filter = LdrFilter::new(pin.adc_channel());
         Self {
-            // `Adc::new` ignores the per-pin part of the config on the S31;
-            // pins are enabled one by one in `activate`.
-            adc: Adc::new(adc, AdcConfig::new()),
+            // Defer both analog pin setup and ADC construction until a board
+            // is identified. S31 ignores per-pin attenuation, but Adc::new
+            // still records which channels may be read.
+            adc: None,
+            peripheral: Some(adc),
             idle: Some(pin),
             active: None,
             filter,
@@ -70,7 +73,11 @@ where
     fn activate(&mut self) {
         if let Some(pin) = self.idle.take() {
             let mut config = AdcConfig::<A>::new();
-            self.active = Some(config.enable_pin(pin, Attenuation::_11dB));
+            let active = config.enable_pin(pin, Attenuation::_11dB);
+            if let Some(adc) = self.peripheral.take() {
+                self.adc = Some(Adc::new(adc, config).expect("LDR ADC configuration"));
+            }
+            self.active = Some(active);
             self.filter.reset();
         }
     }
@@ -84,7 +91,7 @@ where
 
     fn read(&mut self) -> Option<(u16, u8)> {
         let pin = self.active.as_mut()?;
-        let raw = self.adc.read_blocking(pin);
+        let raw = self.adc.as_mut()?.read_blocking(pin).ok()?;
         Some((raw, self.filter.update(raw)))
     }
 }
@@ -222,6 +229,22 @@ where
             pin.set_input_enable(false);
         }
         self.ldr.deactivate();
+    }
+
+    /// The slot lease suspends Interaction access until this pin is returned.
+    pub fn take_camera_reset(&mut self) -> Option<P> {
+        self.deactivate();
+        self.ldr.idle.take()
+    }
+
+    pub fn return_camera_reset(&mut self, pin: P) {
+        assert!(self.ldr.idle.is_none() && self.ldr.active.is_none());
+        self.ldr.idle = Some(pin);
+        self.deactivate();
+    }
+
+    pub fn camera_data(&self) -> [esp_hal::gpio::interconnect::InputSignal<'static>; 3] {
+        [self.pir.peripheral_input(), self.key_r.peripheral_input(), self.key_l.peripheral_input()]
     }
 
     /// Sample once. `None` while idle.

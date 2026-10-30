@@ -9,11 +9,13 @@ use std::path::PathBuf;
 fn main() {
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let lfs = root.join("vendor/littlefs-2.11.3");
+    let dhara = root.join("vendor/dhara");
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 
     let mut build = cc::Build::new();
     build
         .include(&lfs)
+        .include(dhara.join("include"))
         // No logging or asserts: the firmware has no stdio console, and a
         // failed assert must not abort. Errors still come back as codes.
         .define("LFS_NO_DEBUG", None)
@@ -29,6 +31,9 @@ fn main() {
     build.file(lfs.join("lfs.c"));
     build.file(lfs.join("lfs_util.c"));
     build.file(root.join("csrc/mosaico_fs_glue.c"));
+    build.file(dhara.join("dhara/map.c"));
+    build.file(dhara.join("dhara/journal.c"));
+    build.file(root.join("csrc/mosaico_nand.c"));
     if target_os == "none" {
         build.file(root.join("csrc/mosaico_fs_posix.c"));
     }

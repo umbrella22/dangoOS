@@ -9,6 +9,8 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
+import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("firmware_release", ROOT / "scripts/release/package.py")
@@ -27,7 +29,7 @@ def application(version="0.3.0", marker=True):
     segment[16:16 + len(version)] = version.encode()
     segment[48:59] = b"mosaico-s31"
     if marker:
-        value = b"MOSAICO_S31_AB_LAYOUT_V1\0"
+        value = b"MOSAICO_S31_AB_LAYOUT_V2_6M_NAND\0"
         segment[256:256 + len(value)] = value
     data = header + struct.pack("<II", 0x40000020, len(segment)) + segment
     checksum = 0xEF
@@ -50,8 +52,10 @@ class ReleaseTests(unittest.TestCase):
     def setUpClass(cls):
         cls.table = API.partition_table()
         rows = API.layout.parse_table(cls.table)
-        legacy = [dict(row) for row in rows if row["name"] not in ("ota_1", "data")]
+        legacy = [dict(row) for row in rows if row["name"] not in ("ota_1", "system")]
         next(row for row in legacy if row["name"] == "main_app")["size"] = 0x7D0000
+        legacy.extend([dict(name="ui_apps",kind=1,subtype=0x41,offset=0x9E0000,size=0x320000,flags=0),
+                       dict(name="system",kind=1,subtype=0x83,offset=0xD00000,size=0x2EE000,flags=0)])
         cls.legacy_table = encode_table(legacy)
         raw = bytearray(b"\xff" * API.OFFICIAL["bytes"])
         raw[0x8000:0x9000] = cls.legacy_table
@@ -69,23 +73,37 @@ class ReleaseTests(unittest.TestCase):
         cls.full, cls.components, cls.rows, cls.info = API.assemble(
             cls.official, cls.app, cls.system, cls.table, "0.3.0", cls.pins)
 
-    def bundle(self, directory, *, full=None, mutate=None):
+    def bundle(self, directory, *, full=None, mutate=None, skins=False, mutate_zip=None):
         full = self.full if full is None else full
         stem = "dangoOS-v0.3.0-esp32s31"
         manifest = {"schema": 1, "project": "dangoOS", "tag": "v0.3.0", "version": "0.3.0",
                     "source_commit": "1" * 40, "source_dirty": False, "chip": "esp32s31",
-                    "flash_bytes": API.FLASH_BYTES, "layout": "MOSAICO_S31_AB_LAYOUT_V1",
+                    "flash_bytes": API.FLASH_BYTES, "layout": "MOSAICO_S31_AB_LAYOUT_V2_6M_NAND",
                     "upstream": self.pins, "partitions": self.rows, "components": copy.deepcopy(self.components),
                     "application": self.info,
                     "images": {"ota": {"file": stem + "-ota.bin", "bytes": len(self.app), "sha256": API.sha(self.app)},
                                "full": {"file": stem + "-full.bin", "bytes": len(full), "sha256": API.sha(full), "flash_offset": 0}}}
+        resources = {}
+        if skins:
+            binary = b"synthetic independent NAND skin"
+            metadata = {"schema_version": 1, "id": "eclipse", "name": "月蚀", "version": "test",
+                        "canvas": [352, 336], "binary_bytes": len(binary), "binary_crc32": zlib.crc32(binary)}
+            resources = {"dango-skin/eclipse/fox.bin": binary,
+                         "dango-skin/eclipse/skin.json": API.json_bytes(metadata)}
+            manifest["nand_skins"] = [{"id": "eclipse", "name": "月蚀", "version": "test", "files": {
+                name: {"bytes": len(resources[f"dango-skin/eclipse/{name}"]),
+                       "sha256": API.sha(resources[f"dango-skin/eclipse/{name}"])} for name in ("fox.bin", "skin.json")}}]
+            resources.update({"install.py": b"# installer", "tools/console.py": b"# transport",
+                              "tools/ota_image.py": b"# image validator", "requirements.txt": b"pyserial==3.5\n"})
         if mutate:
             mutate(manifest)
         files = {stem + "-ota.bin": self.app, stem + "-full.bin": full, "manifest.json": API.json_bytes(manifest),
                  "INSTALL.md": b"Synthetic install instructions\n"}
         for mode in ("ota", "full"):
             name = stem + f"-{mode}.bin"
-            payload = {name: files[name], "manifest.json": files["manifest.json"], "INSTALL.md": files["INSTALL.md"]}
+            payload = {name: files[name], "manifest.json": files["manifest.json"], "INSTALL.md": files["INSTALL.md"], **resources}
+            if mutate_zip:
+                mutate_zip(mode, payload)
             payload["SHA256SUMS"] = API.checksums(payload)
             archive = directory / (stem + f"-{mode}.zip")
             API.write_zip(archive, payload)
@@ -115,7 +133,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<I", self.full, 0x9018)[0], 2)
         self.assertEqual(self.full[0x901C:0x9020], bytes.fromhex("9a984347"))
         for start, end in [(0, 0x2000), (0xB000, 0x20000), (0x1E0000, 0x210000),
-                           (0x510000, 0x9E0000), (0xFEE000, 0x1000000)]:
+                           (0x810000, 0xE10000)]:
             self.assertEqual(self.full[start:end], b"\xff" * (end - start))
 
     def test_ota_rejects_wrong_version_chip_marker_and_corruption(self):
@@ -159,6 +177,48 @@ class ReleaseTests(unittest.TestCase):
             self.bundle(directory, full=bytes(data))
             with self.assertRaisesRegex(ValueError, "non-erased gaps"):
                 self.verify(directory)
+
+    def test_ota_and_full_archives_both_include_checked_nand_skins(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.bundle(directory, skins=True)
+            manifest = self.verify(directory)
+            for mode in ("ota", "full"):
+                with zipfile.ZipFile(directory / f"dangoOS-v0.3.0-esp32s31-{mode}.zip") as archive:
+                    binary = archive.read("dango-skin/eclipse/fox.bin")
+                    self.assertEqual(API.sha(binary), manifest["nand_skins"][0]["files"]["fox.bin"]["sha256"])
+                    self.assertIn("install.py", archive.namelist())
+                    self.assertIn("tools/console.py", archive.namelist())
+
+    def test_nand_payload_and_tools_fail_verification_even_with_fresh_checksums(self):
+        mutations = [
+            (lambda payload: payload.pop("dango-skin/eclipse/fox.bin"), "missing or changed"),
+            (lambda payload: payload.update({"dango-skin/eclipse/source.png": b"private"}), "inventory"),
+            (lambda payload: payload.update({"dango-skin/eclipse/fox.bin": b"damaged"}), "missing or changed"),
+            (lambda payload: payload.pop("install.py"), "tools missing"),
+        ]
+        for mode in ("ota", "full"):
+            for mutation, message in mutations:
+                with self.subTest(mode=mode, message=message), tempfile.TemporaryDirectory() as temporary:
+                    directory = Path(temporary)
+                    self.bundle(directory, skins=True, mutate_zip=lambda current, payload: mutation(payload) if current == mode else None)
+                    with self.assertRaisesRegex(ValueError, message):
+                        self.verify(directory)
+
+    def test_nand_catalog_checks_metadata_after_hashes_match(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.bundle(directory, skins=True)
+            manifest = json.loads((directory / "manifest.json").read_bytes())
+            with zipfile.ZipFile(directory / "dangoOS-v0.3.0-esp32s31-ota.zip") as archive:
+                resources = {name: archive.read(name) for name in archive.namelist() if name.startswith("dango-skin/")}
+            path = "dango-skin/eclipse/skin.json"
+            metadata = json.loads(resources[path])
+            metadata["binary_crc32"] ^= 1
+            resources[path] = API.json_bytes(metadata)
+            manifest["nand_skins"][0]["files"]["skin.json"] = {"bytes": len(resources[path]), "sha256": API.sha(resources[path])}
+            with self.assertRaisesRegex(ValueError, "manifest mismatch"):
+                API.verify_nand_skins(manifest["nand_skins"], resources)
 
     def test_component_offset_and_dirty_manifest_are_rejected(self):
         mutations = [(lambda manifest: manifest["components"]["application"].update(offset=0), "component map"),

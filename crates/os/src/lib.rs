@@ -22,9 +22,17 @@
 extern crate alloc;
 
 pub mod behavior;
+pub mod audio;
 pub mod buttons;
+pub mod battery;
+pub mod camera;
 pub mod fox;
 pub mod hub;
+#[path = "drivers/imu/interrupt.rs"]
+pub mod imu_interrupt;
+pub mod power;
+pub mod radio;
+pub mod scheduling;
 pub mod telemetry;
 pub mod ui;
 
@@ -56,3 +64,4 @@ pub(crate) mod test_support {
 pub mod lua_lvgl;
 
 pub mod ota;
+pub mod update;

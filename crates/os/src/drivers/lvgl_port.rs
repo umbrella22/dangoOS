@@ -33,7 +33,11 @@ use rs_lvgl::sys;
 use crate::drivers::geometry::{DirtyRect, HEIGHT, WIDTH};
 use crate::drivers::memory::PixelMemory;
 
-/// Rows of the internal draw buffer (480 x 48 x 2 B = 45 KiB).
+/// Band storage trades 22.5 KiB for Core1's 24 KiB internal stack. LVGL still
+/// renders the same pixels into its full shadow; only the band height changes.
+#[cfg(feature = "dual-core-ui")]
+const DRAW_ROWS: usize = 24;
+#[cfg(not(feature = "dual-core-ui"))]
 const DRAW_ROWS: usize = 48;
 
 /// Base of the PSRAM shadow frame (`WIDTH * HEIGHT` RGB565 pixels).

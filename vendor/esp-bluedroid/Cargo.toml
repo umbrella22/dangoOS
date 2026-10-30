@@ -1,0 +1,11 @@
+[package]
+name = "esp-bluedroid"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+description = "Pinned Bluedroid Classic A2DP host with native Mosaico OS adapters"
+[features]
+work-diagnostics = []
+[build-dependencies]
+cc = "1"

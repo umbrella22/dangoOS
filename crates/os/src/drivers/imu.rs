@@ -568,6 +568,33 @@ impl Bmi270 {
         self.write_reg(REG_CMD, CMD_FIFO_FLUSH).await
     }
 
+    /// Map the selected BMI pin with readback; caller owns the shared GPIO path.
+    pub async fn configure_interrupt(
+        &mut self,
+        route: os::imu_interrupt::Route,
+    ) -> Result<(), &'static str> {
+        if !self.fifo && route != os::imu_interrupt::Route::Off {
+            return Err("FIFO unavailable");
+        }
+        for (reg, value) in route.registers() {
+            self.write_reg(reg, value).await?;
+            let mut actual = [0];
+            self.read_regs(reg, &mut actual).await?;
+            if actual[0] != value {
+                return Err("interrupt register readback");
+            }
+        }
+        Ok(())
+    }
+
+    /// Read the BMI270's own source; draining FIFO deasserts non-latched FWM.
+    pub async fn interrupt_status(&self) -> Result<u16, &'static str> {
+        let mut status = [0; 2];
+        self.read_regs(os::imu_interrupt::STATUS_REGISTER, &mut status)
+            .await?;
+        Ok(u16::from_le_bytes(status))
+    }
+
     /// Drain up to [`FIFO_MAX_FRAMES`] buffered samples, oldest first.
     ///
     /// Falls back to one register burst when the FIFO is not enabled. Returns

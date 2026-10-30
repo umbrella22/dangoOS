@@ -11,11 +11,22 @@ pub const H: usize = 336;
 /// Shared RGB565 palette; index 255 in the RLE stream is transparent.
 pub static PALETTE: [u16; 128] = [0x0000, 0xef5d, 0xef7e, 0xef5e, 0xff9d, 0xe73d, 0xffbe, 0xff5c, 0xffbd, 0xe75d, 0xff9e, 0xff3c, 0x31a8, 0xbdf9, 0xc61a, 0x39c8, 0xffff, 0x3187, 0xce5b, 0x5b0e, 0xf7bf, 0x58c3, 0x632f, 0x8433, 0xce7b, 0xff7d, 0xf6ba, 0xb5b9, 0xb5d9, 0xa537, 0xad78, 0xf699, 0xc63a, 0x2946, 0xb598, 0xad57, 0xc986, 0xdedc, 0x3a09, 0xdefc, 0x2125, 0x6b6f, 0xf658, 0x5acd, 0xe71d, 0x2967, 0x528c, 0xbdd9, 0xb925, 0x4a4b, 0x422a, 0xd6bc, 0x7bf2, 0x73b0, 0x94b5, 0x8c74, 0xff11, 0xbe19, 0xf6da, 0xef9e, 0x18e4, 0x9cf6, 0xf79e, 0xa0c4, 0xff7c, 0xffdf, 0x0821, 0x1062, 0x31a7, 0x39e9, 0xd69b, 0x30c3, 0xfefb, 0xfed0, 0x10a3, 0x4104, 0x39e8, 0x5082, 0xe248, 0xff1b, 0x78c3, 0xbe1a, 0xffde, 0x31c8, 0x8411, 0x8c73, 0x4082, 0xfeba, 0xa410, 0x938e, 0xbcac, 0xb472, 0x2881, 0x832c, 0x5185, 0x39c9, 0xe5f7, 0xbcf3, 0x72aa, 0xf5b5, 0xc575, 0xa515, 0xdc10, 0xad76, 0x6207, 0xff5d, 0xe6ba, 0xdd75, 0xd5f7, 0xcb2c, 0xce5a, 0xff77, 0xbdb7, 0xde59, 0x9368, 0xaa28, 0xdd6e, 0xef1b, 0xc618, 0xd4b3, 0xee10, 0xfef4, 0x3188, 0xf4f3, 0x79c6, 0xebcb, 0x8e3f, 0xcf3f];
 
-/// Row RLE of every image, concatenated (739512 bytes).
+/// Row RLE of every image, concatenated (922938 bytes).
+#[cfg(not(target_os = "none"))]
 pub static BLOB: &[u8] = include_bytes!("../assets/fox.bin");
+/// Minimal recovery image used until a validated external default is loaded.
+#[cfg(target_os = "none")]
+pub static BLOB: &[u8] = include_bytes!("../assets/fox-recovery.bin");
+#[cfg(target_os = "none")]
+pub static RECOVERY_POSE: Pose = Pose {
+    base: Img { x: 0, y: 0, w: 352, h: 336, off: 0, len: 31814, over_bg: false },
+    blink: &[], mouth_closed: &[], mouth_wide: &[], ear: &[],
+    gaze_left: &[], gaze_right: &[], symbols: &[], tremble: &[], spiral: [&[], &[], &[]],
+};
 
 /// One entry per [`super::FoxPose`], in declaration order.
-pub static POSES: [Pose; 20] = [
+#[cfg(not(target_os = "none"))]
+pub static POSES: [Pose; 25] = [
     // idle
     Pose {
         base: Img { x: 0, y: 0, w: 352, h: 336, off: 11486, len: 31814, over_bg: false },
@@ -266,6 +277,71 @@ pub static POSES: [Pose; 20] = [
     // dazzled
     Pose {
         base: Img { x: 0, y: 0, w: 352, h: 336, off: 710308, len: 29204, over_bg: false },
+        blink: &[],
+        mouth_closed: &[],
+        mouth_wide: &[],
+        ear: &[],
+        gaze_left: &[],
+        gaze_right: &[],
+        symbols: &[],
+        tremble: &[],
+        spiral: [&[], &[], &[]],
+    },
+    // network-disconnected
+    Pose {
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 743206, len: 35566, over_bg: false },
+        blink: &[Img { x: 77, y: 198, w: 68, h: 61, off: 739512, len: 2226, over_bg: false }, Img { x: 166, y: 231, w: 69, h: 47, off: 741738, len: 1468, over_bg: false }],
+        mouth_closed: &[],
+        mouth_wide: &[],
+        ear: &[],
+        gaze_left: &[],
+        gaze_right: &[],
+        symbols: &[],
+        tremble: &[],
+        spiral: [&[], &[], &[]],
+    },
+    // network-connected
+    Pose {
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 782336, len: 37538, over_bg: false },
+        blink: &[Img { x: 93, y: 213, w: 68, h: 65, off: 778772, len: 1892, over_bg: false }, Img { x: 188, y: 214, w: 68, h: 64, off: 780664, len: 1672, over_bg: false }],
+        mouth_closed: &[],
+        mouth_wide: &[],
+        ear: &[],
+        gaze_left: &[],
+        gaze_right: &[],
+        symbols: &[],
+        tremble: &[],
+        spiral: [&[], &[], &[]],
+    },
+    // bluetooth-disconnected
+    Pose {
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 821936, len: 30460, over_bg: false },
+        blink: &[Img { x: 114, y: 221, w: 69, h: 46, off: 819874, len: 862, over_bg: false }, Img { x: 203, y: 208, w: 62, h: 48, off: 820736, len: 1200, over_bg: false }],
+        mouth_closed: &[],
+        mouth_wide: &[],
+        ear: &[],
+        gaze_left: &[],
+        gaze_right: &[],
+        symbols: &[],
+        tremble: &[],
+        spiral: [&[], &[], &[]],
+    },
+    // bluetooth-connected
+    Pose {
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 852396, len: 37438, over_bg: false },
+        blink: &[],
+        mouth_closed: &[],
+        mouth_wide: &[],
+        ear: &[],
+        gaze_left: &[],
+        gaze_right: &[],
+        symbols: &[],
+        tremble: &[],
+        spiral: [&[], &[], &[]],
+    },
+    // music-playing
+    Pose {
+        base: Img { x: 0, y: 0, w: 352, h: 336, off: 889834, len: 33104, over_bg: false },
         blink: &[],
         mouth_closed: &[],
         mouth_wide: &[],
