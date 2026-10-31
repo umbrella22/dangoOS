@@ -5,7 +5,7 @@ resolver = "2"
 exclude = ["vendor/embassy-usb-synopsys-otg", "vendor/esp-wifi-sys-esp32s31", "vendor/esp-radio", "vendor/esp-radio-rtos-driver", "vendor/esp-bluedroid"]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 authors = ["umbrella22", "Claude", "GLM"]
 
