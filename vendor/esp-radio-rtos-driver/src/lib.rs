@@ -468,25 +468,9 @@ pub unsafe fn task_create(
     // their workers there preserves the controller OSAL's nesting contract.
     #[cfg(feature = "default-core0")]
     let pin_to_core = Some(pin_to_core.unwrap_or(0));
-    // #region debug-point G:radio-affinity
-    debug!("radio task {} affinity={:?}", name, pin_to_core);
-    // #endregion
-    let handle = unsafe {
+    unsafe {
         esp_rtos_task_create(name, task, param, priority, pin_to_core, task_stack_size)
-    };
-    // #region debug-point J:native-task-identity
-    #[cfg(feature = "task-diagnostics")]
-    log_04::info!(
-        "radio task id={:#x} name={} priority={} affinity={:?} stack={} entry={:#x}",
-        handle.as_ptr() as usize,
-        name,
-        priority,
-        pin_to_core,
-        task_stack_size,
-        task as usize
-    );
-    // #endregion
-    handle
+    }
 }
 
 /// Schedules the given task for deletion.

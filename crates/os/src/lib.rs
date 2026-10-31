@@ -1,45 +1,24 @@
-//! The host-testable half of the Mosaico S31 firmware.
-//!
-//! Everything here is `no_std` + `alloc` and builds for the host as well as
-//! the device, so `cargo test -p os` covers it without hardware. The
-//! binary (`src/main.rs`) adds the board, the drivers and the Embassy tasks.
-//!
-//! - [`behavior`]: what the fox feels. Sensors, buttons and touch in; one
-//!   expression and one haptic pattern out.
-//! - [`fox`]: what the fox looks like. Palette sprites, the per-expression
-//!   animation and the renderer that draws a frame into an RGB565 canvas.
-//! - [`ui`]: the LVGL screen tree, the fox widget and the canvas pool shared
-//!   with the panel upload.
-//! - [`telemetry`]: latency and display counters for the console.
-//!
-//! Data flow per frame: `behavior::Runtime` -> `ui::fox_widget::FoxControl`
-//! -> `fox::FoxAnimator` -> `fox::FoxRenderer` -> `ui::canvas_pool` -> the
-//! firmware's plane task -> panel.
-
+//! Functional module tree for the host-tested models and device services.
+//! Device hardware and executors are selected by `target_os = "none"`.
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_op_in_unsafe_fn)]
-
 extern crate alloc;
 
-pub mod behavior;
-pub mod audio;
-pub mod buttons;
-pub mod battery;
-pub mod camera;
-pub mod fox;
-pub mod hub;
-#[path = "drivers/imu/interrupt.rs"]
-pub mod imu_interrupt;
-pub mod power;
-pub mod radio;
-pub mod scheduling;
-pub mod telemetry;
-pub mod ui;
+pub mod apps;
+#[cfg(target_os = "none")]
+pub mod boot;
+pub mod companion;
+pub mod console;
+pub mod formats;
+pub mod platform;
+pub mod services;
+pub mod shell;
 
-pub use behavior::{Expression, Runtime};
-pub use ui::fox_widget::{FoxControl, FoxVisual, FoxWidget, FRAME_INTERVAL_MS};
-pub use ui::splash::{SplashControl, SplashWidget};
-pub use ui::{next_ai_state, AppMsg, MosaicoApp, Screen, AI_STATES};
+pub use companion::behavior::Expression;
+pub use companion::runtime::Runtime;
+pub use companion::widget::{FoxControl, FoxVisual, FoxWidget, FRAME_INTERVAL_MS};
+pub use shell::app::{next_ai_state, AppMsg, MosaicoApp, Screen, AI_STATES};
+pub use shell::components::splash::{SplashControl, SplashWidget};
 
 /// Process-wide LVGL test lock.
 ///
@@ -60,8 +39,3 @@ pub(crate) mod test_support {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
-
-pub mod lua_lvgl;
-
-pub mod ota;
-pub mod update;

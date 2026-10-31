@@ -81,8 +81,8 @@ class RadioConsoleTest(unittest.TestCase):
                 self.cli("update-url", bad)
         self.assertEqual(FakeSerial.instances, [])
 
-    def test_invalid_probe_cannot_inject_headers_and_never_opens_port(self):
-        for args in (("wifi-probe", "host\r\nHeader:value"), ("wifi-probe", "host", "--tcp-port", "0"), ("wifi-probe", "host", "--tcp-port", "65536"), ("bt-on", "--tcp-port", "80")):
+    def test_removed_debug_commands_never_open_a_port(self):
+        for args in (("wifi-probe", "host"), ("camera-probe",), ("cpu-status",), ("nand-test", "write"), ("nand-bench", "write"), ("nand-read", "0"), ("imu-irq", "int1"), ("audio-tone", "1000"), ("audio-loopback", "/data/test.wav"), ("bt-on", "--tcp-port", "80")):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 self.cli(*args)
         self.assertEqual(FakeSerial.instances, [])

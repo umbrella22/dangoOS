@@ -1,8 +1,8 @@
 //! Validate distributable NAND skins through the device's manifest and decoder.
-use crate::image::{Result, require, sha};
 use fs::{Fs, Geometry, RamDevice, Vfs};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{collections::BTreeSet, fs as host, path::Path};
+use {crate::image::require, crate::image::sha, crate::image::Result};
 
 pub fn check(root: &Path) -> Result<Vec<Value>> {
     let mut entries = host::read_dir(root)
@@ -22,7 +22,7 @@ pub fn check(root: &Path) -> Result<Vec<Value>> {
         }
         require(
             entry.file_type().map_err(|e| e.to_string())?.is_dir()
-                && os::hub::registry::id_is_valid(&id)
+                && os::apps::registry::id_is_valid(&id)
                 && id != "default",
             "invalid skin directory",
         )?;
@@ -48,7 +48,7 @@ pub fn check(root: &Path) -> Result<Vec<Value>> {
         let binary = host::read(directory.join("fox.bin")).map_err(|e| e.to_string())?;
         let manifest = host::read(directory.join("skin.json")).map_err(|e| e.to_string())?;
         require(
-            binary.len() <= os::fox::skin::MAX_BYTES && manifest.len() <= 4096,
+            binary.len() <= os::companion::render::skin::MAX_BYTES && manifest.len() <= 4096,
             "skin resource exceeds device file limit",
         )?;
         // A fresh host-only filesystem exercises exactly the loading path
@@ -68,7 +68,7 @@ pub fn check(root: &Path) -> Result<Vec<Value>> {
             .map_err(|e| e.to_string())?;
         vfs.write_file(&format!("{path}/fox.bin"), &binary)
             .map_err(|e| e.to_string())?;
-        os::hub::skins::load_dir(&mut vfs, &path, &id)?;
+        os::companion::skins::load_dir(&mut vfs, &path, &id)?;
         let metadata: Value = serde_json::from_slice(&manifest).map_err(|e| e.to_string())?;
         skins.push(json!({
             "id": id, "name": metadata["name"], "version": metadata["version"],

@@ -86,7 +86,7 @@ def session(args):
             api.push(dev, args.push, True)
         for line in dev.lines(time.monotonic() + args.seconds):
             print(line)
-        print("SESSION_OK (transport only; inspect probe results separately)")
+        print("SESSION_OK (transport only; inspect application results separately)")
         return 0
     except KeyboardInterrupt:
         print("INTERRUPTED", file=sys.stderr)

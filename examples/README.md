@@ -7,8 +7,7 @@
 | `brains/happy.lua` | 常驻行为脚本的最小示例 |
 
 应用示例使用与正式应用相同的 manifest 和入口约定，但不进入 system 镜像。
-设备验收探针归入 [tests/device](../tests/device/README.md)，正式应用归入
-[apps](../apps/README.md)。
+正式应用归入 [apps](../apps/README.md)。
 
 ```sh
 python3 scripts/device/console.py push examples/apps/hello --run --follow

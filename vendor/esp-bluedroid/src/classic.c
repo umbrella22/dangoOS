@@ -14,7 +14,6 @@ extern bool mosaico_bt_hci_available(void);
 extern void mosaico_bt_event(unsigned,unsigned,unsigned);
 extern void mosaico_bt_pcm(const uint8_t*,uint32_t);
 extern void mosaico_bt_remote_volume(unsigned);
-extern void mosaico_bt_phase(unsigned);
 static esp_bluedroid_hci_driver_callbacks_t callbacks;
 static atomic_int profile_state;
 static atomic_int ct_state, tg_state;
@@ -109,14 +108,12 @@ static int wait_avrc(atomic_int *state,int expected){
     }
 }
 int mosaico_classic_stop(void){
-    mosaico_bt_phase(20);
     atomic_store(&stopping,true);
     atomic_store(&volume_registered,false);
     if(esp_bluedroid_get_status()==ESP_BLUEDROID_STATUS_ENABLED){
         esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE,ESP_BT_NON_DISCOVERABLE);
         // AVRCP shares A2DP control state. Its asynchronous deinit must finish
         // before A2DP frees that state (the host warns about the reverse order).
-        mosaico_bt_phase(21);
         if(ct_started){
             atomic_store(&ct_state,-1);
             int rc=esp_avrc_ct_deinit();if(rc!=ESP_OK)return rc;
@@ -129,50 +126,44 @@ int mosaico_classic_stop(void){
             rc=wait_avrc(&tg_state,ESP_AVRC_DEINIT_SUCCESS);if(rc!=ESP_OK)return rc;
             tg_started=false;
         }
-        mosaico_bt_phase(22);
         if(sink_requested){
             int rc=esp_a2d_sink_deinit();if(rc!=ESP_OK)return rc;
             rc=wait_profile(0);if(rc!=ESP_OK)return rc;sink_requested=false;
         }
-        mosaico_bt_phase(23);int rc=esp_bluedroid_disable();if(rc!=ESP_OK)return rc;
+        int rc=esp_bluedroid_disable();if(rc!=ESP_OK)return rc;
     }
-    mosaico_bt_phase(24);
     if(esp_bluedroid_get_status()==ESP_BLUEDROID_STATUS_INITIALIZED){int rc=esp_bluedroid_deinit();if(rc!=ESP_OK)return rc;}
     if(!mosaico_classic_host_uninitialized())return ESP_ERR_INVALID_STATE;
-    mosaico_bt_phase(25);
-    memset(&callbacks,0,sizeof(callbacks));int rc=esp_bluedroid_detach_hci_driver();if(rc==ESP_OK)mosaico_bt_phase(0);return rc;
+    memset(&callbacks,0,sizeof(callbacks));int rc=esp_bluedroid_detach_hci_driver();return rc;
 }
 int mosaico_classic_start(void){
-    mosaico_bt_phase(10);
     atomic_store(&stopping,false);atomic_store(&profile_state,-1);
     atomic_store(&ct_state,-1);atomic_store(&tg_state,-1);
     const esp_bluedroid_hci_driver_operations_t ops={.send=mosaico_bt_hci_send,.check_send_available=mosaico_bt_hci_available,.register_host_callback=register_callbacks};
     int rc=esp_bluedroid_attach_hci_driver(&ops);if(rc!=ESP_OK)return rc;
 #define TRY(call) do{rc=(call);if(rc!=ESP_OK)goto fail;}while(0)
-    mosaico_bt_phase(11);TRY(esp_bluedroid_init());
-    mosaico_bt_phase(12);TRY(esp_bluedroid_enable());
-    mosaico_bt_phase(13);
-    mosaico_bt_phase(40);TRY(esp_bt_gap_register_callback(gap));
-    mosaico_bt_phase(41);TRY(esp_bt_gap_set_device_name("ESP-Mosaico Audio"));
+    TRY(esp_bluedroid_init());
+    TRY(esp_bluedroid_enable());
+    TRY(esp_bt_gap_register_callback(gap));
+    TRY(esp_bt_gap_set_device_name("ESP-Mosaico Audio"));
     esp_bt_io_cap_t io=ESP_BT_IO_CAP_NONE;
-    mosaico_bt_phase(42);TRY(esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE,&io,sizeof(io)));
+    TRY(esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE,&io,sizeof(io)));
     esp_bt_cod_t cod={.major=ESP_BT_COD_MAJOR_DEV_AV,.minor=5,.service=ESP_BT_COD_SRVC_AUDIO|ESP_BT_COD_SRVC_RENDERING};
-    mosaico_bt_phase(43);TRY(esp_bt_gap_set_cod(cod,ESP_BT_SET_COD_ALL));
-    mosaico_bt_phase(44);TRY(esp_avrc_ct_register_callback(avrc_ct));
-    mosaico_bt_phase(45);TRY(esp_avrc_ct_init());ct_started=true;
-    mosaico_bt_phase(46);TRY(wait_avrc(&ct_state,ESP_AVRC_INIT_SUCCESS));
-    mosaico_bt_phase(47);TRY(esp_avrc_tg_register_callback(avrc_tg));
-    mosaico_bt_phase(48);TRY(esp_avrc_tg_init());tg_started=true;
-    mosaico_bt_phase(49);TRY(wait_avrc(&tg_state,ESP_AVRC_INIT_SUCCESS));
+    TRY(esp_bt_gap_set_cod(cod,ESP_BT_SET_COD_ALL));
+    TRY(esp_avrc_ct_register_callback(avrc_ct));
+    TRY(esp_avrc_ct_init());ct_started=true;
+    TRY(wait_avrc(&ct_state,ESP_AVRC_INIT_SUCCESS));
+    TRY(esp_avrc_tg_register_callback(avrc_tg));
+    TRY(esp_avrc_tg_init());tg_started=true;
+    TRY(wait_avrc(&tg_state,ESP_AVRC_INIT_SUCCESS));
     esp_avrc_rn_evt_cap_mask_t notifications={.bits=1U<<ESP_AVRC_RN_VOLUME_CHANGE};
-    mosaico_bt_phase(50);TRY(esp_avrc_tg_set_rn_evt_cap(&notifications));
-    mosaico_bt_phase(51);TRY(esp_a2d_register_callback(a2dp));
-    mosaico_bt_phase(52);TRY(esp_a2d_sink_register_data_callback(pcm));
-    mosaico_bt_phase(14);TRY(esp_a2d_sink_init());sink_requested=true;
-    mosaico_bt_phase(54);TRY(wait_profile(1));
-    mosaico_bt_phase(15);
+    TRY(esp_avrc_tg_set_rn_evt_cap(&notifications));
+    TRY(esp_a2d_register_callback(a2dp));
+    TRY(esp_a2d_sink_register_data_callback(pcm));
+    TRY(esp_a2d_sink_init());sink_requested=true;
+    TRY(wait_profile(1));
     TRY(esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE,ESP_BT_GENERAL_DISCOVERABLE));
-    mosaico_bt_phase(100);return ESP_OK;
+    return ESP_OK;
 fail:
     mosaico_classic_stop();return rc;
 }

@@ -1,0 +1,279 @@
+//! Scene to RGB565: compose palette indices, warp, look up the palette.
+//!
+//! 1. The base pose and the "under" layers are decoded into an index buffer.
+//!    This step is skipped when the layer list did not change (signature
+//!    cache), which is the common case while the fox only breathes.
+//! 2. The index buffer is warped (nearest neighbour, about the bottom centre)
+//!    and looked up in the palette into the output canvas.
+//! 3. The "over" layers (Zzz, sweat, sparks) are stamped on top at their
+//!    warped position, with a Bayer stipple instead of alpha for fades.
+
+use crate::companion::render::skin::Skin;
+use alloc::rc::Rc;
+use alloc::vec;
+use alloc::vec::Vec;
+
+use crate::companion::render::math::round;
+use {
+    crate::companion::render::scene::Layer, crate::companion::render::scene::Scene,
+    crate::companion::render::scene::Warp,
+};
+use {
+    crate::companion::render::Img, crate::companion::render::H, crate::companion::render::PIXELS,
+    crate::companion::render::TRANSPARENT, crate::companion::render::W,
+};
+
+/// 4x4 ordered-dither thresholds for [`Layer::fade`].
+const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+
+/// Decode `img` into a `stride`-wide index buffer at (`x0`, `y0`), clipped,
+/// skipping transparent runs.
+fn stamp(
+    buf: &mut [u8],
+    stride: usize,
+    rows: usize,
+    img: &Img,
+    skin: &Skin,
+    x0: i32,
+    y0: i32,
+    decoded: &mut Vec<u8>,
+) {
+    let rle = &skin.blob()[img.off as usize..img.off as usize + img.len as usize];
+    if skin.indexed_zlib() {
+        // Reuse one image-sized buffer. All streams and palette indices were
+        // checked at load; the package remains immutable throughout rendering.
+        decoded.resize(img.w as usize * img.h as usize, TRANSPARENT);
+        skin.decode_indexed(img, decoded);
+        for row in 0..img.h as usize {
+            let y = y0 + row as i32;
+            if y < 0 || y as usize >= rows {
+                continue;
+            }
+            let start = row * img.w as usize;
+            for x in 0..img.w as usize {
+                let px = decoded[start + x];
+                let dx = x0 + x as i32;
+                if px != TRANSPARENT && dx >= 0 && (dx as usize) < stride {
+                    buf[y as usize * stride + dx as usize] = px;
+                }
+            }
+        }
+        return;
+    }
+    let w = img.w as i32;
+    let mut i = 0;
+    for row in 0..img.h as i32 {
+        let y = y0 + row;
+        let mut x = 0i32;
+        while x < w && i + 1 < rle.len() {
+            let n = rle[i] as i32;
+            let v = rle[i + 1];
+            i += 2;
+            if v != TRANSPARENT && y >= 0 && (y as usize) < rows {
+                let a = (x0 + x).max(0);
+                let b = (x0 + x + n).min(stride as i32);
+                if a < b {
+                    let base = y as usize * stride;
+                    buf[base + a as usize..base + b as usize].fill(v);
+                }
+            }
+            x += n;
+        }
+    }
+}
+
+/// Composes scenes into RGB565 canvases.
+pub struct FoxRenderer {
+    idx: Vec<u8>,
+    scratch: Vec<u8>,
+    decoded: Vec<u8>,
+    signature: u64,
+    skin: Option<Rc<Skin>>,
+    /// Frames that reused the composed index buffer.
+    pub reused: u32,
+}
+
+impl FoxRenderer {
+    pub fn new() -> Self {
+        Self {
+            idx: vec![0; PIXELS],
+            scratch: Vec::new(),
+            decoded: Vec::new(),
+            signature: 0,
+            skin: None,
+            reused: 0,
+        }
+    }
+
+    fn compose(&mut self, scene: &Scene) {
+        let sig = scene
+            .under
+            .signature(0xcbf2_9ce4_8422_2325 ^ scene.pose as u64);
+        let same_skin = self
+            .skin
+            .as_ref()
+            .is_some_and(|s| Skin::same_resources(s, &scene.skin));
+        if same_skin && sig == self.signature {
+            self.reused = self.reused.wrapping_add(1);
+            return;
+        }
+        self.signature = sig;
+        self.skin = Some(Rc::clone(&scene.skin));
+        let pose = scene.skin.pose(scene.pose);
+        if scene.skin.indexed_zlib() {
+            // Base poses are validated opaque and canvas-sized: inflate
+            // directly into the composition buffer, with no second canvas.
+            scene.skin.decode_indexed(&pose.base, &mut self.idx);
+        } else {
+            stamp(
+                &mut self.idx,
+                W,
+                H,
+                &pose.base,
+                &scene.skin,
+                0,
+                0,
+                &mut self.decoded,
+            );
+        }
+        for l in scene.under.iter() {
+            self.layer_into_idx(l, &scene.skin);
+        }
+    }
+
+    fn layer_into_idx(&mut self, l: &Layer, skin: &Skin) {
+        let img = &l.img;
+        if l.scale_q8 == 256 && l.fade >= 16 {
+            stamp(
+                &mut self.idx,
+                W,
+                H,
+                img,
+                skin,
+                img.x as i32 + l.dx as i32,
+                img.y as i32 + l.dy as i32,
+                &mut self.decoded,
+            );
+            return;
+        }
+        let (w, h) = (img.w as usize, img.h as usize);
+        self.scratch.clear();
+        self.scratch.resize(w * h, TRANSPARENT);
+        stamp(&mut self.scratch, w, h, img, skin, 0, 0, &mut self.decoded);
+        let s = l.scale_q8.max(16) as i32;
+        let nw = (w as i32 * s + 128) >> 8;
+        let nh = (h as i32 * s + 128) >> 8;
+        let x0 = img.x as i32 + l.dx as i32 - (nw - w as i32) / 2;
+        let y0 = img.y as i32 + l.dy as i32 - (nh - h as i32) / 2;
+        for oy in 0..nh {
+            let y = y0 + oy;
+            if y < 0 || y >= H as i32 {
+                continue;
+            }
+            let sy = ((oy << 8) / s).min(h as i32 - 1) as usize;
+            for ox in 0..nw {
+                let x = x0 + ox;
+                if x < 0 || x >= W as i32 {
+                    continue;
+                }
+                if l.fade < 16 && BAYER[(y & 3) as usize][(x & 3) as usize] >= l.fade {
+                    continue;
+                }
+                let sx = ((ox << 8) / s).min(w as i32 - 1) as usize;
+                let v = self.scratch[sy * w + sx];
+                if v != TRANSPARENT {
+                    self.idx[y as usize * W + x as usize] = v;
+                }
+            }
+        }
+    }
+
+    /// Draw `scene` into `out` (`W * H` RGB565 pixels).
+    pub fn render(&mut self, scene: &Scene, out: &mut [u16]) {
+        assert!(out.len() >= PIXELS, "fox canvas too short");
+        self.compose(scene);
+        let pal = scene.skin.palette();
+        let lookup = |v: u8| -> u16 {
+            if (v as usize) < pal.len() {
+                pal[v as usize]
+            } else {
+                0
+            }
+        };
+
+        let warp = scene.warp;
+        if warp == Warp::IDENTITY {
+            for (o, &v) in out[..PIXELS].iter_mut().zip(self.idx.iter()) {
+                *o = lookup(v);
+            }
+        } else {
+            let ax = W as f32 / 2.0;
+            let ay = (H - 1) as f32;
+            let mut xlut = [0i16; W];
+            for (x, slot) in xlut.iter_mut().enumerate() {
+                let sx = round(ax + (x as f32 - warp.dx as f32 - ax) / warp.sx);
+                *slot = if sx >= 0 && sx < W as i32 {
+                    sx as i16
+                } else {
+                    -1
+                };
+            }
+            for y in 0..H {
+                let row = &mut out[y * W..(y + 1) * W];
+                let sy = round(ay - (ay - (y as f32 - warp.dy as f32)) / warp.sy);
+                if sy < 0 || sy >= H as i32 {
+                    row.fill(0);
+                    continue;
+                }
+                let src = &self.idx[sy as usize * W..(sy as usize + 1) * W];
+                for (o, &sx) in row.iter_mut().zip(xlut.iter()) {
+                    *o = if sx >= 0 { lookup(src[sx as usize]) } else { 0 };
+                }
+            }
+        }
+
+        for l in scene.over.iter() {
+            let img = &l.img;
+            let (fx, fy) = warp.forward(img.x as f32 + l.dx as f32, img.y as f32 + l.dy as f32);
+            let (x0, y0) = (round(fx), round(fy));
+            self.scratch.clear();
+            self.scratch
+                .resize(img.w as usize * img.h as usize, TRANSPARENT);
+            stamp(
+                &mut self.scratch,
+                img.w as usize,
+                img.h as usize,
+                img,
+                &scene.skin,
+                0,
+                0,
+                &mut self.decoded,
+            );
+            for sy in 0..img.h as i32 {
+                let y = y0 + sy;
+                if y < 0 || y >= H as i32 {
+                    continue;
+                }
+                for sx in 0..img.w as i32 {
+                    let x = x0 + sx;
+                    if x < 0 || x >= W as i32 {
+                        continue;
+                    }
+                    if l.fade < 16 && BAYER[(y & 3) as usize][(x & 3) as usize] >= l.fade {
+                        continue;
+                    }
+                    let v = self.scratch[sy as usize * img.w as usize + sx as usize];
+                    if v != TRANSPARENT {
+                        out[y as usize * W + x as usize] = lookup(v);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Default for FoxRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -1,18 +1,18 @@
 //! Real TLS records through the same owned engine used by firmware services.
 extern crate alloc;
-#[path = "../src/drivers/radio/https/engine.rs"]
+#[path = "../src/platform/drivers/radio/https/engine.rs"]
 mod engine;
 use engine::{Action, Engine};
 use rustls::{
-    ClientConfig, RootCertStore, ServerConfig, ServerConnection,
     client::UnbufferedClientConnection,
     pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime},
     time_provider::TimeProvider,
+    ClientConfig, RootCertStore, ServerConfig, ServerConnection,
 };
 use std::{
     collections::VecDeque,
     io::{Cursor, Read, Write},
-    sync::{Arc, mpsc},
+    sync::{mpsc, Arc},
     time::Duration,
 };
 

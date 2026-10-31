@@ -1,36 +1,44 @@
 # os：ESP32-S31 固件与系统库
 
 面向 ESP-Mosaico v1.2 团子终端的固件与主机可测试系统库。
-`src/lib.rs` 提供 `os` 库，使用 `no_std + alloc`，承载不直接访问硬件的逻辑，
-可以在主机运行 `cargo test`。`src/main.rs` 是 `os-fw` 固件入口，编排驱动和
-Embassy 任务。完整目录见 [源码结构](../../docs/architecture/project-structure.md)。
+`src/lib.rs` 提供主机与设备共用的规范模块树，使用 `no_std + alloc`。
+HAL、执行器和设备任务在实际子模块上通过 `target_os = "none"` 编译条件隔离。
+`src/main.rs` 保留固件描述符与入口宏，初始化、服务接线和任务启动位于 `boot`。
+完整目录见 [源码结构](../../docs/architecture/project-structure.md)。
 
 | 库模块 | 职责 |
 | --- | --- |
-| `behavior` | `Expression`、情绪引擎（传感器到情绪）、个性引擎（点按）、`Runtime`（合并决策与马达请求） |
-| `fox` | 调色板 RLE 精灵、`FoxAnimator`（表情和时间到 `Scene`）、`FoxRenderer`（`Scene` 到 RGB565）、入场动画 |
-| `hub` | 主页、启动器与应用导航，边缘手势、页面滑动、计时器、传感器快照、Lua 应用注册与 USB 推送 |
-| `ui` | `MosaicoApp` 屏幕树、`FoxWidget` / `FoxControl`、双槽 `CanvasPool`、启动器页面、中文字体与暂未启用的启动页 |
-| `telemetry` | 触摸到首像素延迟和显示统计 |
+| `boot` | 堆 region、硬件与执行器初始化，服务启动及存储恢复接线 |
+| `companion` | 行为与个性、常驻 brain、角色动画/渲染/皮肤和 Home 控件 |
+| `shell` | 唯一路由、页面、组件、主题、生命周期协调和 UI 循环 |
+| `apps` | 应用注册与管理、前台 Lua VM 和 native UI 桥接 |
+| `services` | 音频、相机、无线、输入、显示、反馈、电源、偏好、计时器与更新 |
+| `platform` | 板型、外设驱动、共享总线、存储、执行器及 C 运行支持 |
+| `console` | USB CDC 日志/传输、协议会话和功能请求分派 |
+| `formats` | 共享 CRC32 与清单 JSON 解码 |
 
 ## 任务调度
 
-`esp-rtos` 与 Embassy 在 core 0 上使用线程、中断两个执行器：
+默认 `dual-core-ui` 使用 Core1 UI/Lua 线程；Core0 主线程运行输入、传感器和无线，
+Core0 服务线程处理同步文件与资源工作。显示和音频继续使用 Core0 中断执行器。
+关闭默认 feature 时复用 Core0 线程执行器。核心绑定、栈和优先级由
+`boot` 与 `platform/runtime/executors` 装配，详情见 [双核任务](../../docs/architecture/dual-core.md)。
 
-| 任务 | 执行器 | 行为 |
+| 任务入口 | 执行位置 | 行为 |
 | --- | --- | --- |
-| `plane_task`（`tasks/plane.rs`） | 中断，FROM_CPU_INTR1，优先级 2 | 独占 CO5300；取得最新画布槽，将 352×336 画布上传到面板坐标 (64, 88)，按 32 行分块执行异步 QSPI DMA；动画帧等待 TE，携带触摸标记的帧跳过等待。 |
-| `ui_task`（`tasks/ui.rs`） | 线程 | 独占 LVGL；每 5 ms 将传感器与触摸事件送入 `behavior::Runtime` 和 Hub，再绘制当前页面。狐狸按 50 ms 节奏或在触摸后立即绘入空闲画布槽；LVGL / Lua 页面绘入 PSRAM 影子帧，交给 plane 上传并记录统计。 |
-| `lua`（`tasks/lua.rs`） | 线程 | 在内存上限和时间片约束下运行一个 Lua 应用；显示帧交给 UI 任务。 |
-| `usb_task`（`main.rs`） | 线程 | USB 协议栈、日志发送、推送协议接收和延迟存储挂载；优先启动，以便读取开机崩溃记录。 |
-| `input_task`（`tasks/input.rs`） | 线程 | 独占 CST9220；使用 GPIO6 边沿触发与 5 ms 兜底，通过异步 I2C 读取并写入有界通道。 |
-| `sensor_task`（`tasks/sensors.rs`） | 线程 | BMI270、两个 BMM150、BQ27220、左右扩展槽（任意侧的交互板及相机识别），输出有界 `SensorEvent` 通道。 |
-| `haptic_task`（`tasks/haptic.rs`） | 线程 | 通过 RMT 在 GPIO8 生成 5 kHz PWM 马达波形。 |
-| `lights`（`tasks/lights.rs`） | 线程 | 控制右槽交互板的 WS2812 心情灯。 |
+| `services/display/plane.rs` | Core0 中断，FROM_CPU_INTR1，优先级 2 | 独占 CO5300；352×336 Home 画布位于面板 (64,88)，按既有分块协议执行 QSPI DMA；Screen/Snapshot/Pool 租约保护在途像素 |
+| `shell/runtime/mod.rs` | Core1 UI 线程 | 独占 LVGL；传感器与指针按既有顺序处理；50 ms 动画节奏及紧急变更绘制、导航和帧交接 |
+| `apps/lua/task.rs` | Core1 UI 线程 | 执行前台应用 VM；停止状态在 VM 析构后发布，原生桥接清理继续由 UI 任务处理 |
+| `boot::usb_task`、`console` | Core0 服务线程 | USB 栈与 CDC 收发、日志及延迟存储挂载；启动时优先提供控制台 |
+| `services/input/touch.rs`、`sensors.rs` | Core0 主线程 | CST9220、BMI270、BMM150、电量与扩展槽输入，输出有界事件 |
+| `services/feedback/haptic`、`lights` | Core0 主线程 | RMT 马达波形与扩展板 WS2812 心情灯 |
 
-控制台（`console.rs`）是 USB-OTG HS CDC-ACM 设备。`log` 消息格式化为固定
-160 字节记录，经有界 `embassy_sync` 通道排队，主机打开端口后由发送任务写入 CDC。
-应用日志不走 `esp-println` 的 `jtag-serial` 通道，该通道没有连接这块板的 USB-C。
+控制台是 USB-OTG HS CDC-ACM 设备。日志格式化为固定 160 字节记录，经有界通道
+排队，主机打开端口后由发送任务写入 CDC。应用日志经该端口输出。
+
+Home 顶部状态栏与角色共用画布和双槽池。无线服务按现有一秒循环读取当前 station
+RSSI，界面显示 Wi-Fi 图标、信号/状态及蓝牙状态；未知信号显示 `--dbm`，断开清除旧值。
+连接与断开表情在原生回退和内置 Lua brain 中均持续 4 秒，然后恢复常规行为。
 
 ## 硬件约束
 

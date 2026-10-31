@@ -1,14 +1,5 @@
 //! Render native settings with LVGL and exercise pointer/text input end to end.
-use os::{
-    AppMsg, MosaicoApp,
-    behavior::Expression,
-    hub::{
-        AppId, Page,
-        settings::{self, Action},
-    },
-    ui::{fox_widget::FoxControl, splash::SplashControl, theme},
-};
-use rs_lvgl::{Display, sys};
+use rs_lvgl::{sys, Display};
 use rs_lvgl_ui::{App, Ui};
 use std::{
     cell::RefCell,
@@ -18,6 +9,13 @@ use std::{
     rc::Rc,
     sync::atomic::{AtomicBool, AtomicI32, Ordering},
     time::Duration,
+};
+use {
+    os::companion::behavior::Expression, os::companion::widget::FoxControl,
+    os::services::settings::Command as Action, os::shell::app::theme,
+    os::shell::components::splash::SplashControl, os::shell::navigation::route::AppId,
+    os::shell::navigation::route::Page, os::shell::pages::settings::model as settings, os::AppMsg,
+    os::MosaicoApp,
 };
 
 static X: AtomicI32 = AtomicI32::new(0);
@@ -157,34 +155,75 @@ fn categories_controls_and_wifi_password_use_native_events() {
     run(&mut ui, &mut app, 100);
     app.settings_session_mut().info.storage_ready = true;
     app.settings_session_mut().skins = vec![
-        os::hub::skins::Choice { id: "default".into(), name: "鸣潮 · 心月狐团子".into() },
-        os::hub::skins::Choice { id: "eclipse".into(), name: "玄灵 · 月蚀".into() },
-        os::hub::skins::Choice { id: "normal".into(), name: "玄灵 · 常态".into() },
-        os::hub::skins::Choice { id: "black-blue".into(), name: "智谱团子".into() },
+        os::companion::skins::Choice {
+            id: "default".into(),
+            name: "鸣潮 · 心月狐团子".into(),
+        },
+        os::companion::skins::Choice {
+            id: "eclipse".into(),
+            name: "玄灵 · 月蚀".into(),
+        },
+        os::companion::skins::Choice {
+            id: "normal".into(),
+            name: "玄灵 · 常态".into(),
+        },
+        os::companion::skins::Choice {
+            id: "black-blue".into(),
+            name: "智谱团子".into(),
+        },
     ];
     app.settings_session_mut().selected_skin = "eclipse".into();
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
     unsafe {
-        assert!(label(sys::lv_screen_active(), "玄灵 · 月蚀  ›").is_some(), "root displays the active character");
+        assert!(
+            label(sys::lv_screen_active(), "玄灵 · 月蚀  ›").is_some(),
+            "root displays the active character"
+        );
     }
     capture("01-settings", &pixels);
     tap(&mut ui, &mut app, 240, 124);
-    assert_eq!(app.hub().settings_page, settings::Page::Character, "character chooser is the first row");
+    assert_eq!(
+        app.settings_page(),
+        settings::Page::Character,
+        "character chooser is the first row"
+    );
     unsafe {
-        for name in ["鸣潮 · 心月狐团子", "玄灵 · 月蚀", "玄灵 · 常态", "智谱团子"] {
-            assert!(label(sys::lv_screen_active(), name).is_some(), "bundled name is shown in full: {name}");
+        for name in [
+            "鸣潮 · 心月狐团子",
+            "玄灵 · 月蚀",
+            "玄灵 · 常态",
+            "智谱团子",
+        ] {
+            assert!(
+                label(sys::lv_screen_active(), name).is_some(),
+                "bundled name is shown in full: {name}"
+            );
         }
-        let selected = sys::lv_obj_get_parent(label(sys::lv_screen_active(), "玄灵 · 月蚀").unwrap());
+        let selected =
+            sys::lv_obj_get_parent(label(sys::lv_screen_active(), "玄灵 · 月蚀").unwrap());
         assert_eq!(sys::lv_obj_get_style_border_width(selected, 0), 2);
-        assert!(sys::lv_color_eq(sys::lv_obj_get_style_border_color(selected, 0), sys::lv_color_make(255, 76, 1)));
+        assert!(sys::lv_color_eq(
+            sys::lv_obj_get_style_border_color(selected, 0),
+            sys::lv_color_make(255, 76, 1)
+        ));
         assert!(label(sys::lv_screen_active(), "选择后立即切换，重启后保留。").is_none());
     }
     capture("01-character", &pixels);
     tap(&mut ui, &mut app, 240, 248);
-    assert_eq!(app.take_settings_action(), Some(Action::SelectSkin("normal".into())));
-    assert_eq!(app.settings_session().selected_skin, "eclipse", "selection waits for durable validation and activation");
-    assert_eq!(app.settings_session().loading_skin.as_deref(), Some("normal"));
+    assert_eq!(
+        app.take_settings_action(),
+        Some(Action::SelectSkin("normal".into()))
+    );
+    assert_eq!(
+        app.settings_session().selected_skin,
+        "eclipse",
+        "selection waits for durable validation and activation"
+    );
+    assert_eq!(
+        app.settings_session().loading_skin.as_deref(),
+        Some("normal")
+    );
     unsafe {
         assert!(find(sys::lv_screen_active(), &raw const lv_spinner_class).is_some());
         assert!(label(sys::lv_screen_active(), "切换中").is_some());
@@ -204,7 +243,7 @@ fn categories_controls_and_wifi_password_use_native_events() {
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
     tap_label(&mut ui, &mut app, "显示与电源");
-    assert_eq!(app.hub().settings_page, settings::Page::Display);
+    assert_eq!(app.settings_page(), settings::Page::Display);
     tap(&mut ui, &mut app, 240, 166);
     assert!((40..=80).contains(&app.hub().settings.brightness));
     app.settings_session_mut().info.saving = true;
@@ -220,14 +259,18 @@ fn categories_controls_and_wifi_password_use_native_events() {
     run(&mut ui, &mut app, 100);
     unsafe {
         assert!(find(sys::lv_screen_active(), &raw const lv_spinner_class).is_none());
-        let check = label(sys::lv_screen_active(), rs_lvgl_ui::symbol::OK).expect("saved checkmark");
-        assert!(sys::lv_color_eq(sys::lv_obj_get_style_text_color(check, 0), sys::lv_color_make(99, 194, 112)));
+        let check =
+            label(sys::lv_screen_active(), rs_lvgl_ui::symbol::OK).expect("saved checkmark");
+        assert!(sys::lv_color_eq(
+            sys::lv_obj_get_style_text_color(check, 0),
+            sys::lv_color_make(99, 194, 112)
+        ));
         assert!(label(sys::lv_screen_active(), "偏好已保存").is_none());
     }
     capture("02-display", &pixels);
     tap(&mut ui, &mut app, 60, 48);
     tap_label(&mut ui, &mut app, "声音");
-    assert_eq!(app.hub().settings_page, settings::Page::Audio);
+    assert_eq!(app.settings_page(), settings::Page::Audio);
     tap(&mut ui, &mut app, 240, 166);
     assert!((40..=80).contains(&app.hub().settings.audio_volume));
     tap(&mut ui, &mut app, 388, 246);
@@ -235,35 +278,35 @@ fn categories_controls_and_wifi_password_use_native_events() {
     capture("02-audio", &pixels);
     tap(&mut ui, &mut app, 60, 48);
     tap_label(&mut ui, &mut app, "灯光与震动");
-    assert_eq!(app.hub().settings_page, settings::Page::Feedback);
+    assert_eq!(app.settings_page(), settings::Page::Feedback);
     tap(&mut ui, &mut app, 388, 126);
     tap(&mut ui, &mut app, 388, 202);
     assert!(!app.hub().settings.lights && !app.hub().settings.haptics);
     capture("03-feedback", &pixels);
     tap(&mut ui, &mut app, 60, 48);
     tap_label(&mut ui, &mut app, "无线连接");
-    assert_eq!(app.hub().settings_page, settings::Page::Wireless);
+    assert_eq!(app.settings_page(), settings::Page::Wireless);
     tap(&mut ui, &mut app, 388, 202);
     assert_eq!(
         app.take_settings_action(),
-        Some(Action::Radio(os::radio::Command::BtOn))
+        Some(Action::Radio(os::services::radio::Command::BtOn))
     );
     capture("04-wireless", &pixels);
     tap(&mut ui, &mut app, 240, 124);
-    assert_eq!(app.hub().settings_page, settings::Page::Wifi);
+    assert_eq!(app.settings_page(), settings::Page::Wifi);
     capture("05-wifi-off", &pixels);
     tap(&mut ui, &mut app, 388, 126);
     assert_eq!(
         app.take_settings_action(),
-        Some(Action::Radio(os::radio::Command::WifiOn))
+        Some(Action::Radio(os::services::radio::Command::WifiOn))
     );
-    app.settings_session_mut().info.wifi = os::radio::WifiState::Idle;
+    app.settings_session_mut().info.wifi = os::services::radio::WifiState::Idle;
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
     tap(&mut ui, &mut app, 388, 126);
     assert_eq!(
         app.take_settings_action(),
-        Some(Action::Radio(os::radio::Command::WifiOff))
+        Some(Action::Radio(os::services::radio::Command::WifiOff))
     );
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
@@ -278,9 +321,9 @@ fn categories_controls_and_wifi_password_use_native_events() {
     tap(&mut ui, &mut app, 240, 250);
     assert_eq!(
         app.take_settings_action(),
-        Some(Action::Radio(os::radio::Command::WifiScan))
+        Some(Action::Radio(os::services::radio::Command::WifiScan))
     );
-    let network = os::radio::Network {
+    let network = os::services::radio::Network {
         ssid: b"example ap".to_vec(),
         channel: 6,
         rssi: -42,
@@ -288,7 +331,7 @@ fn categories_controls_and_wifi_password_use_native_events() {
     };
     app.settings_session_mut().networks = vec![
         network.clone(),
-        os::radio::Network {
+        os::services::radio::Network {
             ssid: b"a\0b\xff".to_vec(),
             ..network.clone()
         },
@@ -299,7 +342,7 @@ fn categories_controls_and_wifi_password_use_native_events() {
     app.update(AppMsg::WifiChoose(network));
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
-    assert_eq!(app.hub().settings_page, settings::Page::Password);
+    assert_eq!(app.settings_page(), settings::Page::Password);
     unsafe {
         let root = sys::lv_screen_active();
         let area = find(root, &raw const lv_textarea_class).expect("native textarea");
@@ -310,7 +353,7 @@ fn categories_controls_and_wifi_password_use_native_events() {
     }
     run(&mut ui, &mut app, 100);
     tap(&mut ui, &mut app, 345, 199);
-    assert_eq!(app.hub().settings_page, settings::Page::Password);
+    assert_eq!(app.settings_page(), settings::Page::Password);
     assert!(app.take_settings_action().is_none());
     assert!(app.settings_session().message.is_some());
     capture("06-password-error", &pixels);
@@ -341,38 +384,67 @@ fn categories_controls_and_wifi_password_use_native_events() {
         );
     }
     tap(&mut ui, &mut app, 345, 199);
-    let Some(Action::Radio(os::radio::Command::WifiConnect(c))) = app.take_settings_action() else {
+    let Some(Action::Radio(os::services::radio::Command::WifiConnect(c))) =
+        app.take_settings_action()
+    else {
         panic!("connect event")
     };
     assert_eq!(c.ssid, b"example ap");
     assert_eq!(c.password, b"test-key8");
     assert!(app.settings_session().password.0.is_empty());
-    assert_eq!(app.hub().settings_page, settings::Page::Wifi);
-    app.settings_session_mut().wifi_saved = os::radio::known::Snapshot {
-        loaded: true, enabled: true, automatic: true,
-        networks: vec![b"example ap".to_vec()], current: Some(b"example ap".to_vec()),
+    assert_eq!(app.settings_page(), settings::Page::Wifi);
+    app.settings_session_mut().wifi_saved = os::services::radio::known::Snapshot {
+        loaded: true,
+        enabled: true,
+        automatic: true,
+        networks: vec![b"example ap".to_vec()],
+        current: Some(b"example ap".to_vec()),
         ..Default::default()
     };
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
     capture("05-wifi-saved", &pixels);
     tap_label(&mut ui, &mut app, "example ap");
-    assert_eq!(app.hub().settings_page, settings::Page::KnownNetwork);
-    unsafe { assert!(find(sys::lv_screen_active(), &raw const lv_textarea_class).is_none()); }
+    assert_eq!(app.settings_page(), settings::Page::KnownNetwork);
+    unsafe {
+        assert!(find(sys::lv_screen_active(), &raw const lv_textarea_class).is_none());
+    }
     tap_label(&mut ui, &mut app, "连接此网络");
-    assert_eq!(app.take_settings_action(), Some(Action::Radio(os::radio::Command::WifiSavedConnect(b"example ap".to_vec()))));
-    app.update(AppMsg::WifiChoose(os::radio::Network { ssid: b"example ap".to_vec(), channel: 0, rssi: 0, auth: "WPA2".into() }));
-    ui.mark_dirty(); run(&mut ui, &mut app, 100);
+    assert_eq!(
+        app.take_settings_action(),
+        Some(Action::Radio(
+            os::services::radio::Command::WifiSavedConnect(b"example ap".to_vec())
+        ))
+    );
+    app.update(AppMsg::WifiChoose(os::services::radio::Network {
+        ssid: b"example ap".to_vec(),
+        channel: 0,
+        rssi: 0,
+        auth: "WPA2".into(),
+    }));
+    ui.mark_dirty();
+    run(&mut ui, &mut app, 100);
     capture("05-wifi-known-detail", &pixels);
     tap_label(&mut ui, &mut app, "重新输入密码");
-    assert_eq!(app.hub().settings_page, settings::Page::Password);
+    assert_eq!(app.settings_page(), settings::Page::Password);
     assert!(app.settings_session().password.0.is_empty());
     app.update(AppMsg::SettingsBack);
-    app.update(AppMsg::WifiChoose(os::radio::Network { ssid: b"example ap".to_vec(), channel: 0, rssi: 0, auth: "WPA2".into() }));
-    ui.mark_dirty(); run(&mut ui, &mut app, 100);
+    app.update(AppMsg::WifiChoose(os::services::radio::Network {
+        ssid: b"example ap".to_vec(),
+        channel: 0,
+        rssi: 0,
+        auth: "WPA2".into(),
+    }));
+    ui.mark_dirty();
+    run(&mut ui, &mut app, 100);
     tap_label(&mut ui, &mut app, "忘记此网络");
-    assert_eq!(app.take_settings_action(), Some(Action::Radio(os::radio::Command::WifiForget(b"example ap".to_vec()))));
-    assert_eq!(app.hub().settings_page, settings::Page::Wifi);
+    assert_eq!(
+        app.take_settings_action(),
+        Some(Action::Radio(os::services::radio::Command::WifiForget(
+            b"example ap".to_vec()
+        )))
+    );
+    assert_eq!(app.settings_page(), settings::Page::Wifi);
     app.update(AppMsg::SettingsPage(settings::Page::Camera));
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
@@ -391,9 +463,44 @@ fn categories_controls_and_wifi_password_use_native_events() {
         app.update(AppMsg::SettingsPage(page));
         ui.mark_dirty();
         run(&mut ui, &mut app, 100);
+        if page == settings::Page::System {
+            // Opening About must stay interactive before the service has a
+            // heap sample. A real zero sample is different from pending data.
+            unsafe {
+                assert!(label(sys::lv_screen_active(), "读取中").is_some());
+            }
+            run(&mut ui, &mut app, 1200);
+            tap(&mut ui, &mut app, 60, 48);
+            assert_eq!(app.settings_page(), settings::Page::Root);
+            tap_label(&mut ui, &mut app, "关于设备");
+            assert_eq!(app.settings_page(), settings::Page::System);
+            for (uptime_s, free_kib, value) in [
+                (60, 0, "0.0 MB"),
+                (120, 12 * 1024, "12.0 MB"),
+                (180, 14 * 1024 + 512, "14.5 MB"),
+            ] {
+                app.hub_mut().about.uptime_s = uptime_s;
+                app.hub_mut().about.free_kib = Some(free_kib);
+                ui.mark_dirty();
+                run(&mut ui, &mut app, 1100);
+                unsafe {
+                    assert!(label(sys::lv_screen_active(), value).is_some());
+                    assert!(label(sys::lv_screen_active(), "读取中").is_none());
+                }
+            }
+            tap(&mut ui, &mut app, 60, 48);
+            assert_eq!(app.settings_page(), settings::Page::Root);
+            tap_label(&mut ui, &mut app, "关于设备");
+            assert_eq!(app.settings_page(), settings::Page::System);
+            unsafe {
+                assert!(label(sys::lv_screen_active(), "14.5 MB").is_some());
+            }
+        }
         capture(name, &pixels);
-        app.update(AppMsg::Gesture(os::hub::gesture::SystemGesture::Back));
-        assert_eq!(app.hub().settings_page, settings::Page::Root);
+        app.update(AppMsg::Gesture(
+            os::shell::navigation::gesture::SystemGesture::Back,
+        ));
+        assert_eq!(app.settings_page(), settings::Page::Root);
     }
     app.update(AppMsg::SettingsPage(settings::Page::Update));
     ui.mark_dirty();
@@ -404,10 +511,10 @@ fn categories_controls_and_wifi_password_use_native_events() {
     tap_label(&mut ui, &mut app, "检查更新");
     assert_eq!(
         app.take_settings_action(),
-        Some(Action::Update(os::update::Command::Check))
+        Some(Action::Update(os::services::update::Command::Check))
     );
-    app.settings_session_mut().update = os::update::Snapshot {
-        phase: os::update::Phase::Available,
+    app.settings_session_mut().update = os::services::update::Snapshot {
+        phase: os::services::update::Phase::Available,
         version: Some("0.2.2".into()),
         ..Default::default()
     };
@@ -418,9 +525,9 @@ fn categories_controls_and_wifi_password_use_native_events() {
     tap_label(&mut ui, &mut app, "下载并安装");
     assert_eq!(
         app.take_settings_action(),
-        Some(Action::Update(os::update::Command::Install))
+        Some(Action::Update(os::services::update::Command::Install))
     );
-    app.settings_session_mut().update.phase = os::update::Phase::Downloading;
+    app.settings_session_mut().update.phase = os::services::update::Phase::Downloading;
     app.settings_session_mut().update.received = 256 * 1024;
     app.settings_session_mut().update.total = 1024 * 1024;
     ui.mark_dirty();
@@ -430,9 +537,9 @@ fn categories_controls_and_wifi_password_use_native_events() {
     tap_label(&mut ui, &mut app, "取消更新");
     assert_eq!(
         app.take_settings_action(),
-        Some(Action::Update(os::update::Command::Cancel))
+        Some(Action::Update(os::services::update::Command::Cancel))
     );
-    app.settings_session_mut().update.phase = os::update::Phase::Incompatible;
+    app.settings_session_mut().update.phase = os::services::update::Phase::Incompatible;
     app.settings_session_mut().update.error = Some("发布固件使用旧分区布局，已拒绝安装");
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
@@ -452,42 +559,57 @@ fn categories_controls_and_wifi_password_use_native_events() {
     assert_eq!(app.settings_session().proxy_address, "10.26.104.1:7777");
     capture("20-update-proxy", &pixels);
     tap(&mut ui, &mut app, 342, 199);
-    assert_eq!(app.hub().settings_page, settings::Page::Update);
+    assert_eq!(app.settings_page(), settings::Page::Update);
     assert!(app.hub().settings.update_proxy_enabled);
-    assert_eq!(app.hub().settings.update_proxy.unwrap().address(), "10.26.104.1:7777");
+    assert_eq!(
+        app.hub().settings.update_proxy.unwrap().address(),
+        "10.26.104.1:7777"
+    );
     app.update(AppMsg::UpdateProxyToggle(false));
     assert!(!app.hub().settings.update_proxy_enabled);
     assert!(app.hub().settings.update_proxy.is_some());
 
     app.go(Page::App(AppId::Camera));
-    app.hub_mut().camera.state = os::camera::State::Fault;
+    app.hub_mut().camera.state = os::services::camera::State::Fault;
     app.hub_mut().camera.error = Some("camera-short-frame");
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
     capture("11-camera-retry", &pixels);
     tap(&mut ui, &mut app, 240, 394);
-    assert_eq!(app.take_camera_action(), Some(os::camera::Command::Start));
-    app.hub_mut().camera.state = os::camera::State::Preview;
+    assert_eq!(
+        app.take_camera_action(),
+        Some(os::services::camera::Command::Start)
+    );
+    app.hub_mut().camera.state = os::services::camera::State::Preview;
     app.hub_mut().camera.error = None;
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
     capture("12-camera-ready", &pixels);
     tap(&mut ui, &mut app, 240, 394);
-    assert_eq!(app.take_camera_action(), Some(os::camera::Command::Capture));
-    app.update(AppMsg::Gesture(os::hub::gesture::SystemGesture::Back));
+    assert_eq!(
+        app.take_camera_action(),
+        Some(os::services::camera::Command::Capture)
+    );
+    app.update(AppMsg::Gesture(
+        os::shell::navigation::gesture::SystemGesture::Back,
+    ));
     assert_eq!(app.page(), Page::Launcher);
 
     app.go(Page::App(AppId::Sensors));
-    app.hub_mut().snapshot.left =
-        os::hub::snapshot::SlotState::Module(os::behavior::affect::ModuleKind::Camera);
+    app.hub_mut().snapshot.left = os::services::input::snapshot::SlotState::Module(
+        os::companion::behavior::affect::ModuleKind::Camera,
+    );
     app.hub_mut().snapshot.accel_mg = Some([0, 0, 1000]);
     app.hub_mut().snapshot.gyro_dps = Some([1, 2, 3]);
     app.hub_mut().snapshot.battery = Some(87);
-    app.hub_mut().camera.state = os::camera::State::Off;
+    app.hub_mut().camera.state = os::services::camera::State::Off;
     app.hub_mut().camera.pid = 0xda4a;
-    app.hub_mut().radio = os::radio::Snapshot {
-        wifi: os::radio::WifiState::Connected,
-        bluetooth: os::radio::BluetoothState::Discoverable,
+    app.hub_mut().radio = os::services::radio::Snapshot {
+        wifi: os::services::radio::WifiState::Connected,
+        wifi_link: os::services::radio::WifiLink::Connected {
+            rssi_dbm: Some(-55),
+        },
+        bluetooth: os::services::radio::BluetoothState::Discoverable,
         ip: Some([192, 0, 2, 42]),
     };
     ui.mark_dirty();
@@ -508,8 +630,8 @@ fn categories_controls_and_wifi_password_use_native_events() {
     };
     capture("14-sensors-wireless", &pixels);
     let scroll = unsafe { sys::lv_obj_get_scroll_y(grid) };
-    app.hub_mut().radio.wifi = os::radio::WifiState::Off;
-    app.hub_mut().radio.bluetooth = os::radio::BluetoothState::Connected;
+    app.hub_mut().radio.wifi = os::services::radio::WifiState::Off;
+    app.hub_mut().radio.bluetooth = os::services::radio::BluetoothState::Connected;
     ui.mark_dirty();
     run(&mut ui, &mut app, 100);
     unsafe {

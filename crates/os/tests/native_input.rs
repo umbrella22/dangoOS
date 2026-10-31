@@ -1,6 +1,6 @@
 //! Real LVGL timer-pointer tests for native clean/rebuild transactions.
 use lua_engine::ui::UiCommand;
-use os::lua_lvgl::LuaLvglService;
+use os::apps::lua::native_ui::LuaLvglService;
 use rs_lvgl::{sys as s, Display};
 use serde_json::{json, Value};
 use std::{

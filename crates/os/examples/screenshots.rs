@@ -1,17 +1,7 @@
 //! Export README screenshots from the production native UI and unchanged 2048 app.
 //! Run from the repository root: cargo run -p os --example screenshots -- OUT
 use lua_engine::{Blit, DisplayInfo, Host, Limits, Request, Step, TouchPoint, Vm};
-use os::{
-    AppMsg, Expression, FoxControl, MosaicoApp,
-    fox::skin::Skin,
-    hub::{
-        AppId, Page,
-        registry::{IconCache, Registry},
-        settings,
-    },
-    ui::{splash::SplashControl, theme},
-};
-use rs_lvgl::{Display, sys};
+use rs_lvgl::{sys, Display};
 use rs_lvgl_ui::{App, Ui};
 use std::{
     cell::{Cell, RefCell},
@@ -22,6 +12,13 @@ use std::{
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
+};
+use {
+    os::apps::registry::IconCache, os::apps::registry::Registry, os::companion::render::skin::Skin,
+    os::shell::app::theme, os::shell::components::splash::SplashControl,
+    os::shell::navigation::route::AppId, os::shell::navigation::route::Page,
+    os::shell::pages::settings::model as settings, os::AppMsg, os::Expression, os::FoxControl,
+    os::MosaicoApp,
 };
 
 type Pixels = Rc<RefCell<Vec<u8>>>;
@@ -93,7 +90,7 @@ fn registry(root: &Path) -> Registry {
     })
 }
 
-fn skin_choices(root: &Path) -> Vec<os::hub::skins::Choice> {
+fn skin_choices(root: &Path) -> Vec<os::companion::skins::Choice> {
     let volume = fs::Fs::mount_or_format(
         Box::new(fs::RamDevice::new(4096, 32)),
         fs::Geometry::flash(32),
@@ -109,7 +106,7 @@ fn skin_choices(root: &Path) -> Vec<os::hub::skins::Choice> {
         vfs.write_file(&format!("{directory}/skin.json"), &metadata)
             .unwrap();
     }
-    os::hub::skins::choices(&mut vfs).unwrap()
+    os::companion::skins::choices(&mut vfs).unwrap()
 }
 
 struct GameHost {
@@ -239,6 +236,14 @@ fn main() {
     .unwrap();
     let control = FoxControl::new(Expression::Idle);
     let mut app = MosaicoApp::new(control.clone(), SplashControl::new());
+    control.set_radio_status(os::services::radio::Snapshot {
+        wifi: os::services::radio::WifiState::Connected,
+        wifi_link: os::services::radio::WifiLink::Connected {
+            rssi_dbm: Some(-55),
+        },
+        bluetooth: os::services::radio::BluetoothState::Connected,
+        ip: Some([192, 0, 2, 42]),
+    });
     app.enter_fox();
     app.set_registry(registry(&root));
     let mut ui = Ui::new(&display, theme()).unwrap();
@@ -252,6 +257,41 @@ fn main() {
         });
         run(&mut ui, &mut app, 2500);
         capture(out, id, &pixels);
+    }
+    for (name, status) in [
+        ("home-off", os::services::radio::Snapshot::new()),
+        (
+            "home-weak",
+            os::services::radio::Snapshot {
+                wifi: os::services::radio::WifiState::Connected,
+                wifi_link: os::services::radio::WifiLink::Connected {
+                    rssi_dbm: Some(-85),
+                },
+                bluetooth: os::services::radio::BluetoothState::Streaming,
+                ip: Some([192, 0, 2, 42]),
+            },
+        ),
+        (
+            "home-connecting",
+            os::services::radio::Snapshot {
+                wifi: os::services::radio::WifiState::Associating,
+                bluetooth: os::services::radio::BluetoothState::Starting,
+                ..os::services::radio::Snapshot::new()
+            },
+        ),
+        (
+            "home-signal-unavailable",
+            os::services::radio::Snapshot {
+                wifi: os::services::radio::WifiState::Connected,
+                wifi_link: os::services::radio::WifiLink::Connected { rssi_dbm: None },
+                bluetooth: os::services::radio::BluetoothState::Discoverable,
+                ip: Some([192, 0, 2, 42]),
+            },
+        ),
+    ] {
+        control.set_radio_status(status);
+        run(&mut ui, &mut app, 100);
+        capture(out, name, &pixels);
     }
     app.go(Page::Launcher);
     ui.mark_dirty();

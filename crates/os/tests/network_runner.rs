@@ -1,5 +1,5 @@
 //! Exercise the firmware runner against embassy-net's actual DHCP socket.
-#[path = "../src/tasks/radio/network.rs"]
+#[path = "../src/services/radio/device/network.rs"]
 mod network;
 
 use embassy_net::driver::{Capabilities, Driver, HardwareAddress, LinkState, RxToken, TxToken};

@@ -11,23 +11,15 @@
     scripts/device/console.py ota <firmware.bin> | ota-status | ota-abort
     scripts/device/console.py update-status | update-check | update-install | update-cancel
     scripts/device/console.py update-url <https-manifest-url>  # explicit development install
-    scripts/device/console.py nand-info | power-status | screen-on
-    scripts/device/console.py nand-read <page>
     scripts/device/console.py nand-status | nand-format
-    scripts/device/console.py nand-test <write|verify|cleanup>
-    scripts/device/console.py nand-bench <write|read|cleanup>
     scripts/device/console.py wifi-status | wifi-on | wifi-scan | wifi-disconnect | wifi-off
     scripts/device/console.py wifi-connect <SSID>  # WPA2, local password prompt
-    scripts/device/console.py wifi-probe <host> [--tcp-port 80]  # HTTP diagnostic
     scripts/device/console.py bt-status | bt-on | bt-off
     scripts/device/console.py audio-status | audio-stop
     scripts/device/console.py audio-volume <0..100> | audio-mute <0|1>
-    scripts/device/console.py audio-tone <100..4000> [--duration-ms 1000]
     scripts/device/console.py audio-play </data/file.wav>
     scripts/device/console.py audio-record </data/file.wav> [--duration-ms 1000]
-    scripts/device/console.py audio-loopback </data/file.wav>
     scripts/device/console.py screen-off <seconds:1..60>
-    scripts/device/console.py imu-irq <off|int1|int2> | imu-irq-status
 
 <app-dir> holds launcher.json and the files it names; everything except
 dotfiles is sent. The firmware stages the files, swaps them in as
@@ -107,7 +99,7 @@ class Device:
         for line in self.lines(time.monotonic() + timeout):
             if line.startswith("@ok") or line.startswith("@err"):
                 return line
-            if self.echo or line.startswith(("@ota-slot ", "@power-wake ", "@power-panel ", "@nand-bench ", "@wifi-ap ")):
+            if self.echo or line.startswith(("@ota-slot ", "@wifi-ap ")):
                 print(line)
         raise SystemExit("no reply from the device (is the port right, is the firmware new enough?)")
 
@@ -380,26 +372,6 @@ def screen_off(dev, seconds):
         print(dev.command("screen-on", timeout=10.0))
 
 
-def configure_imu_irq(dev, route):
-    request = dev.command(f"imu-irq {route}")
-    print(request)
-    revision = response_fields(request).get("rev")
-    if revision is None:
-        raise SystemExit("IMU request has no revision; configuration is unconfirmed.")
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        status = dev.command("imu-irq-status")
-        fields = response_fields(status)
-        wanted, _, applied = fields.get("rev", "").partition("/")
-        if wanted != revision:
-            raise SystemExit("IMU request was superseded; inspect imu-irq-status.")
-        if applied == revision:
-            print(status)
-            if fields.get("applied") != str({"off": 0, "int1": 1, "int2": 2}[route]):
-                raise SystemExit("IMU interrupt configuration failed; polling fallback remains active.")
-            return
-        time.sleep(0.05)
-    raise SystemExit("IMU configuration timed out; inspect imu-irq-status before assuming it applied.")
 
 
 def wifi_connect_command(ssid, password):
@@ -427,12 +399,12 @@ def update_url_command(value):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    camera = ("camera-status", "camera-probe", "camera-start", "camera-stop", "camera-capture")
-    audio = ("audio-status", "audio-stop", "audio-tone", "audio-play", "audio-record", "audio-loopback", "audio-volume", "audio-mute")
-    wireless = ("wifi-status", "wifi-on", "wifi-scan", "wifi-connect", "wifi-disconnect", "wifi-off", "wifi-probe", "wifi-saved", "wifi-saved-connect", "wifi-forget", "wifi-auto", "bt-status", "bt-on", "bt-off")
+    camera = ("camera-status", "camera-start", "camera-stop", "camera-capture")
+    audio = ("audio-status", "audio-stop", "audio-play", "audio-record", "audio-volume", "audio-mute")
+    wireless = ("wifi-status", "wifi-on", "wifi-scan", "wifi-connect", "wifi-disconnect", "wifi-off", "wifi-saved", "wifi-saved-connect", "wifi-forget", "wifi-auto", "bt-status", "bt-on", "bt-off")
     updates = ("update-status", "update-check", "update-install", "update-cancel", "update-url")
     updates += ("update-proxy",)
-    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "ota", "ota-status", "ota-abort", "nand-info", "nand-read", "nand-status", "nand-format", "nand-test", "nand-bench", "power-status", "screen-off", "screen-on", "imu-irq", "imu-irq-status", *wireless, *camera, *updates, *audio])
+    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "ota", "ota-status", "ota-abort", "nand-info", "nand-status", "nand-format", "power-status", "screen-off", "screen-on", *wireless, *camera, *updates, *audio])
     ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id, brain script or photo file")
     ap.add_argument("--name", help="photo path relative to Album photos (photo-push only)")
     ap.add_argument("--select", action="store_true", help="select after skin-push")
@@ -440,24 +412,14 @@ def main():
     ap.add_argument("--follow", action="store_true", help="keep printing the device log")
     ap.add_argument("--port", help="console port (default: the first /dev/cu.usbmodem*)")
     ap.add_argument("--verbose", "-v", action="store_true", help="print device log lines while waiting")
-    ap.add_argument("--tcp-port", type=int, help="HTTP diagnostic port (wifi-probe only, default 80)")
-    ap.add_argument("--duration-ms", type=int, default=1000, help="audio-tone or audio-record duration in milliseconds")
+    ap.add_argument("--duration-ms", type=int, default=1000, help="audio-record duration in milliseconds")
     args = ap.parse_args()
 
-    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "ota", "screen-off", "imu-irq", "nand-read", "nand-test", "nand-bench", "wifi-connect", "wifi-probe", "wifi-saved-connect", "wifi-forget", "wifi-auto", "update-url", "update-proxy", "audio-tone", "audio-play", "audio-record", "audio-loopback", "audio-volume", "audio-mute")
+    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "ota", "screen-off", "wifi-connect", "wifi-saved-connect", "wifi-forget", "wifi-auto", "update-url", "update-proxy", "audio-play", "audio-record", "audio-volume", "audio-mute")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
     if args.action == "screen-off" and (not re.fullmatch(r"[0-9]+", args.target) or not 1 <= int(args.target) <= 60):
         ap.error("screen-off requires 1..60 seconds")
-    if args.action == "nand-read" and (not re.fullmatch(r"[0-9]+", args.target) or not 0 <= int(args.target) <= 0xffffffff):
-        ap.error("nand-read requires a u32 page index")
-    if args.action == "nand-test" and args.target not in ("write", "verify", "cleanup"):
-        ap.error("nand-test requires write, verify or cleanup")
-    if args.action == "nand-bench" and args.target not in ("write", "read", "cleanup"):
-        ap.error("nand-bench requires write, read or cleanup")
-    if args.action == "imu-irq" and args.target not in ("off", "int1", "int2"):
-        ap.error("imu-irq requires off, int1 or int2")
-
     if args.select and args.action != "skin-push":
         ap.error("--select requires skin-push")
     if args.action in ("skin-select", "skin-rm") and not ID_RE.fullmatch(args.target):
@@ -466,10 +428,6 @@ def main():
         ap.error("--name requires photo-push")
     if args.action == "ota" and (args.run or args.follow):
         ap.error("ota reboots the device; use ota-status after reconnection instead of --run/--follow")
-    if args.tcp_port is not None and (args.action != "wifi-probe" or not 1 <= args.tcp_port <= 65535):
-        ap.error("--tcp-port requires wifi-probe and port 1..65535")
-    if args.action == "wifi-probe" and (len(args.target) > 253 or not re.fullmatch(r"[A-Za-z0-9.-]+", args.target)):
-        ap.error("wifi-probe expects a DNS host or IPv4 address")
     wifi_command = None
     if args.action == "wifi-connect":
         try:
@@ -528,7 +486,7 @@ def main():
                 if any(c.isspace() for c in args.target):
                     ap.error("audio target cannot contain whitespace")
                 command += f" {args.target}"
-            if args.action in ("audio-tone", "audio-record"):
+            if args.action == "audio-record":
                 command += f" {args.duration_ms}"
             print(dev.command(command, timeout=45.0))
             if args.follow:
@@ -538,25 +496,17 @@ def main():
         return
     if args.action in wireless:
         try:
-            command = wifi_command or (f"wifi-probe {args.target} {args.tcp_port or 80}" if args.action == "wifi-probe" else args.action)
+            command = wifi_command or args.action
             print(dev.command(command, timeout=60.0))
             if args.follow:
                 dev.follow()
         finally:
             dev.ser.close()
         return
-    if args.action in ("nand-info", "nand-read", "nand-status", "nand-format", "nand-test", "nand-bench", "power-status", "screen-on", "screen-off", "imu-irq", "imu-irq-status"):
+    if args.action in ("nand-info", "nand-status", "nand-format", "power-status", "screen-on", "screen-off"):
         try:
             if args.action == "screen-off":
                 screen_off(dev, int(args.target))
-            elif args.action == "imu-irq":
-                configure_imu_irq(dev, args.target)
-            elif args.action == "nand-read":
-                print(dev.command(f"nand-read {int(args.target)}", timeout=10.0))
-            elif args.action == "nand-test":
-                print(dev.command(f"nand-test {args.target}", timeout=60.0))
-            elif args.action == "nand-bench":
-                print(dev.command(f"nand-bench {args.target}", timeout=120.0))
             elif args.action == "nand-format":
                 print(dev.command("nand-format", timeout=60.0))
             else:

@@ -33,8 +33,6 @@ log-04 = { package = "log", version = "0.4", optional = true }
 # Project policy: unspecified radio task affinity resolves to Core0.
 # Explicit affinities and the upstream default remain available.
 default-core0 = []
-# Bounded creation receipts for firmware hang diagnosis; no scheduling changes.
-task-diagnostics = ["log-04"]
 ipc-implementations = ["esp-sync"]
 # One of the following features must be enabled to select the target chip, if the `ipc-implementations` feature is enabled.
 esp32 = ["esp-sync?/esp32"]

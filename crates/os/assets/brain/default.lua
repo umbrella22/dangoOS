@@ -129,7 +129,8 @@ function A:advance(now)
         if now>=sleep and self.idle_expression~='Sleep' then self.idle_expression='Sleep';self.fallback_since_ms=sleep end end
     self:expire_reaction(now)
 end
-function A:resolve(skip_reaction)
+function A:resolve(skip_reaction,now)
+    now=now or self.now_ms
     if self.error_active then return 'Error','Error',self.error_since_ms end
     local r=self.reaction;if not skip_reaction and r then return r.expression,r.reason,r.started_ms end
     local s=self.module_sequence;if s then local step=s.steps[s.index];return step.expression,step.reason,s.stage_started_ms end
@@ -139,11 +140,12 @@ function A:resolve(skip_reaction)
     end
     if self.battery_expression then return self.battery_expression,'Battery',self.fallback_since_ms end
     if self.music_since then return 'MusicPlaying','Activity',self.music_since end
-    if self.connection_expression then return self.connection_expression,'Activity',self.connection_since end
+    if self.connection_expression and now-self.connection_since<4000 then return self.connection_expression,'Activity',self.connection_since end
     return self.idle_expression,'Idle',self.fallback_since_ms
 end
 function A:snapshot_at(now)
-    local e,r,s=self:resolve(self.reaction and now>=self.reaction.ends_ms)
+    now=max(now,self.now_ms)
+    local e,r,s=self:resolve(self.reaction and now>=self.reaction.ends_ms,now)
     return {type='AffectState',expression=e,intensity=intensity[e],since_ms=s,reason=r}
 end
 function A:tick(now)

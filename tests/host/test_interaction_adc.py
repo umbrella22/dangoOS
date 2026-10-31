@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SOURCE = ROOT / "crates/os/src/drivers/subboard/interaction.rs"
+SOURCE = ROOT / "crates/os/src/platform/drivers/subboard/interaction.rs"
 
 
 def ldr_source(path=SOURCE):
@@ -121,7 +121,7 @@ fn camera_can_borrow_and_return_left_reset_before_or_after_interaction() {
 
 def run_lifecycle(source, directory):
     script, binary = directory / "ldr.rs", directory / "ldr"
-    harness = HARNESS.replace("__SIGNAL__", str(ROOT / "crates/os/src/drivers/subboard/signal.rs"))
+    harness = HARNESS.replace("__SIGNAL__", str(ROOT / "crates/os/src/platform/drivers/subboard/signal.rs"))
     script.write_text(harness + "\n" + source)
     build = subprocess.run(["rustc", "--edition=2021", "--test", str(script), "-o", str(binary)], capture_output=True, text=True)
     if build.returncode:

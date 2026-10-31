@@ -43,3 +43,5 @@ mod tests_modules;
 
 #[cfg(test)]
 mod tests_hardware;
+#[cfg(test)]
+mod tests_memory;

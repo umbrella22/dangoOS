@@ -1,12 +1,12 @@
 //! Native loading publication, full entrance, and terminal battery view.
-use os::{
-    AppMsg, Expression, FoxControl, MosaicoApp, Screen,
-    hub::{AppId, Page},
-    ui::{splash::SplashControl, theme},
-};
-use rs_lvgl::{Display, sys};
+use rs_lvgl::{sys, Display};
 use rs_lvgl_ui::{App, Ui};
 use std::{cell::RefCell, io::Write, ptr, rc::Rc};
+use {
+    os::shell::app::theme, os::shell::components::splash::SplashControl,
+    os::shell::navigation::route::AppId, os::shell::navigation::route::Page, os::AppMsg,
+    os::Expression, os::FoxControl, os::MosaicoApp, os::Screen,
+};
 fn capture(name: &str, pixels: &[u8]) {
     if let Some(dir) = std::env::var_os("MOSAICO_STARTUP_PREVIEW") {
         std::fs::create_dir_all(&dir).unwrap();
@@ -40,12 +40,16 @@ fn no_builtin_before_skin_publication_and_low_battery_is_terminal() {
     let mut app = MosaicoApp::new(control.clone(), SplashControl::new());
     let mut ui = Ui::new(&display, theme()).unwrap();
     ui.mount(&app).unwrap();
-    let mut expected = vec![0; os::fox::W * os::fox::H];
-    os::fox::loading::render(&mut expected);
+    let mut expected = vec![0; os::companion::render::W * os::companion::render::H];
+    os::companion::render::loading::render(&mut expected);
+    os::companion::status::render(&mut expected, os::services::radio::Snapshot::new());
     for _ in 0..60 {
         ui.tick(50).unwrap();
         let frame = control.take_frame().unwrap();
-        assert_eq!(frame.pixels(), expected);
+        assert!(
+            frame.pixels() == expected,
+            "loading frame contains only the placeholder and link status"
+        );
         assert!(
             control.entrance_active(),
             "loading cannot consume the selected character entrance"
@@ -56,10 +60,13 @@ fn no_builtin_before_skin_publication_and_low_battery_is_terminal() {
         );
     }
     let mut loading = vec![0; 480 * 480 * 3];
-    for y in 0..os::fox::H {
-        for x in 0..os::fox::W {
-            let p = expected[y * os::fox::W + x];
-            let at = ((y + (480 - os::fox::H) / 2) * 480 + x + (480 - os::fox::W) / 2) * 3;
+    for y in 0..os::companion::render::H {
+        for x in 0..os::companion::render::W {
+            let p = expected[y * os::companion::render::W + x];
+            let at = ((y + (480 - os::companion::render::H) / 2) * 480
+                + x
+                + (480 - os::companion::render::W) / 2)
+                * 3;
             loading[at..at + 3].copy_from_slice(&[
                 ((p >> 11) * 255 / 31) as u8,
                 (((p >> 5) & 63) * 255 / 63) as u8,
@@ -70,7 +77,7 @@ fn no_builtin_before_skin_publication_and_low_battery_is_terminal() {
     capture("loading", &loading);
     // A successful publication, including a deliberate builtin selection,
     // clears loading and only now advances the complete entrance.
-    control.set_skin(os::fox::skin::Skin::builtin());
+    control.set_skin(os::companion::render::skin::Skin::builtin());
     assert!(!control.loading());
     ui.tick(50).unwrap();
     assert_ne!(control.take_frame().unwrap().pixels(), expected);

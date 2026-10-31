@@ -149,6 +149,19 @@ pub(crate) struct Group {
     root: String,
 }
 impl Group {
+    pub(crate) fn has_ready(&self) -> bool {
+        let now = self
+            .limits
+            .clock
+            .map(|c| c() / 1000)
+            .unwrap_or(self.ticks.saturating_add(1));
+        self.jobs.values().any(|job| {
+            job.vm.is_some()
+                && (job.deadline.is_some_and(|d| now >= d)
+                    || (job.pending.is_none() && now >= job.wake))
+        })
+    }
+
     pub(crate) fn new(limits: Limits, allocator: &'static RawAllocator, root: String) -> Self {
         Self {
             jobs: BTreeMap::new(),
@@ -698,6 +711,12 @@ fn validate_name(name: &str) -> Result<(), String> {
     }
 }
 impl Vm {
+    /// A performance hint only. Polling must continue even when false: a
+    /// queue, semaphore or join can become ready during the next poll.
+    pub fn has_ready_workers(&self) -> bool {
+        self.workers.as_ref().is_some_and(|group| group.has_ready())
+    }
+
     /// Progresses independent workers without resuming a sleeping foreground VM.
     pub fn poll_workers(&mut self) {
         if let Some(mut group) = self.workers.take() {

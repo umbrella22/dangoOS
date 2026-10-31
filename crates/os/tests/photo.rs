@@ -1,8 +1,8 @@
 //! Run the repository Photo app against real LVGL, native pointer input and
 //! actual image decoders. Host libc files are mirrored into LittleFS for D: BIN.
 use lua_engine::{Host, Limits, RawAllocator, Request, Step, Vm};
-use os::lua_lvgl::LuaLvglService;
-use rs_lvgl::{Display, sys};
+use os::apps::lua::native_ui::LuaLvglService;
+use rs_lvgl::{sys, Display};
 use std::{
     alloc::Layout,
     cell::RefCell,
@@ -234,7 +234,7 @@ fn populate(root: &Path, fixtures: &Path) {
                     });
                 }
             }
-            let rgb = os::camera::image::rgb888(&uyvy, 640, 480, false).unwrap();
+            let rgb = os::services::camera::image::rgb888(&uyvy, 640, 480, false).unwrap();
             lua_engine::jpeg::encode_rgb888(640, 480, &rgb, 85).unwrap()
         } else {
             fs::read(fixtures.join(source)).unwrap()
@@ -319,11 +319,10 @@ fn photo_navigation_deletion_and_cleanup() {
     };
     h.run(1800);
     assert!(visible("Album") && visible("27 photos"));
-    assert!(
-        logs.borrow()
-            .iter()
-            .any(|l| l.contains("found 27 image(s)"))
-    );
+    assert!(logs
+        .borrow()
+        .iter()
+        .any(|l| l.contains("found 27 image(s)")));
     capture(&out, "01-grid-native-images", &pixels);
     let scroll = unsafe { find_scroll(sys::lv_screen_active()).expect("scrollable grid") };
     h.press(400, 400, 100);
@@ -404,12 +403,10 @@ fn photo_navigation_deletion_and_cleanup() {
         late <= early + 128 * 1024,
         "retained callback growth: early={early} late={late}"
     );
-    assert!(
-        !logs
-            .borrow()
-            .iter()
-            .any(|l| l.contains("lvgl callback failed"))
-    );
+    assert!(!logs
+        .borrow()
+        .iter()
+        .any(|l| l.contains("lvgl callback failed")));
     h.vm.as_mut().unwrap().interrupt();
     // External app stop owns teardown; no Lua cleanup is required to make it safe.
     drop(h.vm.take());

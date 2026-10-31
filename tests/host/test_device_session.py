@@ -100,17 +100,17 @@ class SessionTest(unittest.TestCase):
         self.assertTrue(FakeSerial.instances[0].closed)
 
     def test_real_push_success(self):
-        FakeSerial.replies = [b"@ok\n"] * 7
-        app = ROOT / "tests/device/apps/haptic"
+        FakeSerial.replies = [b"@ok\n"] * 9
+        app = ROOT / "examples/apps/hello"
         self.assertEqual(self.run_session("--push", str(app)), 0)
         writes = FakeSerial.instances[0].writes
         self.assertEqual(writes[0], b"@mosaico hello\n")
-        self.assertEqual(writes[-1], b"@mosaico commit haptic run\n")
+        self.assertEqual(writes[-1], b"@mosaico commit hello run\n")
         self.assertTrue(FakeSerial.instances[0].closed)
 
     def test_real_push_payload_failure_aborts(self):
         FakeSerial.replies = [b"@ok\n"] * 3 + [b"@err crc\n", b"@ok abort\n"]
-        app = ROOT / "tests/device/apps/haptic"
+        app = ROOT / "examples/apps/hello"
         self.assertEqual(self.run_session("--push", str(app)), 1)
         self.assertEqual(FakeSerial.instances[0].writes[-1], b"@mosaico abort\n")
         self.assertTrue(FakeSerial.instances[0].closed)

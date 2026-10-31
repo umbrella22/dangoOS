@@ -14,27 +14,8 @@ path = "src/lib.rs"
 default = ["dual-core-ui"]
 # Device binary only; integration tests build the host library.
 firmware = []
-# Core1 UI/Lua executor. Disable default features only for single-core diagnosis.
+# Core1 UI/Lua executor. Disable default features for a single-core build.
 dual-core-ui = []
-# Fault injection only for RTC-armed, unconfirmed A/B candidates.
-ota-test-panic = []
-# Development-only mapped-flash probe, used to boot images larger than 4 MiB.
-ota-capacity-probe = []
-# Read-only motor/RMT receipts for manual hardware diagnosis; no waveform changes.
-haptic-diagnostics = []
-# Read-only per-sample touch/edge receipts, capped per port activation.
-touch-key-diagnostics = []
-# Bounded touch-to-plane phase receipts; timing and behavior remain unchanged.
-touch-latency-diagnostics = []
-# Bounded native Lua/UI/plane phase profiling; no scheduling or display changes.
-native-ui-diagnostics = []
-# Retained USB observations and explicit one-shot diagnostic reset commands; no reconnect policy changes.
-usb-session-diagnostics = []
-# Bounded observations of the resident scheduler clock; budgets unchanged.
-radio-scheduling-diagnostics = []
-# Development-only hardware watchdog; recover a stopped executor and retain USB evidence.
-radio-hang-diagnostics = ["usb-session-diagnostics", "radio-scheduling-diagnostics", "esp-radio-rtos-driver/task-diagnostics", "esp-bluedroid/work-diagnostics"]
-
 [dependencies]
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 sha2 = { version = "0.10", default-features = false }

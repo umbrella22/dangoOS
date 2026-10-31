@@ -242,15 +242,6 @@ static ble_host_rx_iso_data_fn *ble_host_iso_rx_cb = NULL;
 #endif // #if (BLE_FEAT_ISO_EN == TRUE)
 
 // Internal functions
-// #region debug-point T-U-V:hci-receive-progress
-#ifdef MOSAICO_BT_WORK_DIAGNOSTICS
-extern void mosaico_bt_hci_rx_trace(unsigned phase, unsigned value);
-#define RX_TRACE(phase, value) mosaico_bt_hci_rx_trace((phase), (value))
-#else
-#define RX_TRACE(phase, value) ((void)0)
-#endif
-// #endregion
-
 static void hci_upstream_data_handler(void *arg)
 {
     fixed_queue_t *rx_q = hci_hal_env.rx_q;
@@ -261,20 +252,10 @@ static void hci_upstream_data_handler(void *arg)
 
     do {
         pkts_to_process = fixed_queue_length(rx_q);
-        RX_TRACE(1, pkts_to_process);
         for (size_t i = 0; i < pkts_to_process; i++) {
             BT_HDR *packet = fixed_queue_dequeue(rx_q, 0);
             if (packet != NULL) {
-#ifdef MOSAICO_BT_WORK_DIAGNOSTICS
-                uint32_t header = 0;
-                for (unsigned byte = 0; byte < 4 && byte < packet->len; byte++) {
-                    header |= (uint32_t)packet->data[packet->offset + byte] << (byte * 8);
-                }
-                RX_TRACE(2, header);
-#endif
                 hci_hal_h4_hdl_rx_packet(packet);
-            } else {
-                RX_TRACE(3, 0);
             }
         }
     } while (0);
@@ -295,7 +276,6 @@ static void hci_upstream_data_handler(void *arg)
         }
     } while (0);
 #endif // #if (BLE_42_SCAN_EN == TRUE)
-    RX_TRACE(4, fixed_queue_length(rx_q));
     if (!fixed_queue_is_empty(rx_q)
 #if (BLE_42_SCAN_EN == TRUE)
     || pkt_queue_length(adv_rpt_q) > 0

@@ -32,7 +32,7 @@ rs_lvgl_ui = { version = "0.2.0", default-features = false, features = [
     "widget-keyboard",
     "font-montserrat-48",
 ] }
-log = "0.4"
+log = { version = "0.4", features = ["release_max_level_info"] }
 critical-section = "1"
 esp-hal = { git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = [
     "esp32s31",

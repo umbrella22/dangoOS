@@ -15,7 +15,7 @@ extern crate self as critical_section;
 extern crate self as os;
 extern crate self as log;
 #[macro_export] macro_rules! warn { ($($arg:tt)*) => {{}} }
-pub mod scheduling { SCHEDULING_SOURCE }
+pub mod platform { pub mod runtime { pub mod scheduling { SCHEDULING_SOURCE } } }
 static CHANNEL_LOCK_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static WALL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 thread_local! { static CORE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
@@ -88,22 +88,17 @@ SCENARIO = r'''
 class ResidentTraceTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("rustc"), "Rust compiler required")
     def test_scheduler_trace_does_not_acquire_the_global_channel_lock(self):
-        source = (ROOT / "crates/os/src/resident_budget.rs").read_text()
+        source = (ROOT / "crates/os/src/platform/runtime/resident_budget.rs").read_text()
         source = source[:source.index("struct SchedulerTrace;")].replace("//!", "//")
-        scheduling = (ROOT / "crates/os/src/scheduling.rs").read_text().split("#[cfg(test)]")[0]
+        scheduling = (ROOT / "crates/os/src/platform/runtime/scheduling.rs").read_text().split("#[cfg(test)]")[0]
         fixture = FIXTURE.replace("SCHEDULING_SOURCE", scheduling)
         with tempfile.TemporaryDirectory(prefix="mosaico-resident-trace-") as tmp:
             tmp = pathlib.Path(tmp)
             harness = tmp / "trace.rs"
             harness.write_text(fixture + "\nmod resident {\n" + source + SCENARIO + "\n}\n")
-            for diagnostic in [False, True]:
-                with self.subTest(diagnostic=diagnostic):
-                    binary = tmp / ("diagnostic" if diagnostic else "normal")
-                    command = ["rustc", "--edition=2021", "--test", str(harness), "-o", str(binary)]
-                    if diagnostic:
-                        for feature in ["radio-scheduling-diagnostics", "radio-hang-diagnostics"]:
-                            command += ["--cfg", f'feature="{feature}"']
-                    build = subprocess.run(command, capture_output=True, text=True)
-                    self.assertEqual(build.returncode, 0, build.stdout + build.stderr)
-                    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            binary = tmp / "production"
+            command = ["rustc", "--edition=2021", "--test", str(harness), "-o", str(binary)]
+            build = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(build.returncode, 0, build.stdout + build.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

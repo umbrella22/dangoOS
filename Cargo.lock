@@ -1267,7 +1267,6 @@ name = "esp-radio-rtos-driver"
 version = "0.4.2"
 dependencies = [
  "esp-sync",
- "log",
  "portable-atomic",
 ]
 

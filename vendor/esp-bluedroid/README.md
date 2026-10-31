@@ -15,7 +15,7 @@ There is no BLE GATT host, A2DP source or HFP microphone service.
 
 The host uses the firmware's existing esp-rtos scheduler. FreeRTOS-compatible
 shim entry points forward to native tasks, queues, semaphores and timers in
-`crates/os/src/drivers/radio/classic/`. Waiting adapters yield without holding
+`crates/os/src/platform/drivers/radio/classic/`. Waiting adapters yield without holding
 a critical section. NVS records live on the NAND-backed data filesystem; host
 file IO runs on native threads rather than the audio interrupt executor.
 `src/crypto.c` provides the pinned controller's P-192/P-256, SHA-256 and HMAC
@@ -32,9 +32,7 @@ the PCM service, settings or applications.
 The shim enables `CONFIG_BT_BLUEDROID_ESP_COEX_VSC`. Upstream BTA sends A2DP
 streaming start/stop through the Espressif coexistence HCI command so the
 controller can coordinate airtime with Wi-Fi. Host and UI core affinity does
-not provide that RF coordination. Diagnostic firmware records the command
-and its controller acknowledgement; RF and playback results are recorded in
-`target/audio-coex-20261030/`.
+not provide that RF coordination.
 
 The UI acknowledges a pause between resident Lua callbacks before native
 controller/host initialization or teardown begins. The VM resumes with the same

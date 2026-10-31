@@ -130,12 +130,10 @@ mod tests {
         let encoded = super::encode_rgb888(16, 8, &rgb, 85).unwrap();
         let decoded = super::decode(&encoded).unwrap();
         assert_eq!((decoded.width, decoded.height), (16, 8));
-        assert!(
-            decoded
-                .pixels
-                .iter()
-                .all(|&v| (i32::from(v) - 180).abs() <= 3)
-        );
+        assert!(decoded
+            .pixels
+            .iter()
+            .all(|&v| (i32::from(v) - 180).abs() <= 3));
         assert!(super::encode_rgb888(16, 8, &rgb[..20], 85).is_err());
         assert!(super::encode_rgb888(16, 8, &rgb, 0).is_err());
     }

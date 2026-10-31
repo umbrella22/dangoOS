@@ -110,46 +110,7 @@
  #endif
 --- a/common/osi/thread.c
 +++ b/common/osi/thread.c
-@@ -26,6 +26,16 @@
- #include "osi/semaphore.h"
- #include "osi/thread.h"
- 
-+// #region debug-point Q-R-S:native-work-item
-+#ifdef MOSAICO_BT_WORK_DIAGNOSTICS
-+extern void mosaico_bt_work_trace(void *, void *, void *, unsigned);
-+#define WORK_TRACE(task, func, context, phase) \
-+    mosaico_bt_work_trace((void *)(task), (void *)(func), (context), (phase))
-+#else
-+#define WORK_TRACE(task, func, context, phase) ((void)0)
-+#endif
-+// #endregion
-+
- struct work_item {
-     osi_thread_func_t func;
-     void *context;
-@@ -196,6 +206,7 @@
-     while (1) {
-         int idx = 0;
- 
-+        WORK_TRACE(thread->thread_handle, NULL, NULL, 5);
-         osi_sem_take(&thread->work_sem, OSI_SEM_MAX_TIMEOUT);
- 
-         if (thread->stop) {
-@@ -205,11 +216,13 @@
-         struct work_item item;
-         while (!thread->stop && idx < thread->work_queue_num) {
-             if (osi_thead_work_queue_get(thread->work_queues[idx], &item) == true) {
-+                WORK_TRACE(thread->thread_handle, item.func, item.context, 1);
-                 #if OSI_THREAD_DEBUG
-                 osi_thread_run_item(thread, idx, &item);
-                 #else
-                 item.func(item.context);
-                 #endif
-+                WORK_TRACE(thread->thread_handle, item.func, item.context, 2);
-                 idx = 0;
-                 continue;
-             } else {
-@@ -220,7 +233,7 @@
+@@ -220,7 +220,7 @@
  
      osi_sem_give(&thread->stop_sem);
  
@@ -158,7 +119,7 @@
  }
  
  static int osi_thread_join(osi_thread_t *thread, uint32_t wait_ms)
-@@ -244,11 +257,7 @@
+@@ -244,11 +244,7 @@
  
      //delete the task here
      if (thread->thread_handle) {
@@ -171,18 +132,6 @@
          vTaskDelete(thread->thread_handle);
          thread->thread_handle = NULL;
      }
-@@ -768,9 +777,11 @@
-     func_context = event->item.context;
-     osi_mutex_unlock(&event->lock);
- 
-+    WORK_TRACE(xTaskGetCurrentTaskHandle(), func, func_context, 3);
-     if (func != NULL) {
-         func(func_context);
-     }
-+    WORK_TRACE(xTaskGetCurrentTaskHandle(), func, func_context, 4);
- 
-     osi_mutex_lock(&event->lock, OSI_MUTEX_MAX_TIMEOUT);
-     OSI_EVENT_CLEAR_FLAG(event, OSI_EVENT_FLAG_RUNNING);
 --- a/common/btc/core/btc_task.c
 +++ b/common/btc/core/btc_task.c
 @@ -14,8 +14,12 @@
@@ -198,53 +147,6 @@
  #ifdef CONFIG_BT_BLUEDROID_ENABLED
  #include "common/bt_target.h"
  #include "btc/btc_main.h"
---- a/host/bluedroid/hci/hci_hal_h4.c
-+++ b/host/bluedroid/hci/hci_hal_h4.c
-@@ -242,6 +242,15 @@
- #endif // #if (BLE_FEAT_ISO_EN == TRUE)
- 
- // Internal functions
-+// #region debug-point T-U-V:hci-receive-progress
-+#ifdef MOSAICO_BT_WORK_DIAGNOSTICS
-+extern void mosaico_bt_hci_rx_trace(unsigned phase, unsigned value);
-+#define RX_TRACE(phase, value) mosaico_bt_hci_rx_trace((phase), (value))
-+#else
-+#define RX_TRACE(phase, value) ((void)0)
-+#endif
-+// #endregion
-+
- static void hci_upstream_data_handler(void *arg)
- {
-     fixed_queue_t *rx_q = hci_hal_env.rx_q;
-@@ -252,10 +261,20 @@
- 
-     do {
-         pkts_to_process = fixed_queue_length(rx_q);
-+        RX_TRACE(1, pkts_to_process);
-         for (size_t i = 0; i < pkts_to_process; i++) {
-             BT_HDR *packet = fixed_queue_dequeue(rx_q, 0);
-             if (packet != NULL) {
-+#ifdef MOSAICO_BT_WORK_DIAGNOSTICS
-+                uint32_t header = 0;
-+                for (unsigned byte = 0; byte < 4 && byte < packet->len; byte++) {
-+                    header |= (uint32_t)packet->data[packet->offset + byte] << (byte * 8);
-+                }
-+                RX_TRACE(2, header);
-+#endif
-                 hci_hal_h4_hdl_rx_packet(packet);
-+            } else {
-+                RX_TRACE(3, 0);
-             }
-         }
-     } while (0);
-@@ -276,6 +295,7 @@
-         }
-     } while (0);
- #endif // #if (BLE_42_SCAN_EN == TRUE)
-+    RX_TRACE(4, fixed_queue_length(rx_q));
-     if (!fixed_queue_is_empty(rx_q)
- #if (BLE_42_SCAN_EN == TRUE)
-     || pkt_queue_length(adv_rpt_q) > 0
 --- a/common/osi/fixed_queue.c
 +++ b/common/osi/fixed_queue.c
 @@ -147,10 +147,14 @@

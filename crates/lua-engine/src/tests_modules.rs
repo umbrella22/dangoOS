@@ -511,8 +511,7 @@ fn vm_fresh() -> Vm {
 #[test]
 fn example_push_app_runs() {
     let _g = DISPLAY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let app =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/apps/hello");
+    let app = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/apps/hello");
     let data = temp_dir("hello_push");
     for launch in 1..=2u32 {
         let mut vm = vm();
@@ -754,6 +753,67 @@ fn integer_bilinear_counterexample_search() {
         "10052 cases, 48881924 output pixels per format: exact RGB565 and GRAY8"
     );
     std::fs::remove_file(executable).unwrap();
+}
+
+#[test]
+fn frequency_hints_distinguish_worker_sleep_and_queue_wait_without_changing_polling() {
+    let mut vm = vm();
+    assert!(!vm.foreground_ready());
+    assert!(!vm.has_ready_workers());
+    // Use an owned temporary worker so the test does not depend on fixtures
+    // that may finish before the host can inspect the scheduling hints.
+    let path = std::env::temp_dir().join(alloc::format!(
+        "mosaico-frequency-worker-{}.lua",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        b"require('delay').delay_ms(1000); require('thread').sync.queue_recv('freq_hint',5000)",
+    )
+    .unwrap();
+    vm.set_args_json(&serde_json::json!({"path":path.to_str().unwrap()}).to_string())
+        .unwrap();
+    vm.load("frequency-hints", b"local t=require('thread'); assert(t.sync.queue_create('freq_hint',{depth=1,item_size=32})); assert(t.start(args.path,{}, {name='hint',timeout_ms=0})); require('delay').delay_ms(1); assert(t.sync.queue_recv('freq_hint',5000)==nil)").unwrap();
+    assert!(vm.foreground_ready());
+    for _ in 0..1000 {
+        if matches!(vm.resume(), Step::Request(Request::Sleep { .. })) {
+            break;
+        }
+    }
+    assert!(
+        !vm.has_ready_workers(),
+        "sleeping worker requested performance"
+    );
+    advance_ms(1100);
+    assert!(vm.has_ready_workers(), "timer-ready worker was hidden");
+    vm.poll_workers();
+    assert!(
+        !vm.has_ready_workers(),
+        "queue-blocked worker requested performance"
+    );
+    for _ in 0..1000 {
+        vm.resume();
+        if !vm.foreground_ready() {
+            break;
+        }
+    }
+    assert!(
+        !vm.foreground_ready(),
+        "blocked foreground requested performance"
+    );
+    advance_ms(6000);
+    // A false hint must never suppress polling: pending queue timeouts are
+    // completed by the normal poll and resume paths, even with no ready VM.
+    assert!(!vm.has_ready_workers());
+    for _ in 0..1000 {
+        if vm.resume() == Step::Done {
+            break;
+        }
+    }
+    assert!(vm.finished());
+    assert!(!vm.foreground_ready());
+    assert!(!vm.has_ready_workers());
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]

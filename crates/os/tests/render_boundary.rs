@@ -2,7 +2,7 @@
 //! The unmodified Album builds a new view through multiple such requests.
 use lua_engine::ui::{UiCommand, UiReply};
 use lua_engine::{Host, Limits, Request, Step, Vm};
-use os::lua_lvgl::LuaLvglService;
+use os::apps::lua::native_ui::LuaLvglService;
 use rs_lvgl::{sys as s, Display};
 use serde_json::{json, Value};
 use std::{
@@ -277,7 +277,7 @@ fn render_boundary() {
     )
     .unwrap();
     vm.load("sleep-boundary", source).unwrap();
-    let mut boundary = os::lua_lvgl::RedrawBoundary::default();
+    let mut boundary = os::apps::lua::native_ui::RedrawBoundary::default();
     let mut sleeps = 0;
     let mut held = None;
     loop {
@@ -338,7 +338,7 @@ fn render_boundary() {
     let mut windows = 0;
     while pending > 0 {
         let deadline = now_us + 5_000;
-        let mut window = os::lua_lvgl::RpcWindow::until(deadline);
+        let mut window = os::apps::lua::native_ui::RpcWindow::until(deadline);
         let mut served = 0;
         while pending > 0 && window.available(now_us) {
             assert_eq!(
@@ -362,7 +362,7 @@ fn render_boundary() {
     assert_eq!(INPUT_READS.load(Ordering::Relaxed), reads);
     // A slow single request can overrun the window; it cannot authorize a
     // second request after the fixed deadline, or reset that deadline.
-    let mut window = os::lua_lvgl::RpcWindow::until(5_000);
+    let mut window = os::apps::lua::native_ui::RpcWindow::until(5_000);
     assert!(window.available(4_999));
     window.completed();
     assert!(!window.available(6_000));

@@ -517,6 +517,12 @@ impl Vm {
         }
         step
     }
+
+    /// Whether the foreground coroutine can execute without a worker reply.
+    /// This does not replace `resume`, which also services pending workers.
+    pub fn foreground_ready(&self) -> bool {
+        self.state == State::Loaded && !unsafe { (*self.ctx).worker_waiting }
+    }
     pub(crate) fn restrict_worker(&mut self) -> Result<(), String> {
         unsafe extern "C" {
             fn mosaico_lua_worker_restrict(l: *mut lua_State) -> c_int;

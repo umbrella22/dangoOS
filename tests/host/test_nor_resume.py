@@ -13,8 +13,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def resume_function():
-    source = (ROOT / "crates/os/src/drivers/storage.rs").read_text()
-    start = source.index("fn resume_after_rom(")
+    source = (ROOT / "crates/os/src/platform/runtime/cores.rs").read_text()
+    start = source.index("fn resume_core(")
     body = source.index("{", start)
     depth, end = 1, body + 1
     while depth:
@@ -102,14 +102,14 @@ fn resumes_each_idle_core_and_preserves_other_pmu_fields() {
         STALLED.store(bit, SeqCst);
         READS.store(0, SeqCst);
         KICKS.store(0, SeqCst);
-        resume_after_rom(core);
+        resume_core(core);
         assert_eq!(STALL_CODE.load(SeqCst), expected);
         assert_eq!(KICKS.load(SeqCst), 2);
         assert_eq!(STALLED.load(SeqCst), 0);
         // A core already running needs no extra interrupt.
         READS.store(0, SeqCst);
         KICKS.store(0, SeqCst);
-        resume_after_rom(core);
+        resume_core(core);
         assert_eq!(KICKS.load(SeqCst), 0);
         assert_eq!(STALL_CODE.load(SeqCst), expected);
     }

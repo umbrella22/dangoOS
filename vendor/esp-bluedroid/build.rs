@@ -27,11 +27,6 @@ fn main() {
         return;
     }
     let mut b = cc::Build::new();
-    // #region debug-point Q-R-S:native-work-item
-    if std::env::var_os("CARGO_FEATURE_WORK_DIAGNOSTICS").is_some() {
-        b.define("MOSAICO_BT_WORK_DIAGNOSTICS", None);
-    }
-    // #endregion
     b.include("shim");
     include_dirs(Path::new("upstream"), &mut b);
     b.flag("-std=gnu11")

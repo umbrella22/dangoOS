@@ -26,16 +26,6 @@
 #include "osi/semaphore.h"
 #include "osi/thread.h"
 
-// #region debug-point Q-R-S:native-work-item
-#ifdef MOSAICO_BT_WORK_DIAGNOSTICS
-extern void mosaico_bt_work_trace(void *, void *, void *, unsigned);
-#define WORK_TRACE(task, func, context, phase) \
-    mosaico_bt_work_trace((void *)(task), (void *)(func), (context), (phase))
-#else
-#define WORK_TRACE(task, func, context, phase) ((void)0)
-#endif
-// #endregion
-
 struct work_item {
     osi_thread_func_t func;
     void *context;
@@ -206,7 +196,6 @@ static void osi_thread_run(void *arg)
     while (1) {
         int idx = 0;
 
-        WORK_TRACE(thread->thread_handle, NULL, NULL, 5);
         osi_sem_take(&thread->work_sem, OSI_SEM_MAX_TIMEOUT);
 
         if (thread->stop) {
@@ -216,13 +205,11 @@ static void osi_thread_run(void *arg)
         struct work_item item;
         while (!thread->stop && idx < thread->work_queue_num) {
             if (osi_thead_work_queue_get(thread->work_queues[idx], &item) == true) {
-                WORK_TRACE(thread->thread_handle, item.func, item.context, 1);
                 #if OSI_THREAD_DEBUG
                 osi_thread_run_item(thread, idx, &item);
                 #else
                 item.func(item.context);
                 #endif
-                WORK_TRACE(thread->thread_handle, item.func, item.context, 2);
                 idx = 0;
                 continue;
             } else {
@@ -777,11 +764,9 @@ static void osi_thread_generic_event_handler(void *context)
     func_context = event->item.context;
     osi_mutex_unlock(&event->lock);
 
-    WORK_TRACE(xTaskGetCurrentTaskHandle(), func, func_context, 3);
     if (func != NULL) {
         func(func_context);
     }
-    WORK_TRACE(xTaskGetCurrentTaskHandle(), func, func_context, 4);
 
     osi_mutex_lock(&event->lock, OSI_MUTEX_MAX_TIMEOUT);
     OSI_EVENT_CLEAR_FLAG(event, OSI_EVENT_FLAG_RUNNING);

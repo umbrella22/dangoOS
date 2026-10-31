@@ -26,13 +26,16 @@ fn fresh_system_contains_repository_apps_and_default_art_and_rebuilds_identicall
     assert_eq!(image.len(), 0x1f0000);
     assert_eq!(report["applications"].as_array().unwrap().len(), 5);
     let tree = snapshot(&image).unwrap();
-    assert!(tree
-        .keys()
-        .all(|path| path == "/apps" || path.starts_with("/apps/") || path == "/skins" || path == "/skins/default.bin"));
-    let Entry::File(default) = &tree["/skins/default.bin"] else { panic!() };
-    let loaded = os::fox::skin::Skin::parse(default.clone()).unwrap();
-    assert_eq!(loaded.blob(), os::fox::data::BLOB);
-    for pose in os::fox::FoxPose::ALL {
+    assert!(tree.keys().all(|path| path == "/apps"
+        || path.starts_with("/apps/")
+        || path == "/skins"
+        || path == "/skins/default.bin"));
+    let Entry::File(default) = &tree["/skins/default.bin"] else {
+        panic!()
+    };
+    let loaded = os::companion::render::skin::Skin::parse(default.clone()).unwrap();
+    assert_eq!(loaded.blob(), os::companion::render::data::BLOB);
+    for pose in os::companion::render::FoxPose::ALL {
         assert_eq!(loaded.pose(pose).base.off, pose.data().base.off);
     }
     assert!(tree.contains_key("/apps/snake/scripts/main.lua"));
@@ -57,8 +60,12 @@ fn fresh_system_contains_repository_apps_and_default_art_and_rebuilds_identicall
     let snake = &registry.apps[registry.find("snake").unwrap()];
     assert_eq!(snake.origin, Origin::Data);
     assert_eq!(snake.app.entry, "/data/apps/snake/scripts/main.lua");
-    let id = os::hub::uninstall::Identity::new("snake", Origin::Data).unwrap();
-    os::hub::uninstall::execute(&mut vfs, os::hub::uninstall::Operation::Remove(id)).unwrap();
+    let id = os::apps::lifecycle::uninstall::Identity::new("snake", Origin::Data).unwrap();
+    os::apps::lifecycle::uninstall::execute(
+        &mut vfs,
+        os::apps::lifecycle::uninstall::Operation::Remove(id),
+    )
+    .unwrap();
     let registry = Registry::scan(&mut vfs, &mut IconCache::new(), &mut |_| {});
     assert_eq!(
         registry.apps[registry.find("snake").unwrap()].origin,
@@ -95,15 +102,15 @@ fn invalid_packages_duplicate_ids_and_wrong_partition_sizes_are_rejected() {
 }
 
 #[test]
-fn development_examples_and_device_probes_are_valid_but_not_factory_apps() {
+fn development_examples_are_valid_but_not_factory_apps() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut ids = BTreeSet::new();
-    for directory in ["examples/apps", "tests/device/apps"] {
+    for directory in ["examples/apps"] {
         for app in host_fs::read_dir(root.join(directory)).unwrap() {
             let package = Package::read(&app.unwrap().path()).unwrap();
             assert!(ids.insert(package.id));
         }
     }
-    assert_eq!(ids.len(), 7);
+    assert_eq!(ids, BTreeSet::from([String::from("hardware"), String::from("hello")]));
     assert!(apps().iter().all(|p| !ids.contains(&p.id)));
 }

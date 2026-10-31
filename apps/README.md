@@ -30,5 +30,4 @@ system 镜像从当前应用集全新生成，README、许可证和来源记录�
 随镜像交付。纯 Lua 应用修改可以单独打包或下载更新；新增引擎能力需要同时更新固件。
 
 开发与运行约定见 [Lua 应用开发](../docs/guides/lua-apps.md)，镜像格式见
-[app-pack](../tools/app-pack/README.md)。开发示例位于 `examples/apps`，设备验收探针位于
-`tests/device/apps`，它们均不进入默认应用集。
+[app-pack](../tools/app-pack/README.md)。开发示例位于 `examples/apps`，不进入默认应用集。

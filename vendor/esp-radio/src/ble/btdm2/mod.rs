@@ -1060,13 +1060,6 @@ fn event_inner(ev: *mut BtdmOsalPtr) -> &'static Event {
 #[inline]
 fn event_try_queue(ev: *mut BtdmOsalPtr) -> bool {
     if event_inner(ev).queued.swap(true, Ordering::AcqRel) {
-        // #region debug-point E:event-queue-duplicates
-        static DUPLICATES: AtomicU32 = AtomicU32::new(0);
-        let count = DUPLICATES.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
-        if count.is_power_of_two() {
-            info!("bt eventq: duplicate_posts={count}");
-        }
-        // #endregion
         false
     } else {
         true

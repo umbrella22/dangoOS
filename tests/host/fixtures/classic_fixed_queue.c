@@ -64,12 +64,12 @@ static bool repost;
 #define BLE_42_SCAN_EN FALSE
 #define C2H_FLOW_CONTROL_INCLUDED FALSE
 #define OSI_THREAD_MAX_TIMEOUT UINT32_MAX
-#define MOSAICO_BT_WORK_DIAGNOSTICS
-static void rx_trace(unsigned phase, unsigned value) {
-    (void)value;
-    if (phase == 3) ++null_dequeues;
+static void *tracked_dequeue(fixed_queue_t *queue, uint32_t timeout) {
+    void *packet = fixed_queue_dequeue(queue, timeout);
+    if (packet == NULL) ++null_dequeues;
+    return packet;
 }
-#define RX_TRACE rx_trace
+#define fixed_queue_dequeue tracked_dequeue
 static void hci_hal_h4_hdl_rx_packet(BT_HDR *packet) {
     assert(delivered_count < sizeof(delivered) / sizeof(delivered[0]));
     delivered[delivered_count++] = packet;
@@ -80,6 +80,7 @@ static bool hci_upstream_data_post(uint32_t timeout) {
     return true;
 }
 #include HCI_HANDLER_SOURCE
+#undef fixed_queue_dequeue
 
 static void run_hci_until_idle(void) {
     do {

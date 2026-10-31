@@ -15,7 +15,7 @@ static unsigned pending_ct, pending_tg, pending_sink;
 static uint32_t ticks;
 static unsigned interim, changed, remote_percent, accepted, deinit_count;
 static esp_avrc_rn_rsp_t last_response;
-static unsigned last_volume, last_handle, last_phase;
+static unsigned last_volume, last_handle;
 
 void mosaico_bt_task_delay(uint32_t ms) {
     ticks += ms;
@@ -42,7 +42,6 @@ void mosaico_bt_task_delay(uint32_t ms) {
     }
 }
 uint32_t mosaico_bt_ticks(void) { return ticks; }
-void mosaico_bt_phase(unsigned phase) { last_phase = phase; }
 void mosaico_bt_hci_send(uint8_t *p, uint16_t len) { (void)p; (void)len; }
 bool mosaico_bt_hci_available(void) { return true; }
 void mosaico_bt_event(unsigned kind, unsigned a, unsigned b) { (void)kind; (void)a; (void)b; }
@@ -158,13 +157,13 @@ static void volume_notifications(void) {
 }
 
 int main(void) {
-    assert(mosaico_classic_start() == ESP_OK && last_phase == 100);
+    assert(mosaico_classic_start() == ESP_OK);
     assert(ct_active && tg_active && sink_active);
     esp_bt_gap_cb_param_t pairing = {0};
     gap_cb(ESP_BT_GAP_CFM_REQ_EVT, &pairing);
     assert(accepted);
     volume_notifications();
-    assert(mosaico_classic_stop() == ESP_OK && last_phase == 0 && !attached);
+    assert(mosaico_classic_stop() == ESP_OK && !attached);
     gap_cb(ESP_BT_GAP_CFM_REQ_EVT, &pairing);
     assert(!accepted);
     assert(mosaico_classic_start() == ESP_OK); // Recreate all profile state.

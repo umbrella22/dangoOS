@@ -4,9 +4,12 @@ pub mod skins;
 
 use ::fs::{Fs, Geometry, Vfs};
 use image::{inventory, require, sha, snapshot, Entry, Result, Shared, Tree};
-use os::hub::registry::{self, IconCache, Origin, Registry};
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, fs as host_fs, path::Path};
+use {
+    os::apps::registry, os::apps::registry::IconCache, os::apps::registry::Origin,
+    os::apps::registry::Registry,
+};
 
 pub struct Package {
     pub id: String,
@@ -162,11 +165,13 @@ pub fn build_system(image_bytes: usize, packages: &[Package]) -> Result<(Vec<u8>
             expected.insert(path, entry.clone());
         }
     }
-    vfs.create_dir_all("/system/skins").map_err(|e| e.to_string())?;
-    let default_skin = os::fox::skin::builtin_binary();
+    vfs.create_dir_all("/system/skins")
+        .map_err(|e| e.to_string())?;
+    let default_skin = os::companion::render::skin::builtin_binary();
     // Parse exactly what will ship before writing it into the system image.
-    os::fox::skin::Skin::parse(default_skin.clone())?;
-    vfs.write_file("/system/skins/default.bin", &default_skin).map_err(|e| e.to_string())?;
+    os::companion::render::skin::Skin::parse(default_skin.clone())?;
+    vfs.write_file("/system/skins/default.bin", &default_skin)
+        .map_err(|e| e.to_string())?;
     expected.insert("/skins".into(), Entry::Directory);
     expected.insert("/skins/default.bin".into(), Entry::File(default_skin));
     drop(vfs);

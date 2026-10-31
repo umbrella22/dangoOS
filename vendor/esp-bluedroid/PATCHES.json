@@ -35,20 +35,14 @@
     {
       "path": "common/osi/thread.c",
       "upstream_sha256": "e03679272cd590f8807ca6830dbae844649577234944db638c4068e93ad8e822",
-      "local_sha256": "34e32f62894c200310bd757e117f85a0e0102be9fdb687ae9a3393c0e1b2a78f",
-      "reason": "Wait for stop acknowledgement before native scheduler deletion; stopped workers sleep until deletion. Optional work-item entry/exit tracing is diagnostic-only."
+      "local_sha256": "633d2a69dd4bff34abe643b2b775ff8b82bdd11e418b241b7b218eaf0ddf8943",
+      "reason": "Wait for stop acknowledgement before native scheduler deletion; stopped workers sleep until deletion."
     },
     {
       "path": "common/btc/core/btc_task.c",
       "upstream_sha256": "158f53a486ab10d20bc0f88fb573e57e1c9b9cd58baeb3665cf74b960c4231f8",
       "local_sha256": "1cd835a97024aa5a57e07dee227dbf8830b62c68b30351773f640e91da3ab393",
       "reason": "Exclude disabled BLUFI headers from the Classic-only build."
-    },
-    {
-      "path": "host/bluedroid/hci/hci_hal_h4.c",
-      "upstream_sha256": "05302fa12da70fdd8e6a3dfa4d6112c31dc56c85246e15b96414cad2930bbe0e",
-      "local_sha256": "f11c371dd7e69f51e4b54079973f52628b569f8b18e8421cad00ff3ee657bf26",
-      "reason": "Optional diagnostic-only persistent receive-queue entry/dequeue/exit and packet-header observations."
     },
     {
       "path": "common/osi/fixed_queue.c",
