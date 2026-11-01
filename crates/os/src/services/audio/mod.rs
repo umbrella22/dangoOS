@@ -2,6 +2,7 @@
 //! Transport callbacks enqueue whole frames; only the audio task touches I2S.
 use alloc::{collections::VecDeque, string::String};
 
+pub mod volume;
 pub mod wav;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

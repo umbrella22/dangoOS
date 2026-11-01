@@ -9,6 +9,8 @@ local fuel_gauge = require("lib_fuel_gauge")
 local button = require("button")
 local led_strip = require("led_strip")
 local haptic = require("haptic")
+local capabilities = require("capabilities")
+local system = require("system")
 local cfg = type(args) == "table" and args or {}
 local screen, motion, magnet, gauge, key, strip
 local lines = {}
@@ -34,8 +36,33 @@ local function cleanup()
     pcall(handle.close, handle)
   end
 end
+local function diagnostics()
+  local c = capabilities.get()
+  line(string.format("API %d / Lua heap %d", c.api_version, c.limits.lua_heap_bytes))
+  for _, name in ipairs({ "audio", "camera", "network" }) do
+    local status = c.modules[name]
+    line(string.format("%s: supported=%s available=%s", name, tostring(status.supported), tostring(status.available)))
+    if status.supported then
+      attempt(name, function()
+        local s = require(name).status()
+        line(name .. " state: " .. (s.state or s.wifi_state))
+      end)
+    end
+  end
+  local heap = system.heap
+  for _, region in ipairs({ { "Internal", heap.caps.INTERNAL, 32768 }, { "PSRAM", heap.caps.SPIRAM, 262144 } }) do
+    local h = heap.get_info(region[2])
+    line(string.format("%s free=%s largest=%s", region[1], tostring(h.free_size), tostring(h.largest_free_block)))
+    line("Sampled min: " .. tostring(h.sampled_minimum_free_size))
+    if cfg.probe_heap == true then
+      local ok, code = heap.probe(region[2], region[3], 128)
+      line(string.format("%s probe %d/128: %s %s", region[1], region[3], tostring(ok), tostring(code or "")))
+    end
+  end
+end
 local function run()
   screen = display.open()
+  diagnostics()
   motion = attempt("IMU", function()
     return imu.new({ device = "imu_sensor" })
   end)

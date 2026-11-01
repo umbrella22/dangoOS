@@ -92,6 +92,7 @@ enum UploadKind {
     Skin,
     Brain,
     Photo,
+    Fonts,
 }
 
 struct Upload {
@@ -126,7 +127,7 @@ pub struct Session {
     staging: Option<String>,
     kind: UploadKind,
     upload: Option<Upload>,
-    completed_photo: Option<String>,
+    completed_file: Option<String>,
 }
 
 impl Session {
@@ -147,7 +148,7 @@ impl Session {
         self.ota_body = None;
         self.ota_active = false;
         self.ota_poisoned = false;
-        self.completed_photo = None;
+        self.completed_file = None;
         if let Some(up) = self.upload.take() {
             let _ = vfs.close(up.fd);
         }

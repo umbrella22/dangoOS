@@ -139,11 +139,7 @@ pub async fn task() {
                     "@err skin OTA busy".into()
                 } else {
                     let selected = ::fs::global::with(|vfs| {
-                        Ok(crate::companion::skins::select_loaded(
-                            vfs,
-                            &id,
-                            &mut |reason| log::warn!("{reason}"),
-                        ))
+                        Ok(crate::companion::skins::select_loaded(vfs, &id))
                     });
                     match selected {
                         Ok(Ok(loaded)) => {

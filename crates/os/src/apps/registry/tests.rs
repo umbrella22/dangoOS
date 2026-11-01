@@ -83,6 +83,8 @@ fn manifests_follow_the_official_rules() {
 fn module_check_sees_hard_requires_only() {
     let src = r#"
             local display = require("display")
+            local capabilities, audio = require("capabilities"), require("audio")
+            local camera, network = require("camera"), require("network")
             local net, storage = require("net"), require 'storage'
             local ok, button = pcall(require, "button")
             -- local net = require("net")

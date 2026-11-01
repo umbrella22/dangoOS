@@ -38,9 +38,9 @@ fn restore() -> skins::Loaded {
             loaded
         }
         Err(e) => {
-            warn!("skin fallback default: VFS {e}");
+            warn!("skin fallback {}: VFS {e}", skins::PLACEHOLDER_ID);
             skins::Loaded {
-                id: "default".into(),
+                id: skins::PLACEHOLDER_ID.into(),
                 skin: Skin::builtin(),
             }
         }

@@ -70,6 +70,9 @@ static DONE: Signal<CriticalSectionRawMutex, Result<Vec<u8>, &'static str>> = Si
 pub fn snapshot() -> Snapshot {
     INFO.lock(|s| *s.borrow())
 }
+pub fn available() -> bool {
+    READY.load(Ordering::Acquire) && snapshot().state != State::Fault
+}
 fn update(f: impl FnOnce(&mut Snapshot)) {
     INFO.lock(|s| f(&mut s.borrow_mut()));
 }
@@ -138,7 +141,7 @@ pub fn bluetooth_pcm(bytes: &[u8]) {
 }
 pub fn status() -> String {
     let s = snapshot();
-    let result = format!("@ok audio-status state={} rate={} volume={} muted={} tx_frames={} rx_frames={} underruns={} overruns={} peak={} error={}",s.state.name(),s.rate,s.volume,u8::from(s.muted),s.tx_frames,s.rx_frames,s.underruns,s.overruns,s.peak,s.error.unwrap_or("none"));
+    let result = format!("@ok audio-status state={} rate={} volume={} muted={} output_ceiling_db={} tx_frames={} rx_frames={} underruns={} overruns={} peak={} error={}",s.state.name(),s.rate,s.volume,u8::from(s.muted),super::volume::OUTPUT_CEILING_DB,s.tx_frames,s.rx_frames,s.underruns,s.overruns,s.peak,s.error.unwrap_or("none"));
 
     result
 }

@@ -1,0 +1,20 @@
+{
+  "repository": "https://github.com/esp-rs/esp-hal",
+  "revision": "33f9b0f7c36ac47edbd015808b5399090fc1f9b6",
+  "subdirectory": "esp-alloc",
+  "files": {
+    ".clippy.toml": "8d3aafbcf358ccf45cc148cd705f5fe71e777dabc391ed9a2bae32af73291fe8",
+    "CHANGELOG.md": "edeae59331cd4668415c4e1428b21e5a28484fdf05f9616b8e9eed163715e107",
+    "Cargo.toml": "d482c38492ea9d6f37ea000a06d14704bafce25429d3e68e360460e8e0a08893",
+    "README.md": "f1ed8c8bbac2f4f289100940f51c2a3cab3ee3b253c754e7efed14a669107da1",
+    "build.rs": "143aad82434f3b728ca2973e5c40d0f16d8b5c32bec6d21db996a595631240b4",
+    "esp_config.yml": "833b47c709bb8a956d984d61148719eead6c76eef2dc7f003a3f9394bfd5ce5f",
+    "src/allocators.rs": "82b6b81a8cd1bbd3e86911131eacdbf98e1d9588249476c4b49bfcc4f3124d79",
+    "src/heap/llff.rs": "f518f4ef8c75efa7a195494dcf3c8732334b350b98b8bcd0d900844414b62a51",
+    "src/heap/mod.rs": "08f38bda9d9bad8e778dc868674fbafd59a366ee821c5c80a90b107135caf93a",
+    "src/heap/tlsf.rs": "ff668fd8fd3f0af7b8bf8e718d2f15c7ee2175c8881bc46311efcaaf2b6f83fd",
+    "src/lib.rs": "69e50366504fe9b85cb1a78d1e7e8edbb780b049b7715173a005d0d5b48a1137",
+    "src/macros.rs": "217fc27c36a58034ffcbbf8393369bce3a90d030d0436822277e361e308677f3",
+    "src/malloc.rs": "e9850516d5ad07af75110b107418c565f33e718e24946d2de534e072047ff2e3"
+  }
+}

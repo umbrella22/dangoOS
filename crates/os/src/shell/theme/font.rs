@@ -1,13 +1,8 @@
-//! The hub's CJK bitmap fonts (RFC 0006 section 2.2).
+//! Immutable LVGL descriptors for the versioned UI font resource set.
 //!
-//! `scripts/assets/gen_hub_font.py` rasterizes the characters the hub sources
-//! use from Noto Sans SC into `src/assets/hub-*.bin` (4 bpp, format in the
-//! script's docstring). This module wraps each file in a static `lv_font_t`
-//! whose glyph callbacks are written here, so no C font file and no LVGL font
-//! loader is needed.
-//!
-//! Missing glyphs fall back to Montserrat 14 (LVGL's default), which also
-//! carries the `LV_SYMBOL_*` icons.
+//! Full font data is loaded once into PSRAM by services and activated on the UI
+//! thread before rendering. Recovery retains complete 20px text plus subsets
+//! at other sizes, so old resource partitions still have a readable UI.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -15,97 +10,19 @@ use core::ptr;
 use rs_lvgl::sys as lvgl_sys;
 use rs_lvgl_ui::Font;
 
-const HEADER: usize = 16;
-const ENTRY: usize = 16;
+use crate::formats::bitmap_font::FontData;
 
-/// One generated font file.
-#[derive(Clone, Copy)]
-struct FontData(&'static [u8]);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Glyph {
-    index: u32,
-    offset: u32,
-    adv: u16,
-    w: u8,
-    h: u8,
-    ofs_x: i8,
-    ofs_y: i8,
+struct FontSource {
+    index: usize,
+    recovery: FontData<'static>,
 }
-
-const fn u16_at(data: &[u8], at: usize) -> u16 {
-    u16::from_le_bytes([data[at], data[at + 1]])
-}
-
-const fn u32_at(data: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]])
-}
-
-impl FontData {
-    const fn check(self) -> Self {
-        let d = self.0;
-        assert!(d.len() >= HEADER);
-        assert!(d[0] == b'M' && d[1] == b'F' && d[2] == b'N' && d[3] == b'T');
-        assert!(d[4] == 1, "font file version");
-        assert!(d[5] == 4, "4 bpp");
-        assert!(d.len() >= HEADER + ENTRY * u16_at(d, 10) as usize);
-        self
-    }
-
-    const fn line_height(self) -> i32 {
-        u16_at(self.0, 6) as i32
-    }
-
-    const fn base_line(self) -> i32 {
-        u16_at(self.0, 8) as i32
-    }
-
-    fn count(self) -> usize {
-        if self.0.len() < HEADER {
-            return 0;
+impl FontSource {
+    fn data(&self) -> FontData<'static> {
+        #[cfg(target_os = "none")]
+        if let Some(fonts) = device::active() {
+            return fonts.font(self.index);
         }
-        u16_at(self.0, 10) as usize
-    }
-
-    fn bitmaps(self) -> &'static [u8] {
-        self.0.get(HEADER + ENTRY * self.count()..).unwrap_or(&[])
-    }
-
-    fn glyph(self, index: usize) -> Glyph {
-        let at = HEADER + ENTRY * index;
-        let d = self.0;
-        Glyph {
-            index: index as u32,
-            offset: u32_at(d, at + 4),
-            adv: u16_at(d, at + 8),
-            w: d[at + 10],
-            h: d[at + 11],
-            ofs_x: d[at + 12] as i8,
-            ofs_y: d[at + 13] as i8,
-        }
-    }
-
-    fn code_point(self, index: usize) -> u32 {
-        u32_at(self.0, HEADER + ENTRY * index)
-    }
-
-    fn find(self, letter: u32) -> Option<Glyph> {
-        let (mut lo, mut hi) = (0usize, self.count());
-        while lo < hi {
-            let mid = (lo + hi) / 2;
-            match self.code_point(mid).cmp(&letter) {
-                core::cmp::Ordering::Less => lo = mid + 1,
-                core::cmp::Ordering::Greater => hi = mid,
-                core::cmp::Ordering::Equal => return Some(self.glyph(mid)),
-            }
-        }
-        None
-    }
-
-    fn rows(self, glyph: Glyph) -> &'static [u8] {
-        let stride = (glyph.w as usize).div_ceil(2);
-        let start = glyph.offset as usize;
-        &self.bitmaps()[start..start + stride * glyph.h as usize]
+        self.recovery
     }
 }
 
@@ -124,14 +41,18 @@ impl StaticFont {
         unsafe { Font::from_raw(&self.0) }
     }
 
-    const fn new(data: &'static [u8]) -> Self {
-        let data = FontData(data).check();
+    const fn new(source: &'static FontSource) -> Self {
+        let data = source.recovery;
         // SAFETY: an all-zero `lv_font_t` is valid (null pointers, no
         // callbacks, zero metrics); the fields that matter are set below.
         let zeroed: lvgl_sys::lv_font_t = unsafe { core::mem::zeroed() };
         Self(lvgl_sys::lv_font_t {
-            dsc: data.0.as_ptr() as *const c_void,
-            fallback: ptr::addr_of!(lvgl_sys::lv_font_montserrat_14),
+            dsc: source as *const FontSource as *const c_void,
+            fallback: if source.index == 0 || source.index == 3 {
+                ptr::addr_of!(lvgl_sys::lv_font_montserrat_14)
+            } else {
+                ptr::addr_of!(HUB_20.0)
+            },
             get_glyph_dsc: Some(get_glyph_dsc),
             get_glyph_bitmap: Some(get_glyph_bitmap),
             line_height: data.line_height(),
@@ -141,27 +62,20 @@ impl StaticFont {
     }
 }
 
-/// The file behind a descriptor: `dsc` is the start of one of the files.
+/// Resolve a static source through the current immutable font set.
 ///
 /// # Safety
 ///
-/// `font` must point to a live `lv_font_t`.
-unsafe fn data_of(font: *const lvgl_sys::lv_font_t) -> FontData {
-    file_at(unsafe { (*font).dsc } as *const u8)
-}
-
-fn file_at(dsc: *const u8) -> FontData {
-    for file in FILES {
-        if file.as_ptr() == dsc {
-            return FontData(file);
-        }
-    }
-    FontData(EMPTY)
+/// `font` must point to a live descriptor constructed by this module.
+unsafe fn data_of(font: *const lvgl_sys::lv_font_t) -> FontData<'static> {
+    // SAFETY: all descriptors using these callbacks point to a static source.
+    unsafe { &*((*font).dsc as *const FontSource) }.data()
 }
 
 impl StaticFont {
-    fn data(&self) -> FontData {
-        file_at(self.0.dsc as *const u8)
+    fn data(&self) -> FontData<'static> {
+        // SAFETY: descriptors are constructed only from static sources.
+        unsafe { data_of(&self.0) }
     }
 }
 
@@ -215,7 +129,9 @@ unsafe extern "C" fn get_glyph_bitmap(
     }
     // SAFETY: `resolved_font` is the font that answered `get_glyph_dsc`.
     let data = unsafe { data_of(g_dsc.resolved_font) };
-    let glyph = data.glyph(index as usize - 1);
+    let Some(glyph) = data.glyph(index as usize - 1) else {
+        return ptr::null();
+    };
     if glyph.w == 0 || glyph.h == 0 {
         return ptr::null();
     }
@@ -250,29 +166,76 @@ unsafe extern "C" fn get_glyph_bitmap(
     draw_buf as *const c_void
 }
 
-static EMPTY: &[u8] = &[];
+#[cfg(not(target_os = "none"))]
 static FILE_20: &[u8] = include_bytes!("../../assets/hub-20.bin");
+#[cfg(not(target_os = "none"))]
 static FILE_24: &[u8] = include_bytes!("../../assets/hub-24.bin");
+#[cfg(not(target_os = "none"))]
 static FILE_30: &[u8] = include_bytes!("../../assets/hub-30.bin");
+#[cfg(not(target_os = "none"))]
 static FILE_DIGITS_64: &[u8] = include_bytes!("../../assets/hub-digits-64.bin");
+#[cfg(target_os = "none")]
+static FILE_20: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/recovery-20.bin"));
+#[cfg(target_os = "none")]
+static FILE_24: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/recovery-24.bin"));
+#[cfg(target_os = "none")]
+static FILE_30: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/recovery-30.bin"));
+#[cfg(target_os = "none")]
+static FILE_DIGITS_64: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/recovery-digits-64.bin"));
 
+static SOURCE_20: FontSource = FontSource {
+    index: 0,
+    recovery: FontData::checked(FILE_20),
+};
+static SOURCE_24: FontSource = FontSource {
+    index: 1,
+    recovery: FontData::checked(FILE_24),
+};
+static SOURCE_30: FontSource = FontSource {
+    index: 2,
+    recovery: FontData::checked(FILE_30),
+};
+static SOURCE_DIGITS: FontSource = FontSource {
+    index: 3,
+    recovery: FontData::checked(FILE_DIGITS_64),
+};
 /// Body text and small labels.
-pub static HUB_20: StaticFont = StaticFont::new(FILE_20);
+pub static HUB_20: StaticFont = StaticFont::new(&SOURCE_20);
 /// Row labels and values.
-pub static HUB_24: StaticFont = StaticFont::new(FILE_24);
+pub static HUB_24: StaticFont = StaticFont::new(&SOURCE_24);
 /// Page titles (medium weight).
-pub static HUB_30: StaticFont = StaticFont::new(FILE_30);
+pub static HUB_30: StaticFont = StaticFont::new(&SOURCE_30);
 /// The timer's clock digits (`0-9` and `:` only).
-pub static HUB_DIGITS_64: StaticFont = StaticFont::new(FILE_DIGITS_64);
+pub static HUB_DIGITS_64: StaticFont = StaticFont::new(&SOURCE_DIGITS);
 
-static FILES: [&[u8]; 4] = [FILE_20, FILE_24, FILE_30, FILE_DIGITS_64];
+#[cfg(target_os = "none")]
+mod device;
+#[cfg(target_os = "none")]
+pub use device::{activate_prepared, prepare};
+
+pub fn resource_notice() -> Option<&'static str> {
+    #[cfg(target_os = "none")]
+    if device::recovery_active() {
+        return Some("UI fonts need an update. Install resources and restart.");
+    }
+    None
+}
+
 #[cfg(test)]
 static ALL: [&StaticFont; 4] = [&HUB_20, &HUB_24, &HUB_30, &HUB_DIGITS_64];
 
 /// Advance width of `ch` in `font`, px (`None` when the glyph is missing and
 /// LVGL falls back to Montserrat).
 pub fn advance(font: &'static StaticFont, ch: char) -> Option<u16> {
-    font.data().find(ch as u32).map(|g| g.adv)
+    font.data()
+        .find(ch as u32)
+        .or_else(|| {
+            // Match the descriptor's readable 20px fallback during recovery.
+            (font.0.fallback == ptr::addr_of!(HUB_20.0))
+                .then(|| HUB_20.data().find(ch as u32))
+                .flatten()
+        })
+        .map(|g| g.adv)
 }
 
 /// Whether `font` has a glyph for `ch` (host checks and tests).
@@ -285,6 +248,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recovery_titles_resolve_missing_cjk_through_the_complete_small_font() {
+        static RECOVERY_SOURCE: FontSource = FontSource {
+            index: 1,
+            recovery: FontData::checked(include_bytes!(concat!(
+                env!("OUT_DIR"),
+                "/recovery-24.bin"
+            ))),
+        };
+        static RECOVERY_FONT: StaticFont = StaticFont::new(&RECOVERY_SOURCE);
+        assert!(RECOVERY_SOURCE.recovery.find('设' as u32).is_none());
+        let mut glyph: lvgl_sys::lv_font_glyph_dsc_t = unsafe { core::mem::zeroed() };
+        // SAFETY: all pointers refer to live static descriptors/output. LVGL's
+        // font lookup only traverses the immutable chain, without UI objects.
+        assert!(unsafe {
+            lvgl_sys::lv_font_get_glyph_dsc(&RECOVERY_FONT.0, &mut glyph, '设' as u32, 0)
+        });
+        assert_eq!(glyph.resolved_font, ptr::addr_of!(HUB_20.0));
+        assert_eq!(glyph.adv_w, advance(&HUB_20, '设').unwrap());
+    }
+
+    #[test]
+    fn recovery_fonts_keep_exact_metrics_rasters_and_terminal_battery_copy() {
+        let recovery: [&[u8]; 4] = [
+            include_bytes!(concat!(env!("OUT_DIR"), "/recovery-20.bin")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/recovery-24.bin")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/recovery-30.bin")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/recovery-digits-64.bin")),
+        ];
+        for (i, bytes) in recovery.into_iter().enumerate() {
+            let small = FontData::parse(bytes).unwrap();
+            let full = ALL[i].data();
+            assert_eq!(
+                (small.line_height(), small.base_line()),
+                (full.line_height(), full.base_line())
+            );
+            for n in 0..small.count() {
+                let g = small.glyph(n).unwrap();
+                let original = full.find(small.code_point(n)).unwrap();
+                assert_eq!(
+                    (g.adv, g.w, g.h, g.ofs_x, g.ofs_y),
+                    (
+                        original.adv,
+                        original.w,
+                        original.h,
+                        original.ofs_x,
+                        original.ofs_y
+                    )
+                );
+                assert_eq!(small.rows(g), full.rows(original));
+            }
+            if i < 3 {
+                for ch in "低电量即将关机，请连接电源".chars() {
+                    assert!(small.find(ch as u32).is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_files_parse_and_are_sorted() {
         for font in ALL {
             let data = font.data();
@@ -295,7 +317,7 @@ mod tests {
                     "sorted, unique"
                 );
             }
-            let last = data.glyph(data.count() - 1);
+            let last = data.glyph(data.count() - 1).unwrap();
             assert!(
                 last.offset as usize + (last.w as usize).div_ceil(2) * last.h as usize
                     <= data.bitmaps().len(),

@@ -362,5 +362,7 @@ unsafe extern "C" fn mosaico_bt_pcm(data: *const u8, len: u32) {
 }
 #[unsafe(no_mangle)]
 extern "C" fn mosaico_bt_remote_volume(v: u32) {
-    crate::services::audio::task::remote_volume(v as u8);
+    if let Ok(v @ 0..=100) = u8::try_from(v) {
+        crate::services::audio::task::remote_volume(v);
+    }
 }

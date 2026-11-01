@@ -11,7 +11,7 @@ CI 使用源码提交时间作为固件的构建时间，避免同一提交仅�
 | `partitions.csv` | ESP-Mosaico 16 MiB A/B 布局，与设备迁移契约逐字段核对 |
 | `bootstrap.py` | 安装 Linux CI 的固定 GCC 和 espflash，并覆盖本机工具链路径 |
 | `package.py` | 生成和校验 OTA BIN、全量 BIN、两个 ZIP、manifest、安装说明与校验和 |
-| `install.py` | 校验解压后的发布包，可先刷写全量 NOR，再通过运行时 USB 安装 NAND 团子 |
+| `install.py` | 校验解压后的发布包，可先刷写全量 NOR，再通过运行时 USB 安装团子、UI 字体和可选应用更新 |
 | `publish.py` | 验证远程 tag 与源码提交，上传并回读附件，再公开 Release |
 | `notes/` | 各 tag 的发布说明 |
 
@@ -24,15 +24,16 @@ OTA BIN 是应用镜像，通过运行时 USB 控制台或 Wi-Fi HTTPS 下载写
 slot 1、NVS 和崩溃记录。可写 data 位于独立 SPI NAND，不占 NOR 分区。
 
 打包过程校验芯片、应用版本、A/B 标记、应用校验和、分区表 MD5、各组件偏移与边界、
-system 文件树、完整默认皮肤和全部附件 SHA-256。全量镜像固定 16 MiB，从地址 0x0
+system 文件树、全部独立角色包和附件 SHA-256。全量镜像固定 16 MiB，从地址 0x0
 写入并替换 NOR 内容，不改写 NAND。新 NAND 在固件运行后使用 `nand-format` 显式初始化。
 实际设备上的首装、BL 和恢复路径验收单独记录；构建通过不替代硬件验收。
 
 ## NAND 团子分发
 
 公开构建输入为根目录 [`dango-skin/`](../../dango-skin/)，每个角色目录只包含生成后的
-`fox.bin` 和 `skin.json`。鸣潮 · 心月狐团子写入 NOR 的 `/system/skins/default.bin`；玄灵 · 月蚀、
-玄灵 · 常态、智谱团子分别安装到 NAND 的 `/data/skins/<id>/`，不占用 A/B 固件槽或 system 分区。
+`fox.bin` 和 `skin.json`。鸣潮 · 心月狐团子（`default`）、玄灵 · 月蚀、
+玄灵 · 常态、智谱团子全部安装到 NAND 的 `/data/skins/<id>/`，不占用 A/B 固件槽或 system 分区。
+固件内置一张狐狸团子虚影与问号；未安装或无法读取所选角色时显示该图。
 构建和发布只读取这些生成产物，不依赖原图、提示词或私有制作工具。
 
 `app-pack skins dango-skin` 使用设备同一套清单解析器和图像解码器校验每个资源包。
@@ -43,7 +44,7 @@ system 文件树、完整默认皮肤和全部附件 SHA-256。全量镜像固�
 
 ```sh
 python3 -m pip install -r requirements.txt
-# 仅安装或更新 NAND 团子
+# 安装团子与匹配的 UI 字体
 python3 install.py --port RUNTIME_PORT
 # 全量安装：设备先进入 ROM 下载模式
 python3 install.py --flash-port ROM_PORT --port RUNTIME_PORT
@@ -57,7 +58,15 @@ NAND 未挂载时默认退出，只有显式增加 `--format-nand` 才会格式�
 该操作会擦除 NAND 数据，已挂载的卷不受此参数影响。
 
 无线 OTA 只取独立应用 BIN，保留已有 NAND 资源；需要更新团子资源时使用 ZIP 内的
-USB 安装器。默认狐狸及内置 Lua 应用的更新通过全量包交付。
+USB 安装器。心月狐也通过独立包交付；Lua 应用可通过独立 bundle 写入 Data，作为 system 同 ID 应用的更新。
+首次从 system 心月狐迁移时，缺少 NAND `default` 包会显示虚影；补装后重新加载或重启恢复。
+已有选择记录不改写，旧 system 中的完整皮肤不再读取，`placeholder` 可在设置中单独选择。
+
+两个 ZIP 都包含 `applications/<id>/`、`ui-fonts/` 和对应哈希清单。`install.py` 默认保留
+Data 应用，带 `--update-apps` 才替换同 ID 更新并保留存档。`bundle-push` 可只上传单个
+应用。字体使用完整内容哈希命名；设备校验后原子提交，重启生效，旧字体保留供固件回退。
+首次从内嵌字体固件做无线 OTA 时，旧 system 缺少新字体，界面使用完整 20px 字体退化显示；
+随后从 ZIP 安装匹配字体并重启。该资源更新流程不提供联网应用分发。
 
 ## 本地验证与发布
 

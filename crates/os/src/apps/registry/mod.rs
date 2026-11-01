@@ -58,7 +58,7 @@ pub const ICON_BOX: u16 = 96;
 
 /// Modules every app gets: the Lua standard libraries and the esp-claw
 /// modules `lua-engine` provides.
-pub const PROVIDED_MODULES: [&str; 25] = [
+pub const PROVIDED_MODULES: [&str; 29] = [
     "string",
     "table",
     "math",
@@ -84,6 +84,10 @@ pub const PROVIDED_MODULES: [&str; 25] = [
     "haptic",
     "led_strip",
     "button",
+    "capabilities",
+    "audio",
+    "camera",
+    "network",
 ];
 
 /// Where an app comes from.

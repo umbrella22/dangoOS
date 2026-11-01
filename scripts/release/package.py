@@ -20,6 +20,9 @@ sys.path.insert(0, str(ROOT / "scripts/device"))
 from bootstrap import download
 import layout
 from ota_image import validate_image
+import resource_bundle
+sys.path.insert(0, str(ROOT / "scripts/check"))
+import resource_budget
 
 INPUTS = json.loads((HERE / "inputs.json").read_text())
 OFFICIAL = INPUTS["official"]
@@ -136,7 +139,7 @@ def verify_nand_skins(catalog, files):
     for skin in catalog:
         identity = skin.get("id")
         require(isinstance(identity, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,63}", identity)
-                and identity != "default" and identity not in ids, "invalid/duplicate NAND skin id")
+                and identity != "placeholder" and identity not in ids, "invalid/duplicate NAND skin id")
         ids.add(identity)
         require(set(skin["files"]) == {"fox.bin", "skin.json"}, "NAND skin file inventory")
         for name, info in skin["files"].items():
@@ -153,6 +156,39 @@ def verify_nand_skins(catalog, files):
                 and metadata["binary_crc32"] == zlib.crc32(binary), "NAND skin manifest mismatch")
     require({name for name in files if name.startswith("dango-skin/")} == expected,
             "NAND skin archive inventory mismatch")
+
+
+def verify_resource_bundles(manifest, files):
+    if "ui_fonts" not in manifest and "application_bundles" not in manifest:
+        return
+    require("tools/resource_bundle.py" in files, "resource validation tools missing")
+    # Only verified relative paths reach this materialization; never execute
+    # validation code from the archive being inspected.
+    with tempfile.TemporaryDirectory(prefix="verify-resources-") as temporary:
+        root = Path(temporary)
+        for name, data in files.items():
+            if name.startswith(("applications/", "ui-fonts/")):
+                path = Path(name)
+                require(not path.is_absolute() and all(p not in (".", "..") for p in path.parts)
+                        and "\\" not in name, "unsafe resource archive path")
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+        require(resource_bundle.fonts(root / "ui-fonts") == manifest["ui_fonts"], "UI font catalog mismatch")
+        ids = set()
+        for bundle in manifest["application_bundles"]:
+            identity = bundle.get("id")
+            require(isinstance(identity, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,63}", identity)
+                    and identity not in ids, "invalid/duplicate application bundle id")
+            ids.add(identity)
+            require(resource_bundle.application(root / "applications" / identity) == bundle, "application bundle catalog mismatch")
+        require({p.name for p in (root / "applications").iterdir()} == ids, "unexpected application bundle")
+
+
+def verify_fonts_pin(application, fonts):
+    pins = re.findall(rb"DANGO_UI_FONTS_V1:([0-9a-f]{64}):([0-9]+);", application)
+    require(pins == [(fonts["id"].encode("ascii"), str(fonts["bytes"]).encode("ascii"))],
+            "firmware UI font pin differs from resource bundle; rebuild firmware from current resource inputs")
 
 
 def install_notes(tag, stem):
@@ -172,7 +208,7 @@ python3 install.py --flash-port ROM_PORT --port RUNTIME_PORT
 
 `ROM_PORT` 是下载模式端口，`RUNTIME_PORT` 是固件运行后的 USB CDC 端口；两者可能不同。
 macOS/Linux 使用 `/dev/cu.usbmodem…`、`/dev/ttyACM…`，Windows 使用 `COM3` 等端口名。
-安装器先检查包内文件校验和，再刷写 NOR、等待系统启动，最后将三套团子安装到 NAND。
+安装器先检查包内文件校验和，再刷写 NOR、等待系统启动，最后将四套团子与匹配的 UI 字体安装到 NAND。
 
 **全量刷写会覆盖 NOR 上的系统内容、分区、引导信息和 Wi-Fi NVS；独立 NAND 上的照片、存档和偏好保留。**
 新 NAND 或无法挂载的卷需要显式初始化，安装器会提示后退出。仅在确认可以清空该 NAND 时，
@@ -188,7 +224,7 @@ python3 install.py --port RUNTIME_PORT --format-nand
 ## 日常升级
 
 已使用 dangoOS 的设备，可以连接 2.4 GHz WPA2 Wi-Fi，在“设置 → 系统更新”中安装新固件。
-无线更新只更新原生固件，保留现有团子资源和 Lua 应用；它不会下载 ZIP 中的 NAND 资源。
+无线更新只更新原生固件，保留现有资源和 Lua 应用。首次迁移到外置 UI 字体的固件时，旧 system 分区没有匹配字体，界面会使用内置 20px 字体退化显示并提示补装资源；它不会自动下载资源包。
 
 USB 升级使用 `{stem}-ota.zip`，只适用于 MOSAICO_S31_AB_LAYOUT_V2_6M_NAND 布局。
 解压后执行：
@@ -198,11 +234,30 @@ python3 -m pip install -r requirements.txt
 python3 tools/console.py ota {stem}-ota.bin --port RUNTIME_PORT --verbose
 python3 tools/console.py ota-status --port RUNTIME_PORT
 python3 install.py --port RUNTIME_PORT
+python3 tools/console.py reboot --port RUNTIME_PORT
 ```
 
 OTA 写备用槽并在重启后进行健康确认；检查运行槽、版本 `{tag[1:]}`、`Valid` 和自检结果。
-最后一条命令更新三套 NAND 团子，亦可在无线升级后单独运行。
-鸣潮 · 心月狐团子和内置 Lua 应用位于 NOR 的 system 分区，更新它们需使用全量安装包。
+安装器检查正在运行的固件是否接受字体包，再更新四套 NAND 团子与字体；重启后字体生效。
+同一命令也可在无线升级后运行。字体按内容哈希共存，旧字体保留供固件回退使用。
+鸣潮 · 心月狐团子也使用独立 NAND 包，保留 `default` ID。首次迁移而未补装该包时显示狐狸团子虚影与问号；补装后重新加载或重启即可恢复原选择。
+
+## 独立应用与资源更新
+
+两个 ZIP 都带有 `applications/<id>/` 应用包与 `ui-fonts/` 字体包。脚本、图片和图标的更新不需要写固件槽：
+
+```sh
+python3 tools/console.py bundle-push applications/snake --port RUNTIME_PORT
+# 或安装本发布的全部 Lua 应用；替换同 ID Data 应用，保留存档
+python3 install.py --port RUNTIME_PORT --update-apps
+# 只补装与当前固件匹配的字体
+python3 tools/console.py fonts-push ui-fonts --port RUNTIME_PORT
+python3 tools/console.py reboot --port RUNTIME_PORT
+```
+
+应用包带有运行文件哈希和许可证；Data 更新覆盖 system 同 ID 版本，卸载 Data 更新恢复 system 版本。
+默认安装器保留现有 Data 应用，只有 `--update-apps` 才替换。原生 Rust 模块和新增 Lua 宿主能力仍需更新固件。
+单独上传字体前会检查固件所需哈希，完整校验后通过同卷原子 rename 发布；上传中断保留现有已提交资源。
 
 ## 包内资源
 
@@ -210,11 +265,14 @@ OTA 写备用槽并在重启后进行健康确认；检查运行槽、版本 `{t
 | --- | --- |
 | `{stem}-full.bin`（全量 ZIP） | NOR 0x0 起的完整 16 MiB，含 BL、Vibe Mode、双 6 MiB A/B 槽、system |
 | `{stem}-ota.bin`（OTA ZIP） | NOR 非活动应用槽；不能从地址 0x0 刷入 |
+| `applications/<id>/` | NAND `/data/apps/<id>/`（可选 Data 应用更新） |
+| `ui-fonts/` | NAND `/data/ui/fonts-<SHA256>.bin`；full 的 system 也包含对应字体 |
+| `dango-skin/default/` | NAND `/data/skins/default/`（鸣潮 · 心月狐团子） |
 | `dango-skin/eclipse/` | NAND `/data/skins/eclipse/`（玄灵 · 月蚀） |
 | `dango-skin/normal/` | NAND `/data/skins/normal/`（玄灵 · 常态） |
 | `dango-skin/black-blue/` | NAND `/data/skins/black-blue/`（智谱团子） |
 
-每套 NAND 资源只有 `fox.bin` 和 `skin.json`。两个 ZIP 都包含这三套资源与安装工具；
+每套 NAND 资源只有 `fox.bin` 和 `skin.json`。两个 ZIP 都包含四套团子、应用包、字体包与安装工具；
 独立 BIN 只针对 NOR，单刷 BIN 不会安装 NAND 资源。
 
 ## 产物与验证范围
@@ -259,6 +317,8 @@ def build(args):
                         "--flash-mode", "dio", "--flash-freq", "40mhz", str(args.elf), str(ota_path)], check=True)
         application = ota_path.read_bytes()
         checked_application(application, version)
+        resources = resource_budget.assess(args.elf.read_bytes(), application)
+        require(resources["status"] == "pass", "; ".join(resources["failures"]))
         system_dir = temporary / "system"
         subprocess.run(["cargo", "run", "-p", "app-pack", "--locked", "--offline", "--",
                         "system", "apps", str(system_dir), "--size", str(SYSTEM_BYTES)], cwd=ROOT, check=True)
@@ -266,6 +326,18 @@ def build(args):
         report = json.loads((system_dir / "file-tree-report.json").read_text())
         require(report["status"] == "verified-system-image" and report["output_sha256"] == sha(system),
                 "system image verification receipt mismatch")
+        application_dir = temporary / "applications"
+        applications = json.loads(subprocess.check_output(
+            ["cargo", "run", "-p", "app-pack", "--locked", "--offline", "--",
+             "bundles", "apps", str(application_dir)], cwd=ROOT, text=True))
+        font_dir = temporary / "ui-fonts"
+        fonts = json.loads(subprocess.check_output(
+            ["cargo", "run", "-p", "app-pack", "--locked", "--offline", "--",
+             "fonts", str(font_dir)], cwd=ROOT, text=True))
+        verify_fonts_pin(application, fonts)
+        bundle_files = {path.relative_to(temporary).as_posix(): path.read_bytes()
+                        for directory in (application_dir, font_dir)
+                        for path in sorted(directory.rglob("*")) if path.is_file()}
         full, components, rows, info = assemble(official, application, system, table, version)
         stem = f"dangoOS-{tag}-esp32s31"
         manifest = {
@@ -274,7 +346,10 @@ def build(args):
             "chip": "esp32s31", "flash_bytes": FLASH_BYTES, "layout": "MOSAICO_S31_AB_LAYOUT_V2_6M_NAND",
             "upstream": OFFICIAL, "partitions": rows, "components": components,
             "application": info, "hardware_validation": "not-run for this release",
+            "resource_budget": resources,
             "nand_skins": catalog,
+            "application_bundles": applications,
+            "ui_fonts": fonts,
             "images": {
                 "ota": {"file": f"{stem}-ota.bin", "bytes": len(application), "sha256": sha(application),
                         "delivery": "runtime USB or HTTPS A/B OTA", "preserves_user_data": True},
@@ -289,9 +364,10 @@ def build(args):
                  "manifest.json": json_bytes(manifest), "INSTALL.md": install_notes(tag, stem)}
         requirements = b"pyserial==3.5\nesptool==5.6.0\n"
         common = {"manifest.json": files["manifest.json"], "INSTALL.md": files["INSTALL.md"],
-                  "requirements.txt": requirements, **skin_files,
+                  "requirements.txt": requirements, **skin_files, **bundle_files,
                   "install.py": (HERE / "install.py").read_bytes(),
                   "tools/console.py": (ROOT / "scripts/device/console.py").read_bytes(),
+                  "tools/resource_bundle.py": (ROOT / "scripts/device/resource_bundle.py").read_bytes(),
                   "tools/ota_image.py": (ROOT / "scripts/device/ota_image.py").read_bytes()}
         ota_files = {**common, f"{stem}-ota.bin": application}
         full_files = {**common, f"{stem}-full.bin": full, "partitions.csv": (HERE / "partitions.csv").read_bytes(),
@@ -354,6 +430,8 @@ def verify(directory, require_clean=True):
             "full image size/offset mismatch")
     require(checked_application(images["ota"], manifest["version"]) == manifest["application"],
             "manifest application descriptor mismatch")
+    if "ui_fonts" in manifest:
+        verify_fonts_pin(images["ota"], manifest["ui_fonts"])
     table = partition_table()
     require(layout.parse_table(table) == manifest["partitions"], "release partition table mismatch")
     parts = {"partition_table": (layout.TABLE_AT, table), "otadata": (layout.OTA_AT, initial_otadata()),
@@ -381,6 +459,7 @@ def verify(directory, require_clean=True):
             require(archive.testzip() is None, "ZIP CRC mismatch")
             zipped = {name: archive.read(name) for name in names}
         verify_checksums(zipped)
+        verify_resource_bundles(manifest, zipped)
         if "nand_skins" in manifest:
             verify_nand_skins(manifest["nand_skins"], zipped)
             require({"install.py", "tools/console.py", "tools/ota_image.py", "requirements.txt"} <= set(zipped),

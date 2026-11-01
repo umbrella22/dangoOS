@@ -2,7 +2,7 @@
 # Device runtime components and the host-side application packaging tool.
 members = ["crates/os", "crates/lua-engine", "crates/fs", "tools/app-pack"]
 resolver = "2"
-exclude = ["vendor/embassy-usb-synopsys-otg", "vendor/esp-wifi-sys-esp32s31", "vendor/esp-radio", "vendor/esp-radio-rtos-driver", "vendor/esp-bluedroid"]
+exclude = ["vendor/embassy-usb-synopsys-otg", "vendor/esp-wifi-sys-esp32s31", "vendor/esp-radio", "vendor/esp-radio-rtos-driver", "vendor/esp-bluedroid", "vendor/esp-alloc"]
 
 [workspace.package]
 version = "0.3.0"
@@ -86,6 +86,8 @@ embassy-usb-synopsys-otg = { path = "vendor/embassy-usb-synopsys-otg" }
 esp-wifi-sys-esp32s31 = { path = "vendor/esp-wifi-sys-esp32s31" }
 
 [patch."https://github.com/esp-rs/esp-hal"]
+# Expose TLSF block snapshots without adding work to allocation/deallocation.
+esp-alloc = { path = "vendor/esp-alloc" }
 # S31 controller linked-list buffers require internal RAM even with a PSRAM heap.
 esp-radio = { path = "vendor/esp-radio" }
 # Keep native radio tasks, including the shared timer worker, on Core0.

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Push a Lua app to a Mosaico S31 over the USB console, or control apps.
 
+    scripts/device/console.py bundle-push <bundle-dir> [--run]
+    scripts/device/console.py fonts-push <bundle-dir> | fonts-status
     scripts/device/console.py push <app-dir> [--run] [--follow]
     scripts/device/console.py run <id> | stop | reload | ls | rm <id> | rmdata <id> [--follow]
     scripts/device/console.py status | reboot [--follow]
@@ -40,6 +42,7 @@ import re
 import sys
 import time
 import zlib
+from pathlib import Path
 from urllib.parse import urlsplit
 
 try:
@@ -189,7 +192,7 @@ def push_skin(dev, root, select):
     with open(os.path.join(root, "skin.json"), "rb") as f:
         manifest = json.load(f)
     skin_id = manifest.get("id")
-    if not isinstance(skin_id, str) or not ID_RE.fullmatch(skin_id) or skin_id == "default":
+    if not isinstance(skin_id, str) or not ID_RE.fullmatch(skin_id) or skin_id == "placeholder":
         sys.exit(f"bad skin id {skin_id!r}")
     files = app_files(root)
     if {rel for rel, _ in files} != {"skin.json", "fox.bin"}:
@@ -214,6 +217,33 @@ def push_skin(dev, root, select):
     if select:
         dev.command(f"skin-select {skin_id}", timeout=30.0)
     print(f"pushed skin {skin_id}" + (" and selected" if select else ""))
+
+
+def push_bundle(dev, root, run=False):
+    import resource_bundle
+    resource_bundle.application(root)
+    push(dev, str(Path(root) / "payload"), run)
+
+
+def push_fonts(dev, root):
+    import resource_bundle
+    report = resource_bundle.fonts(root)
+    data = (Path(root) / report["file"]).read_bytes()
+    status = response_fields(dev.command("fonts-status"))
+    if status.get("expected") != report["id"]:
+        raise ValueError("UI font bundle does not match the running firmware; update firmware first")
+    dev.command("fonts-begin")
+    try:
+        dev.command(f"file fonts.bin {len(data)} {zlib.crc32(data):08x}")
+        dev.write_all(data)
+        reply = dev.reply(timeout=60)
+        if not reply.startswith("@ok"):
+            raise SystemExit(f"fonts: {reply}")
+        dev.command("fonts-commit", timeout=60)
+    except (SystemExit, OSError):
+        dev.command("abort", check=False)
+        raise
+    print("UI fonts installed. Restart the device to activate them.")
 
 
 def read_brain(path):
@@ -404,7 +434,7 @@ def main():
     wireless = ("wifi-status", "wifi-on", "wifi-scan", "wifi-connect", "wifi-disconnect", "wifi-off", "wifi-saved", "wifi-saved-connect", "wifi-forget", "wifi-auto", "bt-status", "bt-on", "bt-off")
     updates = ("update-status", "update-check", "update-install", "update-cancel", "update-url")
     updates += ("update-proxy",)
-    ap.add_argument("action", choices=["push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "ota", "ota-status", "ota-abort", "nand-info", "nand-status", "nand-format", "power-status", "screen-off", "screen-on", *wireless, *camera, *updates, *audio])
+    ap.add_argument("action", choices=["bundle-push", "fonts-push", "fonts-status", "push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "ota", "ota-status", "ota-abort", "nand-info", "nand-status", "nand-format", "power-status", "screen-off", "screen-on", *wireless, *camera, *updates, *audio])
     ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id, brain script or photo file")
     ap.add_argument("--name", help="photo path relative to Album photos (photo-push only)")
     ap.add_argument("--select", action="store_true", help="select after skin-push")
@@ -415,7 +445,7 @@ def main():
     ap.add_argument("--duration-ms", type=int, default=1000, help="audio-record duration in milliseconds")
     args = ap.parse_args()
 
-    needs_target = args.action in ("push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "ota", "screen-off", "wifi-connect", "wifi-saved-connect", "wifi-forget", "wifi-auto", "update-url", "update-proxy", "audio-play", "audio-record", "audio-volume", "audio-mute")
+    needs_target = args.action in ("bundle-push", "fonts-push", "push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "ota", "screen-off", "wifi-connect", "wifi-saved-connect", "wifi-forget", "wifi-auto", "update-url", "update-proxy", "audio-play", "audio-record", "audio-volume", "audio-mute")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
     if args.action == "screen-off" and (not re.fullmatch(r"[0-9]+", args.target) or not 1 <= int(args.target) <= 60):
@@ -443,6 +473,12 @@ def main():
         if args.target not in ("on", "off"):
             ap.error("wifi-auto requires on or off")
         wifi_command = f"wifi-auto {args.target}"
+    if args.action in ("bundle-push", "fonts-push"):
+        import resource_bundle
+        try:
+            (resource_bundle.application if args.action == "bundle-push" else resource_bundle.fonts)(args.target)
+        except (ValueError, KeyError, TypeError, OSError) as error:
+            ap.error(str(error))
     brain_data = read_brain(args.target) if args.action == "brain-push" else None
     photo = read_photo(args.target, args.name) if args.action == "photo-push" else None
     ota = read_ota(args.target) if args.action == "ota" else None
@@ -549,6 +585,21 @@ def main():
         print(dev.command(f"{args.action} {args.target}", timeout=30.0))
     elif args.action == "skin-ls":
         print(dev.command("skin-ls"))
+    elif args.action in ("bundle-push", "fonts-push", "fonts-status"):
+        try:
+            if args.action == "bundle-push":
+                push_bundle(dev, args.target, args.run)
+            elif args.action == "fonts-push":
+                push_fonts(dev, args.target)
+            else:
+                print(dev.command("fonts-status"))
+            if args.follow:
+                dev.follow()
+        except (ValueError, KeyError, TypeError, OSError) as error:
+            ap.exit(2, f"resource upload failed: {error}\n")
+        finally:
+            dev.ser.close()
+        return
     elif args.action == "push":
         push(dev, args.target, args.run)
     elif args.action == "ls":

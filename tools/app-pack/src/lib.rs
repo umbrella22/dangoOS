@@ -1,4 +1,5 @@
 //! Build fresh LittleFS system images from repository application packages.
+pub mod bundle;
 pub mod image;
 pub mod skins;
 
@@ -165,15 +166,17 @@ pub fn build_system(image_bytes: usize, packages: &[Package]) -> Result<(Vec<u8>
             expected.insert(path, entry.clone());
         }
     }
-    vfs.create_dir_all("/system/skins")
+    let fonts = os::services::resources::fonts::bundled();
+    os::services::resources::fonts::parse_bundle(fonts)?;
+    vfs.create_dir_all("/system/ui")
         .map_err(|e| e.to_string())?;
-    let default_skin = os::companion::render::skin::builtin_binary();
-    // Parse exactly what will ship before writing it into the system image.
-    os::companion::render::skin::Skin::parse(default_skin.clone())?;
-    vfs.write_file("/system/skins/default.bin", &default_skin)
+    vfs.write_file(os::services::resources::fonts::SYSTEM_PATH, fonts)
         .map_err(|e| e.to_string())?;
-    expected.insert("/skins".into(), Entry::Directory);
-    expected.insert("/skins/default.bin".into(), Entry::File(default_skin));
+    expected.insert("/ui".into(), Entry::Directory);
+    expected.insert(
+        format!("/ui/{}", os::services::resources::fonts::FILENAME),
+        Entry::File(fonts.to_vec()),
+    );
     drop(vfs);
     let output = disk.bytes();
     let after = snapshot(&output)?;

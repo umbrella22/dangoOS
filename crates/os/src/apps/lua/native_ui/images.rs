@@ -2,7 +2,7 @@
 use super::{lv_image_cache_drop, values::cstring, LuaLvglService};
 use alloc::{boxed::Box, string::String, vec::Vec};
 use rs_lvgl::sys as s;
-const PIXELS_MAX: usize = 2 * 1024 * 1024;
+pub(super) const PIXELS_MAX: usize = 2 * 1024 * 1024;
 
 impl LuaLvglService {
     pub(super) unsafe fn canvas(

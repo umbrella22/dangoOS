@@ -93,6 +93,35 @@ fn extract(input: &Path, out: &Path) -> Result<()> {
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
+        Some("bundles") if args.len() == 4 => {
+            let out = Path::new(&args[3]);
+            let packages = app_pack::discover(Path::new(&args[2]))?;
+            fs::create_dir(out)?;
+            let reports = packages.iter().map(|package| app_pack::bundle::export(package, &out.join(&package.id))).collect::<std::result::Result<Vec<_>, _>>()?;
+            println!("{}", serde_json::json!(reports));
+        }
+        Some("bundle") if args.len() == 4 => {
+            let package = Package::read(Path::new(&args[2]))?;
+            println!("{}", app_pack::bundle::export(&package, Path::new(&args[3]))?);
+        }
+        Some("verify-bundle") if args.len() == 3 => {
+            println!("{}", app_pack::bundle::verify(Path::new(&args[2]))?);
+        }
+        Some("fonts") if args.len() == 3 => {
+            let dir = Path::new(&args[2]);
+            fs::create_dir(dir)?;
+            let bytes = os::services::resources::fonts::bundled();
+            let filename = os::services::resources::fonts::FILENAME;
+            write_new(&dir.join(filename), bytes)?;
+            let license = include_bytes!("../../../crates/os/src/assets/NotoSansSC-OFL.txt");
+            fs::create_dir(dir.join("documentation"))?;
+            write_new(&dir.join("documentation/OFL.txt"), license)?;
+            let report = serde_json::json!({"schema":1,"kind":"dango-ui-fonts", "id":os::services::resources::fonts::ID,
+                "file":filename,"bytes":bytes.len(),"sha256":image::sha(bytes),
+                "documentation":{"OFL.txt":{"kind":"file","bytes":license.len(),"sha256":image::sha(license)}}});
+            write_new(&dir.join("bundle.json"), &serde_json::to_vec_pretty(&report)?)?;
+            println!("{report}");
+        }
         Some("skins") if args.len() == 3 => {
             println!("{}", serde_json::json!({
                 "status": "valid-skin-packages",
@@ -118,7 +147,7 @@ fn main() -> Result<()> {
                 "ids": packages.iter().map(|p| &p.id).collect::<Vec<_>>(),
             }));
         }
-        _ => return Err("usage: app-pack extract <image> <new-output-dir> | system <apps-root> <new-output-dir> --size <partition-bytes> | check <apps-root> | skins <skin-root>".into()),
+        _ => return Err("usage: app-pack bundle <app-dir> <new-output-dir> | verify-bundle <bundle-dir> | fonts <new-output-dir> | extract <image> <new-output-dir> | system <apps-root> <new-output-dir> --size <partition-bytes> | check <apps-root> | skins <skin-root>".into()),
     }
     Ok(())
 }

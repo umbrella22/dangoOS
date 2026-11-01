@@ -134,7 +134,7 @@ local function build_tone(freq_hz, duration_ms, amp, wave)
 end
 
 local function init_audio()
-    if not audio_ok then
+    if not audio_ok or type(audio.open_output) ~= "function" then
         print("[game_2048] WARN: audio unavailable")
         return
     end

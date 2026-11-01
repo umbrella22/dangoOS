@@ -99,7 +99,7 @@ fn skin_choices(root: &Path) -> Vec<os::companion::skins::Choice> {
     .0;
     let mut vfs = fs::Vfs::new();
     vfs.mount("data", volume);
-    for id in ["eclipse", "normal", "black-blue"] {
+    for id in ["default", "eclipse", "normal", "black-blue"] {
         let directory = format!("/data/skins/{id}");
         vfs.create_dir_all(&directory).unwrap();
         let metadata = host_fs::read(root.join("dango-skin").join(id).join("skin.json")).unwrap();
@@ -248,8 +248,8 @@ fn main() {
     app.set_registry(registry(&root));
     let mut ui = Ui::new(&display, theme()).unwrap();
     ui.mount(&app).unwrap();
-    for id in ["default", "eclipse", "normal", "black-blue"] {
-        control.set_skin(if id == "default" {
+    for id in ["placeholder", "default", "eclipse", "normal", "black-blue"] {
+        control.set_skin(if id == "placeholder" {
             Skin::builtin()
         } else {
             Skin::parse(host_fs::read(root.join("dango-skin").join(id).join("fox.bin")).unwrap())
@@ -260,6 +260,28 @@ fn main() {
     }
     for (name, status) in [
         ("home-off", os::services::radio::Snapshot::new()),
+        (
+            "home-strong",
+            os::services::radio::Snapshot {
+                wifi: os::services::radio::WifiState::Connected,
+                wifi_link: os::services::radio::WifiLink::Connected {
+                    rssi_dbm: Some(-50),
+                },
+                bluetooth: os::services::radio::BluetoothState::Connected,
+                ip: Some([192, 0, 2, 42]),
+            },
+        ),
+        (
+            "home-medium",
+            os::services::radio::Snapshot {
+                wifi: os::services::radio::WifiState::Connected,
+                wifi_link: os::services::radio::WifiLink::Connected {
+                    rssi_dbm: Some(-64),
+                },
+                bluetooth: os::services::radio::BluetoothState::Connected,
+                ip: Some([192, 0, 2, 42]),
+            },
+        ),
         (
             "home-weak",
             os::services::radio::Snapshot {

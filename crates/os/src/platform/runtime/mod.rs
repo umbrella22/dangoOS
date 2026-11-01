@@ -7,6 +7,8 @@ pub(crate) mod crashlog;
 #[cfg(target_os = "none")]
 pub(crate) mod executors;
 pub mod frequency;
+#[cfg(any(target_os = "none", test))]
+pub(crate) mod heap;
 #[cfg(target_os = "none")]
 pub(crate) mod libc;
 #[cfg(target_os = "none")]

@@ -24,6 +24,13 @@ use refresh::RefreshGate;
 pub use refresh::{RedrawBoundary, RpcWindow};
 use rs_lvgl::sys as s;
 use serde_json::{json, Value};
+
+pub fn limits() -> lua_engine::NativeUiLimits {
+    lua_engine::NativeUiLimits {
+        objects: objects::OBJECT_MAX,
+        image_bytes: images::PIXELS_MAX,
+    }
+}
 unsafe extern "C" {
     fn lv_image_cache_drop(src: *const core::ffi::c_void);
 }

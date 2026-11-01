@@ -1,5 +1,9 @@
 //! Keep the S31 slot budget in this repository, separate from Cargo caches.
+#[path = "build/fonts.rs"]
+mod fonts;
 fn main() {
+    println!("cargo:rerun-if-changed=build/fonts.rs");
+    fonts::generate();
     println!("cargo:rerun-if-env-changed=DANGO_UPDATE_MANIFEST_URL");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
     let build_unix = std::env::var("SOURCE_DATE_EPOCH")

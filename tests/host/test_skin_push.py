@@ -48,8 +48,18 @@ class SkinPushTest(unittest.TestCase):
         self.assertEqual(self.dev.ser.writes[-1], b'@mosaico abort\n')
         self.assertFalse(any(b'skin-commit' in b or b'skin-select' in b for b in self.dev.ser.writes))
 
+    def test_full_default_character_uses_the_normal_skin_upload_protocol(self):
+        (self.root / 'skin.json').write_text(json.dumps({'id': 'default'}))
+        self.dev.ser.queue = [b'@ok\n'] * 8
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.api.push_skin(self.dev, str(self.root), False)
+        commands = [part for part in self.dev.ser.writes if part.startswith(b'@mosaico')]
+        self.assertEqual(commands[1], b'@mosaico skin-begin default\n')
+        self.assertEqual(commands[-1], b'@mosaico skin-commit default\n')
+        self.assertFalse(any(b'skin-select' in part for part in commands))
+
     def test_invalid_identity_or_unexpected_file_rejected_before_write(self):
-        for skin_id in ('../x', 'test\n', 'white space', 'default', 42):
+        for skin_id in ('../x', 'test\n', 'white space', 'placeholder', 42):
             (self.root / 'skin.json').write_text(json.dumps({'id': skin_id}))
             with self.assertRaises(SystemExit):
                 self.api.push_skin(self.dev, str(self.root), False)

@@ -5,7 +5,7 @@ fn apps() -> Vec<Package> {
 }
 
 #[test]
-fn fresh_system_contains_repository_apps_and_default_art_and_rebuilds_identically() {
+fn fresh_system_contains_apps_and_fonts_without_character_skins_and_rebuilds_identically() {
     let packages = apps();
     assert_eq!(
         packages.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
@@ -28,16 +28,9 @@ fn fresh_system_contains_repository_apps_and_default_art_and_rebuilds_identicall
     let tree = snapshot(&image).unwrap();
     assert!(tree.keys().all(|path| path == "/apps"
         || path.starts_with("/apps/")
-        || path == "/skins"
-        || path == "/skins/default.bin"));
-    let Entry::File(default) = &tree["/skins/default.bin"] else {
-        panic!()
-    };
-    let loaded = os::companion::render::skin::Skin::parse(default.clone()).unwrap();
-    assert_eq!(loaded.blob(), os::companion::render::data::BLOB);
-    for pose in os::companion::render::FoxPose::ALL {
-        assert_eq!(loaded.pose(pose).base.off, pose.data().base.off);
-    }
+        || path == "/ui"
+        || path.starts_with("/ui/")));
+    assert!(!tree.keys().any(|path| path.starts_with("/skins")));
     assert!(tree.contains_key("/apps/snake/scripts/main.lua"));
     assert!(tree.contains_key("/apps/2048/scripts/main.lua"));
     let (again, _) = build_system(image.len(), &packages).unwrap();
@@ -111,6 +104,28 @@ fn development_examples_are_valid_but_not_factory_apps() {
             assert!(ids.insert(package.id));
         }
     }
-    assert_eq!(ids, BTreeSet::from([String::from("hardware"), String::from("hello")]));
+    assert_eq!(
+        ids,
+        BTreeSet::from([String::from("hardware"), String::from("hello")])
+    );
     assert!(apps().iter().all(|p| !ids.contains(&p.id)));
+}
+
+#[test]
+fn standalone_bundle_verifies_actual_payload_and_detects_tampering() {
+    let out = std::env::temp_dir().join(format!("dango-app-bundle-{}", std::process::id()));
+    assert!(!out.exists());
+    let package = apps().remove(0);
+    let report = bundle::export(&package, &out).unwrap();
+    assert_eq!(bundle::verify(&out).unwrap(), report);
+    assert_eq!(
+        host_fs::read(out.join("payload/scripts/main.lua")).unwrap(),
+        match &package.files["scripts/main.lua"] {
+            Entry::File(bytes) => bytes.clone(),
+            _ => unreachable!(),
+        }
+    );
+    host_fs::write(out.join("payload/scripts/main.lua"), b"return 999").unwrap();
+    assert!(bundle::verify(&out).unwrap_err().contains("inventory"));
+    host_fs::remove_dir_all(out).unwrap();
 }

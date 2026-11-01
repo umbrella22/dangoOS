@@ -78,6 +78,15 @@ pub static GLOBAL_ALLOCATOR: RawAllocator = RawAllocator {
 /// What the embedding provides to a script. Everything but `print` is
 /// optional; the defaults behave like a board without that hardware.
 pub trait Host: Any {
+    /// Copies service state; must not start hardware or enter synchronous IO.
+    fn service_snapshot(&mut self) -> crate::ServiceSnapshot {
+        crate::ServiceSnapshot::default()
+    }
+    /// Apply a bounded runtime output setting. No playback or recording is started.
+    fn audio_control(&mut self, request: crate::AudioControl) -> Result<(), i32> {
+        let _ = request;
+        Err(esp_err::NOT_SUPPORTED)
+    }
     /// A coherent copy from the sensor task; this method must never read a bus.
     fn hardware_snapshot(&mut self) -> crate::HardwareSnapshot {
         crate::HardwareSnapshot::default()
@@ -134,6 +143,12 @@ pub trait Host: Any {
     fn heap_info(&mut self, caps: u32) -> HeapInfo {
         let _ = caps;
         HeapInfo::default()
+    }
+
+    /// A point-in-time allocation/free probe with the exact capability/Layout.
+    fn heap_probe(&mut self, caps: u32, layout: Layout) -> Result<bool, i32> {
+        let _ = (caps, layout);
+        Err(esp_err::NOT_SUPPORTED)
     }
 }
 
@@ -213,6 +228,9 @@ enum State {
 }
 
 impl Ctx {
+    pub(crate) fn service_controls_allowed(&self) -> bool {
+        !self.bounded && !self.worker_mode
+    }
     pub(crate) fn bounded_worker_api(&self) -> bool {
         self.bounded && !self.worker_mode
     }
@@ -376,6 +394,7 @@ impl Vm {
             mosaico_lua_install_hook(thread, interval);
             crate::ui::register(&mut vm)?;
             crate::workers::register(&mut vm)?;
+            crate::services::register(&mut vm)?;
             Ok(vm)
         }
     }

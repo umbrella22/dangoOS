@@ -118,7 +118,7 @@ impl Host for Screen {
             total_size: total,
             free_size: total - used,
             allocated_size: used,
-            largest_free_block: total - used,
+            valid_fields: heap_fields::SIZES,
             ..HeapInfo::default()
         }
         .with_caps(caps)

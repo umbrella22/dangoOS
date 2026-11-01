@@ -40,8 +40,8 @@ impl Session {
             let up = self.upload.take().expect("upload");
             let closed = vfs.close(up.fd);
             let crc = !up.crc;
-            if self.kind == UploadKind::Photo {
-                self.completed_photo = (up.failed.is_none() && closed.is_ok() && crc == up.want)
+            if matches!(self.kind, UploadKind::Photo | UploadKind::Fonts) {
+                self.completed_file = (up.failed.is_none() && closed.is_ok() && crc == up.want)
                     .then(|| up.rel.clone());
             }
             let reply = match (up.failed, closed) {
@@ -65,6 +65,7 @@ impl Session {
             UploadKind::Skin => crate::companion::skins::STAGING,
             UploadKind::Brain => crate::companion::brain::store::STAGING,
             UploadKind::Photo => PHOTO_STAGING,
+            UploadKind::Fonts => crate::services::resources::fonts::STAGING,
         }
     }
 
@@ -74,7 +75,7 @@ impl Session {
         id: &str,
         kind: UploadKind,
     ) -> Result<String, String> {
-        self.completed_photo = None;
+        self.completed_file = None;
         if !id_is_valid(id) {
             return Err(format!("bad id {id}"));
         }
@@ -84,8 +85,8 @@ impl Session {
         if kind == UploadKind::Photo {
             crate::apps::lifecycle::uninstall::ensure_ready(vfs, "photo")?;
         }
-        if kind == UploadKind::Skin && id == "default" {
-            return Err("reserved skin id default".into());
+        if kind == UploadKind::Skin && id == crate::companion::skins::PLACEHOLDER_ID {
+            return Err("reserved skin id placeholder".into());
         }
         if self.staging.is_some() {
             let _ = vfs.remove_tree(self.staging_root());
@@ -109,7 +110,7 @@ impl Session {
         size: &str,
         crc: &str,
     ) -> Result<(), String> {
-        self.completed_photo = None;
+        self.completed_file = None;
         let id = self.staging.as_deref().ok_or("file before begin")?;
         if vfs.stat(&format!("{}/{id}", self.staging_root())).is_err() {
             return Err("staging invalidated".into());
@@ -125,6 +126,11 @@ impl Session {
                 || size as usize > crate::companion::brain::SOURCE_MAX)
         {
             return Err("brain upload requires source.lua of 1..65536 bytes".into());
+        }
+        if self.kind == UploadKind::Fonts
+            && (rel != "fonts.bin" || size as usize != crate::services::resources::fonts::BYTES)
+        {
+            return Err("fonts upload requires the matching fonts.bin resource set".into());
         }
         if !rel_is_safe(rel) {
             return Err(format!("bad path {rel}"));
@@ -160,7 +166,7 @@ impl Session {
         }
         // A stale file is insufficient evidence: failed-transfer cleanup can
         // itself fail. Only this session's successfully synced CRC may publish.
-        if self.completed_photo.as_deref() != Some(rel) {
+        if self.completed_file.as_deref() != Some(rel) {
             return Err("photo is missing or transfer failed".into());
         }
         crate::apps::lifecycle::uninstall::ensure_ready(vfs, "photo")?;
@@ -179,7 +185,7 @@ impl Session {
         vfs.rename(&source, &target)
             .map_err(|e| format!("photo commit: {e}"))?;
         self.staging = None;
-        self.completed_photo = None;
+        self.completed_file = None;
         let _ = vfs.remove_tree(PHOTO_STAGING);
         Ok(format!("photo-commit {rel}"))
     }

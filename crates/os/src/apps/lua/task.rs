@@ -30,8 +30,7 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal}
 use embassy_time::{Instant, Timer};
 use log::{info, warn};
 use lua_engine::{
-    caps, esp_err, Blit, DisplayInfo, HeapInfo, Host, Limits, RawAllocator, Request, Step,
-    TouchPoint, Vm,
+    esp_err, Blit, DisplayInfo, HeapInfo, Host, Limits, RawAllocator, Request, Step, TouchPoint, Vm,
 };
 
 use {crate::services::display::geometry::HEIGHT, crate::services::display::geometry::WIDTH};
@@ -208,6 +207,63 @@ impl Drop for DeviceHost {
 }
 
 impl Host for DeviceHost {
+    fn service_snapshot(&mut self) -> lua_engine::ServiceSnapshot {
+        use crate::services::{audio, camera, radio};
+        let a = audio::task::snapshot();
+        let c = camera::task::snapshot();
+        lua_engine::ServiceSnapshot {
+            audio: Some(lua_engine::AudioStatus {
+                available: audio::task::available(),
+                controls_available: audio::task::available() && !service_controls_blocked(),
+                state: a.state.name(),
+                sample_rate_hz: a.rate,
+                volume: a.volume,
+                output_ceiling_db: audio::volume::OUTPUT_CEILING_DB,
+                muted: a.muted,
+                tx_frames: a.tx_frames,
+                rx_frames: a.rx_frames,
+                underruns: a.underruns,
+                overruns: a.overruns,
+                peak: a.peak,
+                error: a.error,
+            }),
+            camera: Some(lua_engine::CameraStatus {
+                available: crate::platform::drivers::camera::slot::present(),
+                state: c.state.name(),
+                sensor: c.sensor(),
+                width: c.width,
+                height: c.height,
+                frames: c.frames,
+                dropped: c.dropped,
+                saved: c.saved,
+                error: c.error,
+            }),
+            network: Some(lua_engine::NetworkStatus {
+                wifi_state: radio::device::wifi::state().name(),
+                bluetooth_state: radio::device::classic::state().name(),
+                ip: radio::device::wifi::ip(),
+            }),
+            native_ui: Some(crate::apps::lua::native_ui::limits()),
+        }
+    }
+
+    fn audio_control(&mut self, request: lua_engine::AudioControl) -> Result<(), i32> {
+        if service_controls_blocked() {
+            return Err(esp_err::INVALID_STATE);
+        }
+        if !crate::services::audio::task::available() {
+            return Err(esp_err::NOT_SUPPORTED);
+        }
+        match request {
+            lua_engine::AudioControl::Volume(value) if value <= 100 => {
+                crate::services::audio::task::volume(value)
+            }
+            lua_engine::AudioControl::Muted(value) => crate::services::audio::task::mute(value),
+            _ => return Err(esp_err::INVALID_ARG),
+        }
+        Ok(())
+    }
+
     fn hardware_snapshot(&mut self) -> lua_engine::HardwareSnapshot {
         let mut snapshot = crate::services::input::sensors::lua_snapshot();
         snapshot.onboard = crate::services::power::button_task::snapshot();
@@ -320,28 +376,25 @@ impl Host for DeviceHost {
     }
 
     fn heap_info(&mut self, caps_mask: u32) -> HeapInfo {
-        let stats = esp_alloc::HEAP.stats();
-        let mut info = HeapInfo::default();
-        for region in stats.region_stats.iter().flatten() {
-            let external = region
-                .capabilities
-                .contains(esp_alloc::MemoryCapability::External);
-            let wanted = match caps_mask {
-                c if c & caps::SPIRAM != 0 => external,
-                c if c & caps::INTERNAL != 0 => !external,
-                _ => true,
-            };
-            if wanted {
-                info.total_size += region.size as u32;
-                info.free_size += region.free as u32;
-                info.allocated_size += region.used as u32;
-                info.largest_free_block = info.largest_free_block.max(region.free as u32);
-                info.total_blocks += 1;
-            }
-        }
-        info.minimum_free_size = info.free_size;
-        info
+        crate::platform::runtime::heap::snapshot(caps_mask)
     }
+
+    fn heap_probe(&mut self, caps_mask: u32, layout: Layout) -> Result<bool, i32> {
+        let capability = match caps_mask {
+            lua_engine::caps::INTERNAL => esp_alloc::MemoryCapability::Internal,
+            lua_engine::caps::SPIRAM => esp_alloc::MemoryCapability::External,
+            _ => return Err(esp_err::INVALID_ARG),
+        };
+        Ok(esp_alloc::HEAP.probe_caps(capability.into(), layout))
+    }
+}
+
+fn service_controls_blocked() -> bool {
+    STOP.load(Ordering::Acquire)
+        || MANAGEMENT.load(Ordering::Acquire)
+        || crate::services::update::ota::device::active()
+        || crate::services::update::task::busy()
+        || crate::services::power::button_task::shutdown_requested()
 }
 
 fn log_sink(text: &[u8]) {

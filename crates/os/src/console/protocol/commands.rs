@@ -202,6 +202,30 @@ impl Session {
             }
             ("begin", [id]) => self.begin(vfs, id, UploadKind::App),
             ("skin-begin", [id]) => self.begin(vfs, id, UploadKind::Skin),
+            ("fonts-begin", []) => self.begin(vfs, "fonts", UploadKind::Fonts),
+            ("fonts-commit", [])
+                if self.kind == UploadKind::Fonts
+                    && self.staging.as_deref() == Some("fonts")
+                    && self.completed_file.as_deref() == Some("fonts.bin") =>
+            {
+                crate::services::resources::fonts::commit(vfs).map(|()| {
+                    self.staging = None;
+                    self.completed_file = None;
+                    "fonts-commit restart-required=1".into()
+                })
+            }
+            ("fonts-status", []) => {
+                use crate::services::resources::fonts;
+                Ok(format!(
+                    "fonts-status expected={} bytes={} present={} contract={}",
+                    fonts::ID,
+                    fonts::BYTES,
+                    u8::from(
+                        vfs.stat(fonts::DATA_PATH).is_ok() || vfs.stat(fonts::SYSTEM_PATH).is_ok()
+                    ),
+                    fonts::STAMP
+                ))
+            }
             ("photo-begin", []) => self
                 .begin(vfs, "photo", UploadKind::Photo)
                 .map(|_| "photo-begin".into()),
@@ -270,7 +294,7 @@ impl Session {
             ("commit", [id]) => self.commit(vfs, id, false, out),
             ("commit", [id, "run"]) => self.commit(vfs, id, true, out),
             ("abort", []) => {
-                self.completed_photo = None;
+                self.completed_file = None;
                 if self.staging.take().is_some() {
                     let _ = vfs.remove_tree(self.staging_root());
                 }
@@ -297,7 +321,7 @@ impl Session {
                             || (self.kind == UploadKind::Photo && *id == "photo")
                         {
                             self.staging = None;
-                            self.completed_photo = None;
+                            self.completed_file = None;
                         }
                         let op = if verb == "rm" {
                             crate::apps::lifecycle::uninstall::Operation::Remove(identity)

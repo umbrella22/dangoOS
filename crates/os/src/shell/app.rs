@@ -408,7 +408,9 @@ impl App for MosaicoApp {
                     &self.registry,
                     self.confirmation,
                     self.management_busy,
-                    self.toast.as_deref(),
+                    self.toast
+                        .as_deref()
+                        .or(crate::shell::theme::font::resource_notice()),
                 ),
                 Page::App(AppId::Settings) => pages::settings::view::view(
                     &self.hub,

@@ -9,4 +9,5 @@ cargo run -p app-pack --locked --offline -- skins dango-skin
 python3 -m unittest discover -s tests/host
 ./scripts/check/drivers.sh
 cargo fw --locked --offline
+python3 scripts/check/resource_budget.py --output target/resource-budget.json
 ./scripts/check/rom-symbols.sh

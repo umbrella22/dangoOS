@@ -127,6 +127,20 @@ impl<'a> Call<'a> {
         unsafe { lua_toboolean(self.l, index) != 0 }
     }
 
+    pub(crate) fn integer_strict(&self, index: i32) -> Result<i64, Error> {
+        if unsafe { lua_type(self.l, index) } != LUA_TNUMBER {
+            return Err(self.type_error(index, "integer"));
+        }
+        self.integer(index)
+    }
+
+    pub(crate) fn boolean_strict(&self, index: i32) -> Result<bool, Error> {
+        if unsafe { lua_type(self.l, index) } != LUA_TBOOLEAN {
+            return Err(self.type_error(index, "boolean"));
+        }
+        Ok(self.boolean(index))
+    }
+
     /// String argument (numbers are converted, as in `luaL_checklstring`).
     pub fn bytes(&self, index: i32) -> Result<&[u8], Error> {
         let tp = unsafe { lua_type(self.l, index) };
@@ -170,13 +184,16 @@ impl<'a> Call<'a> {
 
     /// `t[key] = <value on top>` for the table just below the top, popping
     /// the value. Raw set: no metamethods run.
-    fn set_top(&mut self, key: &str) {
+    pub(crate) fn set_top(&mut self, key: &str) {
         unsafe {
             // stack: t v -> t v k -> t k v ... rawset needs t k v
             lua_pushlstring(self.l, key.as_ptr().cast(), key.len());
             lua_rotate(self.l, -2, 1);
             lua_rawset(self.l, -3);
         }
+    }
+    pub(crate) fn set_index(&mut self, index: i64) {
+        unsafe { lua_rawseti(self.l, -2, index) }
     }
     pub fn set_integer(&mut self, key: &str, n: i64) {
         self.push_integer(n);

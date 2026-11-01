@@ -4,7 +4,7 @@ use alloc::{boxed::Box, ffi::CString, format, string::String, vec::Vec};
 use core::{cell::Cell, ptr};
 use rs_lvgl::sys as s;
 use serde_json::Value;
-const OBJECT_MAX: usize = 512;
+pub(super) const OBJECT_MAX: usize = 512;
 pub(super) struct Record {
     pub(super) ptr: *mut s::lv_obj_t,
     pub(super) alive: Cell<bool>,

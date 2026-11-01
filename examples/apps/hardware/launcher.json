@@ -5,6 +5,7 @@
   "display_name": "Hardware Probe",
   "args": {
     "outputs": false,
+    "probe_heap": false,
     "pin": 11,
     "duration_ms": 30000
   },

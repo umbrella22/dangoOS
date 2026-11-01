@@ -1058,7 +1058,6 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 [[package]]
 name = "esp-alloc"
 version = "0.11.0"
-source = "git+https://github.com/esp-rs/esp-hal?rev=33f9b0f7c36ac47edbd015808b5399090fc1f9b6#33f9b0f7c36ac47edbd015808b5399090fc1f9b6"
 dependencies = [
  "allocator-api2",
  "document-features",
@@ -2109,6 +2108,7 @@ dependencies = [
  "lua-engine",
  "md-5",
  "miniz_oxide",
+ "rlsf",
  "rs_lvgl",
  "rs_lvgl_ui",
  "rtos-trace",

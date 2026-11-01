@@ -23,12 +23,18 @@ mod hardware;
 pub use hardware::{ButtonEdge, HapticPreset, HardwareRequest, HardwareSnapshot, OnboardButtons};
 pub mod jpeg;
 mod platform;
+mod services;
+pub use services::{
+    AudioControl, AudioStatus, CameraStatus, NativeUiLimits, NetworkStatus, ServiceSnapshot,
+};
 pub mod ui;
 mod vm;
 mod workers;
 
 pub use call::{Call, Error, Function, Ret};
-pub use platform::{caps, esp_err, platform_bytes, Blit, DisplayInfo, HeapInfo, TouchPoint};
+pub use platform::{
+    caps, esp_err, heap_fields, platform_bytes, Blit, DisplayInfo, HeapInfo, TouchPoint,
+};
 pub use vm::{
     set_data_root, set_log_sink, Host, Limits, RawAllocator, Request, Step, Vm, GLOBAL_ALLOCATOR,
 };
@@ -45,3 +51,5 @@ mod tests_modules;
 mod tests_hardware;
 #[cfg(test)]
 mod tests_memory;
+#[cfg(test)]
+mod tests_services;

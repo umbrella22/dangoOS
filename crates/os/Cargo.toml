@@ -32,6 +32,9 @@ rs_lvgl_ui.workspace = true
 lua-engine = { path = "../lua-engine" }
 fs = { path = "../fs" }
 
+[build-dependencies]
+sha2 = { version = "0.10", default-features = false }
+
 [target.'cfg(target_os = "none")'.dependencies]
 esp-hal.workspace = true
 esp32s31.workspace = true
@@ -64,6 +67,7 @@ rustls = { version = "0.23.45", default-features = false, features = ["std", "tl
 rustls-rustcrypto = { git = "https://github.com/RustCrypto/rustls-rustcrypto", rev = "234c8dd12469a849945400698c8e48210f3556c9", default-features = false, features = ["alloc", "tls12", "zeroize"] }
 
 [target.'cfg(not(target_os = "none"))'.dev-dependencies]
+rlsf = { version = "0.2", features = ["unstable"] }
 # Exercise the firmware runner with real DHCP and a manually advanced clock.
 embassy-net = { version = "0.8", default-features = false, features = ["dhcpv4", "medium-ethernet", "tcp", "udp", "dns"] }
 embassy-time = { version = "0.5", features = ["mock-driver", "generic-queue-8"] }

@@ -100,11 +100,10 @@ impl Codec {
         Ok(())
     }
     pub async fn volume(&mut self, percent: u8) -> Result<(), &'static str> {
-        if percent > 100 {
-            return Err("audio volume range");
-        }
-        // -60 dB to 0 dB, with 0% implemented as digital mute by the service.
-        Self::write(0x32, 71 + (u16::from(percent) * 120 / 100) as u8).await
+        // Every source, at startup and live changes, crosses this last output
+        // boundary. Logical 0% is also digitally muted by the audio service.
+        let register = crate::services::audio::volume::dac_register(percent)?;
+        Self::write(0x32, register).await
     }
     pub async fn mute(&mut self, muted: bool) -> Result<(), &'static str> {
         let value = Self::read(0x31).await? & 0x9f;

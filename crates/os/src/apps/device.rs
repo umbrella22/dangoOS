@@ -27,6 +27,9 @@ pub async fn scan_task() {
     let mut icons = IconCache::new();
     loop {
         let boot = SCAN.receive().await;
+        if boot {
+            crate::shell::theme::font::prepare().await;
+        }
         let registry = if boot {
             scan_at_boot(&mut icons)
         } else {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install release NAND skins, optionally flashing the bundled full NOR image first."""
+"""Install release resources, optionally flashing the bundled full NOR image first."""
 import argparse
 import hashlib
 import json
@@ -58,7 +58,7 @@ def validate_bundle(root):
     for skin in catalog:
         identity = skin.get("id")
         require(isinstance(identity, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,63}", identity)
-                and identity != "default" and identity not in ids, "invalid/duplicate skin id")
+                and identity != "placeholder" and identity not in ids, "invalid/duplicate skin id")
         ids.add(identity)
         require(set(skin["files"]) == {"fox.bin", "skin.json"}, "skin needs BIN and JSON")
         for name, info in skin["files"].items():
@@ -76,6 +76,22 @@ def validate_bundle(root):
                 and metadata["binary_crc32"] == zlib.crc32(binary), "skin metadata mismatch")
     require({p.relative_to(root).as_posix() for p in (root / "dango-skin").rglob("*") if p.is_file()} == expected,
             "unexpected/missing NAND skin files")
+    if "ui_fonts" in manifest or "application_bundles" in manifest:
+        require("tools/resource_bundle.py" in listed, "resource validation tools missing")
+        sys.path.insert(0, str(root / "tools"))
+        import resource_bundle
+        require(resource_bundle.fonts(root / "ui-fonts") == manifest["ui_fonts"], "UI fonts catalog mismatch")
+        ids = set()
+        for bundle in manifest["application_bundles"]:
+            identity = bundle.get("id")
+            require(isinstance(identity, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,63}", identity)
+                    and identity not in ids, "invalid/duplicate application bundle id")
+            ids.add(identity)
+            require(resource_bundle.application(root / "applications" / identity) == bundle,
+                    "application catalog mismatch")
+        resource_files = {p.relative_to(root).as_posix() for directory in (root / "ui-fonts", root / "applications")
+                          for p in directory.rglob("*") if p.is_file()}
+        require(resource_files <= set(listed), "resource file missing from checksums")
     return manifest
 
 
@@ -131,12 +147,31 @@ def install_skins(console, device, root, catalog, format_nand=False):
     print(f"Installed {len(catalog)} NAND skins; current character selection preserved.")
 
 
+def install_resources(console, device, root, manifest, format_nand=False, update_apps=False):
+    # Check firmware compatibility before writing any package. A first upgrade
+    # from embedded fonts installs firmware first, then resources, then restarts.
+    fonts = manifest.get("ui_fonts")
+    if fonts is not None:
+        fields = console.response_fields(device.command("fonts-status"))
+        require(fields.get("expected") == fonts["id"], "font resources do not match running firmware; install firmware first")
+    install_skins(console, device, root, manifest["nand_skins"], format_nand)
+    if fonts is not None:
+        console.push_fonts(device, str(root / "ui-fonts"))
+    if update_apps:
+        for bundle in manifest.get("application_bundles", []):
+            console.push_bundle(device, str(root / "applications" / bundle["id"]), False)
+    if fonts is not None:
+        print("Resources installed. Restart the device to activate UI fonts.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", required=True, help="runtime USB console port")
     parser.add_argument("--flash-port", help="ROM download port; flash full NOR before installing skins")
     parser.add_argument("--format-nand", action="store_true",
                         help="erase and initialize NAND only if it is unmounted; existing mounted volumes are preserved")
+    parser.add_argument("--update-apps", action="store_true",
+                        help="install bundled Lua applications as Data updates, replacing same-ID Data apps; saves are preserved")
     parser.add_argument("--bundle", type=Path, default=Path(__file__).resolve().parent,
                         help="extracted release ZIP directory")
     args = parser.parse_args()
@@ -149,7 +184,7 @@ def main():
         import console
         device = connect(console, args.port)
         try:
-            install_skins(console, device, root, manifest["nand_skins"], args.format_nand)
+            install_resources(console, device, root, manifest, args.format_nand, args.update_apps)
         finally:
             device.ser.close()
     except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:

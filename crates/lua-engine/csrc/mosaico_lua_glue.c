@@ -404,7 +404,8 @@ int mosaico_lua_worker_restrict(lua_State *L) {
   static const char source[] =
     "local original=require; local allowed={_G=true,coroutine=true,table=true,string=true,math=true,utf8=true,json=true,delay=true,thread=true,_thread=true};"
     "require=function(name) if not allowed[name] then error('module unavailable in worker: '..tostring(name),2) end return original(name) end;"
-    "package=nil;debug=nil;io=nil;os=nil;loadfile=nil;dofile=nil;_lvgl=nil;";
+    "package=nil;debug=nil;io=nil;os=nil;loadfile=nil;dofile=nil;_lvgl=nil;"
+    "capabilities=nil;audio=nil;camera=nil;network=nil;";
   if(luaL_loadbufferx(L,source,sizeof(source)-1,"=worker-capabilities","t")!=LUA_OK)return LUA_ERRRUN;
   return lua_pcall(L,0,0,0);
 }

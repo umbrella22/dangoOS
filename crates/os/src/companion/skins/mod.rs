@@ -18,6 +18,8 @@ use {
 pub const ROOT: &str = "/data/skins";
 pub const STAGING: &str = "/data/skins/.incoming";
 const SELECTED: &str = "/data/skins/.selected";
+pub const PLACEHOLDER_ID: &str = "placeholder";
+pub const PLACEHOLDER_NAME: &str = "团子虚影";
 pub const DEFAULT_NAME: &str = "鸣潮 · 心月狐团子";
 
 // Existing NAND packages retain their stable IDs and saved selection when
@@ -45,8 +47,8 @@ pub struct Choice {
 /// Full validation remains part of selecting and loading one resource.
 pub fn choices(v: &mut Vfs) -> Result<Vec<Choice>, String> {
     let mut choices = alloc::vec![Choice {
-        id: "default".into(),
-        name: DEFAULT_NAME.into()
+        id: PLACEHOLDER_ID.into(),
+        name: PLACEHOLDER_NAME.into()
     }];
     let entries = match v.read_dir(ROOT) {
         Ok(entries) => entries,
@@ -80,10 +82,11 @@ pub fn choices(v: &mut Vfs) -> Result<Vec<Choice>, String> {
         });
     }
     let order = |id: &str| match id {
-        "eclipse" => 0,
-        "normal" => 1,
-        "black-blue" => 2,
-        _ => 3,
+        "default" => 0,
+        "eclipse" => 1,
+        "normal" => 2,
+        "black-blue" => 3,
+        _ => 4,
     };
     choices[1..].sort_by(|a, b| {
         order(&a.id)
@@ -93,7 +96,7 @@ pub fn choices(v: &mut Vfs) -> Result<Vec<Choice>, String> {
     Ok(choices)
 }
 fn valid_id(id: &str) -> Result<(), String> {
-    if !registry::id_is_valid(id) || id == "default" {
+    if !registry::id_is_valid(id) || id == PLACEHOLDER_ID {
         Err("invalid/reserved skin id".into())
     } else {
         Ok(())
@@ -200,7 +203,7 @@ pub fn selected(v: &mut Vfs) -> Result<String, String> {
         Ok(_) => {
             let b = read(v, SELECTED, 63)?;
             let id = core::str::from_utf8(&b).map_err(|_| "selection UTF-8")?;
-            if id != "default" {
+            if id != PLACEHOLDER_ID {
                 valid_id(id)?;
             }
             Ok(id.into())
@@ -229,7 +232,7 @@ fn persist(v: &mut Vfs, id: &str) -> Result<(), String> {
         .map_err(|e| format!("selection rename: {e}"))
 }
 pub fn select(v: &mut Vfs, id: &str) -> Result<(), String> {
-    if id != "default" {
+    if id != PLACEHOLDER_ID {
         recover(v, id)?;
         load_dir(v, &format!("{ROOT}/{id}"), id)?;
     }
@@ -237,9 +240,9 @@ pub fn select(v: &mut Vfs, id: &str) -> Result<(), String> {
 }
 /// Validate and persist a UI selection once, retaining the validated resource
 /// for activation. The previous live skin survives any read or write failure.
-pub fn select_loaded(v: &mut Vfs, id: &str, log: &mut dyn FnMut(&str)) -> Result<Loaded, String> {
-    let skin = if id == "default" {
-        default_skin(v, log)
+pub fn select_loaded(v: &mut Vfs, id: &str) -> Result<Loaded, String> {
+    let skin = if id == PLACEHOLDER_ID {
+        Skin::builtin()
     } else {
         recover(v, id)?;
         load_dir(v, &format!("{ROOT}/{id}"), id)?
@@ -250,25 +253,13 @@ pub fn select_loaded(v: &mut Vfs, id: &str, log: &mut dyn FnMut(&str)) -> Result
         skin,
     })
 }
-fn default_skin(v: &mut Vfs, log: &mut dyn FnMut(&str)) -> Rc<Skin> {
-    let loaded = read(v, "/system/skins/default.bin", MAX_BYTES).and_then(Skin::parse);
-    match loaded {
-        Ok(skin) => skin,
-        Err(reason) => {
-            log(&format!(
-                "skin system default unavailable: {reason}; using recovery art"
-            ));
-            Skin::builtin()
-        }
-    }
-}
 pub fn restore(v: &mut Vfs, log: &mut dyn FnMut(&str)) -> Loaded {
     let result = (|| {
         let id = selected(v)?;
-        if id == "default" {
+        if id == PLACEHOLDER_ID {
             return Ok(Loaded {
                 id,
-                skin: default_skin(v, log),
+                skin: Skin::builtin(),
             });
         }
         recover(v, &id)?;
@@ -276,10 +267,12 @@ pub fn restore(v: &mut Vfs, log: &mut dyn FnMut(&str)) -> Loaded {
         Ok::<_, String>(Loaded { id, skin })
     })();
     result.unwrap_or_else(|reason| {
-        log(&format!("skin fallback default: {reason}"));
+        // Do not rewrite the saved ID: installing the missing package can
+        // restore that character on the next reload, including legacy default.
+        log(&format!("skin fallback {PLACEHOLDER_ID}: {reason}"));
         Loaded {
-            id: "default".into(),
-            skin: default_skin(v, log),
+            id: PLACEHOLDER_ID.into(),
+            skin: Skin::builtin(),
         }
     })
 }
@@ -316,11 +309,11 @@ pub fn commit(v: &mut Vfs, id: &str) -> Result<(), String> {
 pub fn remove(v: &mut Vfs, id: &str) -> Result<(), String> {
     valid_id(id)?;
     if selected(v)? == id {
-        persist(v, "default")?;
+        persist(v, PLACEHOLDER_ID)?;
     }
     remove_if_present(v, &format!("{ROOT}/.previous/{id}"))?;
     v.remove_tree(&format!("{ROOT}/{id}"))
-        .map_err(|e| format!("skin remove (selection may now be default): {e}"))
+        .map_err(|e| format!("skin remove (selection may now be {PLACEHOLDER_ID}): {e}"))
 }
 pub fn list(v: &mut Vfs) -> Result<String, String> {
     let mut ids = match v.read_dir(ROOT) {
@@ -334,7 +327,7 @@ pub fn list(v: &mut Vfs) -> Result<String, String> {
     };
     ids.sort();
     Ok(format!(
-        "skin-ls default{}",
+        "skin-ls {PLACEHOLDER_ID}{}",
         ids.iter().map(|s| format!(" {s}")).collect::<String>()
     ))
 }
@@ -380,9 +373,46 @@ mod tests {
         out
     }
     #[test]
+    fn external_default_retains_saved_identity_and_missing_art_uses_the_placeholder() {
+        let mut v = disk();
+        // A previous firmware's default selection must keep meaning the full
+        // character, even while its external package has not been installed.
+        persist(&mut v, "default").unwrap();
+        let fallback = restore(&mut v, &mut |_| {});
+        assert_eq!(fallback.id, PLACEHOLDER_ID);
+        assert_eq!(pixels(fallback.skin), pixels(Skin::builtin()));
+        assert_eq!(selected(&mut v).unwrap(), "default");
+        assert_eq!(choices(&mut v).unwrap().len(), 1);
+        assert!(select(&mut v, "default").is_err());
+
+        install(&mut v, "default", 0);
+        let loaded = restore(&mut v, &mut |_| panic!("external default fell back"));
+        assert_eq!(loaded.id, "default");
+        assert_ne!(pixels(loaded.skin), pixels(Skin::builtin()));
+        let catalog = choices(&mut v).unwrap();
+        assert_eq!(catalog[0].id, PLACEHOLDER_ID);
+        assert_eq!(
+            (catalog[1].id.as_str(), catalog[1].name.as_str()),
+            ("default", DEFAULT_NAME)
+        );
+        assert_eq!(list(&mut v).unwrap(), "skin-ls placeholder default");
+
+        // An explicitly selected placeholder stays selected after installing
+        // a character, and no package can overwrite the built-in fallback.
+        select(&mut v, PLACEHOLDER_ID).unwrap();
+        install(&mut v, "default", 0x07e0);
+        assert_eq!(restore(&mut v, &mut |_| {}).id, PLACEHOLDER_ID);
+        assert!(commit(&mut v, PLACEHOLDER_ID).is_err());
+        select(&mut v, "default").unwrap();
+        remove(&mut v, "default").unwrap();
+        assert_eq!(selected(&mut v).unwrap(), PLACEHOLDER_ID);
+        assert_eq!(restore(&mut v, &mut |_| {}).id, PLACEHOLDER_ID);
+    }
+    #[test]
     fn renamed_bundled_characters_keep_existing_nand_ids_and_custom_names() {
         let mut v = disk();
         for (id, name) in [
+            ("default", "狐狸团子"),
             ("eclipse", "月蚀"),
             ("normal", "常态"),
             ("black-blue", "黑发蓝挑染"),
@@ -408,6 +438,7 @@ mod tests {
                 .map(|c| (c.id.as_str(), c.name.as_str()))
                 .collect::<Vec<_>>(),
             [
+                (PLACEHOLDER_ID, PLACEHOLDER_NAME),
                 ("default", "鸣潮 · 心月狐团子"),
                 ("eclipse", "玄灵 · 月蚀"),
                 ("normal", "玄灵 · 常态"),
@@ -426,17 +457,17 @@ mod tests {
     fn prepared_selection_reuses_validated_pixels_and_preserves_the_previous_choice_on_failure() {
         let mut v = disk();
         install(&mut v, "one", 0x07e0);
-        let loaded = select_loaded(&mut v, "one", &mut |_| {}).unwrap();
+        let loaded = select_loaded(&mut v, "one").unwrap();
         assert_eq!(loaded.id, "one");
         assert_eq!(selected(&mut v).unwrap(), "one");
         let expected = pixels(Rc::clone(&loaded.skin));
         // Activation uses its owned bytes even if storage is unavailable later.
         v.remove_tree(&format!("{ROOT}/one")).unwrap();
         assert_eq!(pixels(loaded.skin), expected);
-        assert!(select_loaded(&mut v, "missing", &mut |_| {}).is_err());
+        assert!(select_loaded(&mut v, "missing").is_err());
         assert_eq!(selected(&mut v).unwrap(), "one");
         v.create_dir_all(&format!("{SELECTED}.new")).unwrap();
-        assert!(select_loaded(&mut v, "default", &mut |_| {}).is_err());
+        assert!(select_loaded(&mut v, PLACEHOLDER_ID).is_err());
         assert_eq!(selected(&mut v).unwrap(), "one");
     }
     #[test]
@@ -457,12 +488,7 @@ mod tests {
         let catalog = choices(&mut v).unwrap();
         assert_eq!(
             catalog.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
-            [
-                "鸣潮 · 心月狐团子",
-                "玄灵 · 月蚀",
-                "玄灵 · 常态",
-                "智谱团子"
-            ]
+            [PLACEHOLDER_NAME, "玄灵 · 月蚀", "玄灵 · 常态", "智谱团子"]
         );
         select(&mut v, "normal").unwrap();
         assert_eq!(selected(&mut v).unwrap(), "normal");
@@ -489,7 +515,7 @@ mod tests {
         install(&mut v, "recolor", 0x07e0);
         assert_ne!(pixels(restore(&mut v, &mut |_| {}).skin), before);
         remove(&mut v, "recolor").unwrap();
-        assert_eq!(selected(&mut v).unwrap(), "default");
+        assert_eq!(selected(&mut v).unwrap(), PLACEHOLDER_ID);
         assert_eq!(
             pixels(restore(&mut v, &mut |_| {}).skin),
             pixels(Skin::builtin())
@@ -501,7 +527,7 @@ mod tests {
         install(&mut v, "good", 0);
         select(&mut v, "good").unwrap();
         v.create_dir_all(&format!("{SELECTED}.new")).unwrap();
-        assert!(select(&mut v, "default").is_err());
+        assert!(select(&mut v, PLACEHOLDER_ID).is_err());
         assert_eq!(selected(&mut v).unwrap(), "good");
         let dir = format!("{STAGING}/good");
         v.create_dir_all(&dir).unwrap();
@@ -522,14 +548,14 @@ mod tests {
         let mut lines = Vec::new();
         assert_eq!(
             restore(&mut v, &mut |line| lines.push(line.to_string())).id,
-            "default"
+            PLACEHOLDER_ID
         );
         assert!(lines[0].contains("length/checksum"));
         v.remove_tree(&format!("{ROOT}/good")).unwrap();
         lines.clear();
         assert_eq!(
             restore(&mut v, &mut |l| lines.push(l.to_string())).id,
-            "default"
+            PLACEHOLDER_ID
         );
         assert!(lines[0].contains("not found"));
         for id in ["../bad", "white space", "", "bad/id", "a.b"] {
@@ -575,20 +601,25 @@ mod tests {
         }
         let mut v = disk();
         let mut session = Session::new();
+        assert!(command(&mut v, &mut session, "skin-begin placeholder")
+            .iter()
+            .any(|e| matches!(e,Effect::Reply(t) if t.starts_with("@err"))));
         let b = fixture(0x7800);
         let m = format!(
-            r#"{{"schema_version":1,"id":"test","name":"Test","version":"1","canvas":[352,336],"binary_bytes":{},"binary_crc32":{}}}"#,
+            r#"{{"schema_version":1,"id":"default","name":"Test","version":"1","canvas":[352,336],"binary_bytes":{},"binary_crc32":{}}}"#,
             b.len(),
             crc32(&b)
         );
-        command(&mut v, &mut session, "skin-begin test");
+        command(&mut v, &mut session, "skin-begin default");
         file(&mut v, &mut session, "skin.json", m.as_bytes());
         file(&mut v, &mut session, "fox.bin", &b);
-        assert!(command(&mut v, &mut session, "skin-commit test").contains(&Effect::SkinsChanged));
-        command(&mut v, &mut session, "skin-select test");
-        assert_eq!(selected(&mut v).unwrap(), "test");
-        assert!(v.stat("/data/apps/test").is_err());
-        command(&mut v, &mut session, "skin-begin test");
+        assert!(
+            command(&mut v, &mut session, "skin-commit default").contains(&Effect::SkinsChanged)
+        );
+        command(&mut v, &mut session, "skin-select default");
+        assert_eq!(selected(&mut v).unwrap(), "default");
+        assert!(v.stat("/data/apps/default").is_err());
+        command(&mut v, &mut session, "skin-begin default");
         command(&mut v, &mut session, "file fox.bin 100 00000000");
         session.feed(&mut v, b"half", &mut |_| {});
         session.reset(&mut v);
@@ -597,11 +628,11 @@ mod tests {
                 "interruption damaged installed skin"
             ))
             .id,
-            "test"
+            "default"
         );
-        command(&mut v, &mut session, "skin-begin test");
+        command(&mut v, &mut session, "skin-begin default");
         file(&mut v, &mut session, "skin.json", b"{}");
-        assert!(command(&mut v, &mut session, "skin-commit test")
+        assert!(command(&mut v, &mut session, "skin-commit default")
             .iter()
             .any(|e| matches!(e,Effect::Reply(t) if t.starts_with("@err"))));
         assert_eq!(
@@ -609,10 +640,10 @@ mod tests {
                 "bad replacement damaged installed skin"
             ))
             .id,
-            "test"
+            "default"
         );
-        assert!(command(&mut v, &mut session, "skin-rm test").contains(&Effect::SkinsChanged));
-        assert_eq!(selected(&mut v).unwrap(), "default");
+        assert!(command(&mut v, &mut session, "skin-rm default").contains(&Effect::SkinsChanged));
+        assert_eq!(selected(&mut v).unwrap(), PLACEHOLDER_ID);
     }
 }
 

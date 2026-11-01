@@ -504,6 +504,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
             });
         }
         if let Some(registry) = apps::take_scanned() {
+            crate::shell::theme::font::activate_prepared();
             let request = scan_pending.take().expect("requested registry result");
             apply_apps_request(&mut app, request, Some(registry));
             apps::acknowledge_management_refresh();

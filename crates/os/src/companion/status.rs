@@ -1,56 +1,41 @@
-//! Home link indicators composited into the existing RGB565 character canvas.
-//! The panel plane uploads this canvas directly, without drawing native labels.
-use core::fmt::{self, Write};
-
+//! Compact Home link icons composited into the existing RGB565 character canvas.
+//! The panel plane and LVGL share the same pixels and service snapshot.
 use crate::companion::render::{H, W};
-use crate::services::display::bitmap_font;
 use crate::services::radio::{BluetoothState, Snapshot, WifiLink, WifiState};
 
-/// Canvas coordinates inside the round panel's top safe area.
-pub const AREA: (usize, usize, usize, usize) = (18, 4, 316, 34);
+mod icons;
+
+/// A centred pair inside the round panel's top safe area.
+pub const AREA: (usize, usize, usize, usize) = ((W - 80) / 2, 4, 80, 34);
 const MUTED: u16 = 0x7bef;
 const DIM: u16 = 0x2945;
 const CONNECTED: u16 = 0x8f16;
 const BLUETOOTH: u16 = 0x6d9f;
 const PENDING: u16 = 0xfda8;
+const FAULT: u16 = 0xfacb;
 
-/// Three Wi-Fi arcs and a dot; unknown signal has no illuminated arcs.
+/// Three measured strength levels; zero arcs means no RSSI sample is available.
 fn signal_arcs(rssi_dbm: Option<i32>) -> u8 {
     match rssi_dbm {
         Some(-55..) => 3,
         Some(-67..=-56) => 2,
-        Some(-80..=-68) => 1,
-        _ => 0,
+        Some(_) => 1,
+        None => 0,
     }
 }
 
-struct Text<'a> {
-    out: &'a mut [u16],
-    x: usize,
-    end: usize,
-    color: u16,
-}
-impl Write for Text<'_> {
-    fn write_str(&mut self, text: &str) -> fmt::Result {
-        for ch in text.chars() {
-            if self.x + 10 > self.end {
-                break;
-            }
-            for (row, bits) in bitmap_font::glyph(ch).iter().enumerate() {
-                for col in 0..5 {
-                    if bits & (1 << (4 - col)) != 0 {
-                        for dy in 0..2 {
-                            for dx in 0..2 {
-                                self.out[(14 + row * 2 + dy) * W + self.x + col * 2 + dx] =
-                                    self.color;
-                            }
-                        }
-                    }
-                }
-            }
-            self.x += 12;
+fn draw(out: &mut [u16], mask: &[u8], width: usize, x: usize, y: usize, colors: &[u16]) {
+    for (index, &sample) in mask.iter().enumerate() {
+        let alpha = u16::from(sample & 31);
+        if alpha == 0 {
+            continue;
         }
-        Ok(())
+        let color = colors[usize::from(sample >> 5)];
+        // Coverage over the cleared black band; full coverage is exactly RGB565.
+        let r = (((color >> 11) & 31) * alpha + 8) / 16;
+        let g = (((color >> 5) & 63) * alpha + 8) / 16;
+        let b = ((color & 31) * alpha + 8) / 16;
+        out[(y + index / width) * W + x + index % width] = r << 11 | g << 5 | b;
     }
 }
 
@@ -62,101 +47,41 @@ pub fn render(out: &mut [u16], status: Snapshot) {
         out[row * W + x..row * W + x + width].fill(0);
     }
 
-    let linked = matches!(status.wifi_link, WifiLink::Connected { .. });
-    let wifi_color = if linked {
-        CONNECTED
-    } else {
-        match status.wifi {
-            WifiState::Off | WifiState::Idle => MUTED,
+    let wifi_color = match status.wifi_link {
+        WifiLink::Connected { .. } => CONNECTED,
+        WifiLink::Disconnected => match status.wifi {
+            WifiState::Off => DIM,
+            WifiState::Idle => MUTED,
+            WifiState::Fault => FAULT,
             _ => PENDING,
-        }
+        },
     };
     let arcs = match status.wifi_link {
         WifiLink::Connected { rssi_dbm } => signal_arcs(rssi_dbm),
         WifiLink::Disconnected => 0,
     };
-    for dy in -18i32..=0 {
-        for dx in -18i32..=18 {
-            let distance = dx * dx + dy * dy;
-            if dx.abs() > -dy {
-                continue;
-            }
-            for (arc, radius) in [7, 12, 17].into_iter().enumerate() {
-                if distance >= (radius - 2) * (radius - 2) && distance <= radius * radius {
-                    out[(30 + dy) as usize * W + (41 + dx) as usize] = if arc < usize::from(arcs) {
-                        wifi_color
-                    } else {
-                        DIM
-                    };
-                }
-            }
-        }
+    let mut wifi = [DIM; 5];
+    wifi[1] = wifi_color;
+    for arc in 0..usize::from(arcs) {
+        wifi[arc + 2] = CONNECTED;
     }
-    for y in 28..31 {
-        for x in 40..43 {
-            out[y * W + x] = wifi_color;
-        }
-    }
-    let mut text = Text {
-        out,
-        x: 67,
-        end: 199,
-        color: wifi_color,
-    };
-    match status.wifi_link {
-        WifiLink::Connected {
-            rssi_dbm: Some(rssi),
-        } => {
-            let _ = write!(text, "{rssi}dbm");
-        }
-        WifiLink::Connected { rssi_dbm: None } => {
-            let _ = text.write_str("--dbm");
-        }
-        WifiLink::Disconnected => {
-            let _ = text.write_str(match status.wifi {
-                WifiState::Off => "off",
-                WifiState::Idle => "idle",
-                WifiState::Scanning => "scan",
-                WifiState::Associating => "join",
-                WifiState::Dhcp => "dhcp",
-                WifiState::Reconnecting => "retry",
-                WifiState::Fault => "error",
-                WifiState::Connected => "--dbm",
-            });
-        }
-    }
-    for y in 11..31 {
-        out[y * W + 205] = DIM;
-    }
+    draw(out, &icons::WIFI, icons::WIFI_WIDTH, W / 2 - 31, 8, &wifi);
 
-    let (label, color) = match status.bluetooth {
-        BluetoothState::Off => ("off", MUTED),
-        BluetoothState::Starting => ("start", PENDING),
-        BluetoothState::Discoverable => ("ready", MUTED),
-        BluetoothState::Connected => ("link", BLUETOOTH),
-        BluetoothState::Streaming => ("play", BLUETOOTH),
-        BluetoothState::Fault => ("error", PENDING),
+    let bluetooth_color = match status.bluetooth {
+        BluetoothState::Off => DIM,
+        BluetoothState::Starting => PENDING,
+        BluetoothState::Discoverable => MUTED,
+        BluetoothState::Connected | BluetoothState::Streaming => BLUETOOTH,
+        BluetoothState::Fault => FAULT,
     };
-    // Bluetooth rune, centred optically alongside the 14-pixel text.
-    for dy in 0i32..22 {
-        for dx in 0i32..14 {
-            let stem = (6..=7).contains(&dx);
-            let upper = dy <= 11 && ((dx - 6) * 2 - dy).abs() <= 1;
-            let lower = dy >= 10 && ((dx - 6) * 2 - (21 - dy)).abs() <= 1;
-            let cross_a = (dx * 2 - dy).abs() <= 1;
-            let cross_b = (dx * 2 - (21 - dy)).abs() <= 1;
-            if stem || upper || lower || cross_a || cross_b {
-                out[(10 + dy) as usize * W + (221 + dx) as usize] = color;
-            }
-        }
-    }
-    let _ = Text {
+    draw(
         out,
-        x: 245,
-        end: 332,
-        color,
-    }
-    .write_str(label);
+        &icons::BLUETOOTH,
+        icons::BLUETOOTH_WIDTH,
+        W / 2 + 12,
+        8,
+        &[0, bluetooth_color],
+    );
 }
 
 #[cfg(test)]
@@ -166,7 +91,7 @@ mod tests {
     fn signal_arcs_distinguish_weak_links_and_unavailable_measurements() {
         for (dbm, arcs) in [
             (None, 0),
-            (Some(-95), 0),
+            (Some(-95), 1),
             (Some(-80), 1),
             (Some(-68), 1),
             (Some(-67), 2),

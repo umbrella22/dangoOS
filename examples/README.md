@@ -3,7 +3,7 @@
 | 目录 | 用途 |
 | --- | --- |
 | `apps/hello` | 最小 Lua 应用：本地模块、绘制、延时和独立存储 |
-| `apps/hardware` | 读取硬件快照，按参数演示按键、灯光和马达接口 |
+| `apps/hardware` | 查询能力、服务状态和真实堆统计，按参数演示按键、灯光和马达接口 |
 | `brains/happy.lua` | 常驻行为脚本的最小示例 |
 
 应用示例使用与正式应用相同的 manifest 和入口约定，但不进入 system 镜像。
@@ -15,5 +15,8 @@ python3 scripts/device/console.py push examples/apps/hardware --run --follow
 python3 scripts/device/console.py brain-push examples/brains/happy.lua
 ```
 
-硬件示例默认只读取；`args.outputs=true` 启用灯光和马达请求。接口与资源清理约定
+硬件示例默认只读取；`args.outputs=true` 启用灯光和马达请求。
+`args.probe_heap=true` 在启动时各执行一次 Internal 32 KiB、PSRAM 256 KiB、128 字节对齐的
+真实申请/归还探针。探针结果只覆盖当时的尺寸和对齐，会扰动空闲链表顺序，不作持续采样。
+接口与资源清理约定
 见 [Lua 应用开发](../docs/guides/lua-apps.md) 和 [硬件接口](../docs/guides/lua-hardware.md)。

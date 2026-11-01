@@ -21,7 +21,7 @@ pub struct OwnedPose {
     pub base: Img,
     pub groups: [Vec<Img>; GROUPS],
 }
-/// Borrowed view shared by the compiled default and validated packages.
+/// Borrowed view shared by the static placeholder and validated packages.
 pub struct PoseView<'a> {
     pub base: Img,
     pub blink: &'a [Img],
@@ -94,7 +94,7 @@ impl Skin {
     }
     pub fn pose(&self, pose: FoxPose) -> PoseView<'_> {
         let Some(package) = &self.package else {
-            return pose.data().into();
+            return (&data::PLACEHOLDER_POSE).into();
         };
         let p = package
             .poses
@@ -366,21 +366,24 @@ impl Reader<'_> {
     }
 }
 
-/// Serialize the complete default art for the read-only system resource volume.
-#[cfg(not(target_os = "none"))]
-pub fn builtin_binary() -> Vec<u8> {
-    let plain = fixture_with(0, |_, _| {});
-    let mut bytes = Vec::from(*COMPRESSED_MAGIC);
-    bytes.extend((plain.len() as u32).to_le_bytes());
-    bytes.extend(miniz_oxide::deflate::compress_to_vec_zlib(&plain, 9));
-    bytes
+/// Tests exercise real distributable art, independently of the placeholder.
+#[cfg(test)]
+pub(crate) fn reference() -> Rc<Skin> {
+    Skin::parse(
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../dango-skin/default/fox.bin"
+        ))
+        .to_vec(),
+    )
+    .unwrap()
 }
 
 #[cfg(test)]
 pub(crate) fn fixture(xor: u16) -> Vec<u8> {
     fixture_with(xor, |_, _| {})
 }
-#[cfg(not(target_os = "none"))]
+#[cfg(test)]
 fn fixture_with(xor: u16, mut change: impl FnMut(usize, &mut [Vec<Img>; GROUPS])) -> Vec<u8> {
     fn img(b: &mut Vec<u8>, i: &Img) {
         for n in [i.x as u16, i.y as u16, i.w, i.h] {
@@ -390,13 +393,40 @@ fn fixture_with(xor: u16, mut change: impl FnMut(usize, &mut [Vec<Img>; GROUPS])
             b.extend(n.to_le_bytes());
         }
     }
+    // Re-encode the shipped per-image zlib package as legacy RLE so both
+    // decoders and palette/layer mutations retain coverage after extraction.
+    let source = reference();
+    assert!(source.indexed_zlib());
+    let mut blob = Vec::new();
+    let mut rle = |original: Img| {
+        let mut pixels = alloc::vec![0; original.w as usize * original.h as usize];
+        source.decode_indexed(&original, &mut pixels);
+        let off = blob.len();
+        for row in pixels.chunks_exact(original.w as usize) {
+            let mut x = 0;
+            while x < row.len() {
+                let mut end = x + 1;
+                while end < row.len() && row[end] == row[x] && end - x < 255 {
+                    end += 1;
+                }
+                blob.extend([(end - x) as u8, row[x]]);
+                x = end;
+            }
+        }
+        Img {
+            off: off as u32,
+            len: (blob.len() - off) as u32,
+            ..original
+        }
+    };
     let mut meta = Vec::new();
-    for c in data::PALETTE {
+    for &c in source.palette() {
         meta.extend((c ^ xor).to_le_bytes());
     }
-    for (id, p) in data::POSES.iter().enumerate() {
+    for (id, pose) in FoxPose::ALL.into_iter().enumerate() {
+        let p = source.pose(pose);
         meta.extend((id as u16).to_le_bytes());
-        img(&mut meta, &p.base);
+        img(&mut meta, &rle(p.base));
         let mut groups = [
             p.blink,
             p.mouth_closed,
@@ -410,7 +440,7 @@ fn fixture_with(xor: u16, mut change: impl FnMut(usize, &mut [Vec<Img>; GROUPS])
             p.spiral[1],
             p.spiral[2],
         ]
-        .map(|g| g.to_vec());
+        .map(|g| g.iter().copied().map(&mut rle).collect());
         change(id, &mut groups);
         for g in &groups {
             meta.extend((g.len() as u16).to_le_bytes());
@@ -424,20 +454,20 @@ fn fixture_with(xor: u16, mut change: impl FnMut(usize, &mut [Vec<Img>; GROUPS])
     for n in [
         W as u16,
         H as u16,
-        data::PALETTE.len() as u16,
-        data::POSES.len() as u16,
+        source.palette().len() as u16,
+        POSES as u16,
     ] {
         out.extend(n.to_le_bytes());
     }
-    for n in [meta.len() as u32, data::BLOB.len() as u32, 0, 0] {
+    for n in [meta.len() as u32, blob.len() as u32, 0, 0] {
         out.extend(n.to_le_bytes());
     }
     out.extend(meta);
-    out.extend_from_slice(data::BLOB);
+    out.extend(blob);
     fix_crc(&mut out);
     out
 }
-#[cfg(not(target_os = "none"))]
+#[cfg(test)]
 pub(crate) fn fix_crc(b: &mut [u8]) {
     let crc = crate::formats::crc32::crc32(&b[HEADER..]);
     b[28..32].copy_from_slice(&crc.to_le_bytes());
@@ -551,7 +581,7 @@ mod tests {
         // contain their own blink/animation layers as the artwork evolves.
         let mut table = Reader {
             b: &bytes[..end],
-            at: HEADER + data::PALETTE.len() * 2,
+            at: HEADER + reference().palette().len() * 2,
         };
         for _ in 0..20 {
             table.u16().unwrap();
@@ -580,21 +610,27 @@ mod tests {
                 legacy.pose(pose.legacy_fallback()).base.off
             );
         }
-        let compressed = builtin_binary();
+        let plain = fixture(0);
+        let mut compressed = Vec::from(*COMPRESSED_MAGIC);
+        compressed.extend((plain.len() as u32).to_le_bytes());
+        compressed.extend(miniz_oxide::deflate::compress_to_vec_zlib(&plain, 9));
         assert!(compressed.len() < MAX_BYTES);
-        assert_eq!(Skin::parse(compressed).unwrap().blob(), data::BLOB);
+        assert_eq!(
+            Skin::parse(compressed).unwrap().blob(),
+            Skin::parse(plain).unwrap().blob()
+        );
         let mut bomb = Vec::from(*COMPRESSED_MAGIC);
         bomb.extend((MAX_DECODED_BYTES as u32 + 1).to_le_bytes());
         assert!(Skin::parse(bomb).is_err());
     }
     #[test]
-    fn packed_default_is_pixel_identical_and_recolor_changes_pixels_with_cache_invalidation() {
+    fn external_default_is_pixel_identical_across_formats_and_recolor_invalidates_cache() {
         let default = Skin::parse(fixture(0)).unwrap();
         let recolor = Skin::parse(fixture(0x7800)).unwrap();
         let mut r = FoxRenderer::new();
         let mut a = vec![0; PIXELS];
         let mut b = vec![0; PIXELS];
-        r.render(&Scene::still(FoxPose::Idle), &mut a);
+        r.render(&Scene::with_skin(FoxPose::Idle, reference()), &mut a);
         r.render(&Scene::with_skin(FoxPose::Idle, default), &mut b);
         assert_eq!(a, b);
         let mut animator = FoxAnimator::new(FoxPose::Idle);
@@ -603,17 +639,18 @@ mod tests {
         assert_ne!(a, b);
         r.render(&Scene::with_skin(FoxPose::Idle, recolor), &mut b);
         assert_ne!(a, b);
-        r.render(&Scene::still(FoxPose::Idle), &mut b);
+        r.render(&Scene::with_skin(FoxPose::Idle, reference()), &mut b);
         assert_eq!(a, b);
     }
     #[test]
-    fn all_packed_default_poses_and_active_patches_match_builtin_rendering() {
+    fn all_external_default_poses_and_active_patches_match_across_formats() {
         let skin = Skin::parse(fixture(0)).unwrap();
+        let source = reference();
         let mut renderer = FoxRenderer::new();
         let mut a = vec![0; PIXELS];
         let mut b = vec![0; PIXELS];
         for pose in FoxPose::ALL {
-            let mut builtin = FoxAnimator::new(pose);
+            let mut builtin = FoxAnimator::with_skin(pose, Rc::clone(&source));
             let mut packed = FoxAnimator::with_skin(pose, Rc::clone(&skin));
             let mut blink_checked = false;
             // Advance the identical seeded schedules, rendering sparse fixed
@@ -625,7 +662,7 @@ mod tests {
                 let blink = scene
                     .under
                     .iter()
-                    .any(|l| pose.data().blink.iter().any(|i| i.off == l.img.off));
+                    .any(|l| source.pose(pose).blink.iter().any(|i| i.off == l.img.off));
                 if [10, 70, 130, 250, 700, 1200, 2300, 4000, 6500].contains(&at)
                     || (blink && !blink_checked)
                 {
@@ -635,7 +672,7 @@ mod tests {
                     blink_checked |= blink;
                 }
             }
-            if !pose.data().blink.is_empty() {
+            if !source.pose(pose).blink.is_empty() {
                 assert!(blink_checked, "blink phase covered for {pose:?}");
             }
         }
@@ -645,23 +682,21 @@ mod tests {
         assert_eq!(
             renderer.reused,
             before + 1,
-            "compiled-default scenes retain cache identity"
+            "static placeholder scenes retain cache identity"
         );
     }
 
     #[test]
     fn rejects_bad_header_pose_dimensions_offsets_runs_palette_and_metadata() {
         let original = fixture(0);
+        let colors = reference().palette().len();
         for (offset, bytes) in [
             (8, vec![2]),
             (12, vec![0, 0]),
             (18, vec![19, 0]),
-            (HEADER + data::PALETTE.len() * 2, vec![1, 0]),
-            (HEADER + data::PALETTE.len() * 2 + 2 + 4, vec![0, 0]),
-            (
-                HEADER + data::PALETTE.len() * 2 + 2 + 8,
-                vec![255, 255, 255, 255],
-            ),
+            (HEADER + colors * 2, vec![1, 0]),
+            (HEADER + colors * 2 + 2 + 4, vec![0, 0]),
+            (HEADER + colors * 2 + 2 + 8, vec![255, 255, 255, 255]),
         ] {
             let mut bad = original.clone();
             bad[offset..offset + bytes.len()].copy_from_slice(&bytes);

@@ -61,6 +61,45 @@ fn replies(effects: &[Effect]) -> Vec<String> {
 }
 
 #[test]
+fn pinned_fonts_stage_verify_and_publish_without_removing_rollback_resources() {
+    use crate::services::resources::fonts;
+    let mut v = Vfs::new();
+    let disk = Fs::mount_or_format(Box::new(RamDevice::new(4096, 256)), Geometry::flash(256))
+        .unwrap()
+        .0;
+    v.mount("data", disk);
+    v.create_dir_all("/data/ui").unwrap();
+    v.write_file("/data/ui/fonts-old.bin", b"old firmware resource")
+        .unwrap();
+    let mut session = Session::new();
+    let mut stream = b"@mosaico fonts-begin\n".to_vec();
+    stream.extend(file_cmd("fonts.bin", fonts::bundled()));
+    stream.extend_from_slice(b"@mosaico fonts-commit\n");
+    let out = run(&mut v, &mut session, &stream, 512);
+    assert!(replies(&out)
+        .iter()
+        .any(|r| r == "@ok fonts-commit restart-required=1"));
+    assert_eq!(v.read_file(fonts::DATA_PATH).unwrap(), fonts::bundled());
+    assert_eq!(
+        v.read_file("/data/ui/fonts-old.bin").unwrap(),
+        b"old firmware resource"
+    );
+    assert!(!out
+        .iter()
+        .any(|e| matches!(e, Effect::Reload { .. } | Effect::Reboot)));
+    let mut corrupt = fonts::bundled().to_vec();
+    corrupt[100] ^= 1;
+    let mut stream = b"@mosaico fonts-begin\n".to_vec();
+    stream.extend(file_cmd("fonts.bin", &corrupt));
+    stream.extend_from_slice(b"@mosaico fonts-commit\n");
+    let out = run(&mut v, &mut session, &stream, 512);
+    assert!(replies(&out).iter().any(|r| r.contains("hash mismatch")));
+    assert_eq!(v.read_file(fonts::DATA_PATH).unwrap(), fonts::bundled());
+    session.reset(&mut v);
+    assert_eq!(v.open_files(), 0);
+}
+
+#[test]
 fn full_update_host_survives_console_framing_and_usb_packet_splits() {
     let host = format!(
         "{}.{}.{}.{}",

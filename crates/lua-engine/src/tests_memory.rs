@@ -216,3 +216,88 @@ fn rust_host_results_can_exceed_the_soft_vm_limit() {
     drop(vm);
     released();
 }
+
+#[test]
+fn service_queries_reclaim_tables_and_vm_teardown_returns_every_allocation() {
+    struct DiagnosticBoard;
+    impl Host for DiagnosticBoard {
+        fn print(&mut self, _: &[u8]) {}
+        fn service_snapshot(&mut self) -> crate::ServiceSnapshot {
+            crate::ServiceSnapshot {
+                audio: Some(crate::AudioStatus {
+                    available: true,
+                    controls_available: true,
+                    state: "ready",
+                    sample_rate_hz: 16000,
+                    volume: 50,
+                    output_ceiling_db: -15,
+                    muted: false,
+                    tx_frames: 0,
+                    rx_frames: 0,
+                    underruns: 0,
+                    overruns: 0,
+                    peak: 0,
+                    error: None,
+                }),
+                camera: Some(crate::CameraStatus {
+                    available: false,
+                    state: "off",
+                    sensor: "unknown",
+                    width: 0,
+                    height: 0,
+                    frames: 0,
+                    dropped: 0,
+                    saved: 0,
+                    error: None,
+                }),
+                network: Some(crate::NetworkStatus {
+                    wifi_state: "connected",
+                    bluetooth_state: "off",
+                    ip: Some([192, 0, 2, 1]),
+                }),
+                native_ui: Some(crate::NativeUiLimits {
+                    objects: 512,
+                    image_bytes: 2 * 1024 * 1024,
+                }),
+            }
+        }
+    }
+    reset(usize::MAX);
+    for _ in 0..16 {
+        let mut vm = Vm::new(
+            Box::new(DiagnosticBoard),
+            Limits {
+                memory_bytes: 256 * 1024,
+                ..Limits::default()
+            },
+            &TRACKED,
+            1,
+        )
+        .unwrap();
+        let outcome = drive(
+            &mut vm,
+            r#"
+            local capabilities, audio = require('capabilities'), require('audio')
+            local camera, network = require('camera'), require('network')
+            local function query()
+                assert(capabilities.get().limits.native_ui.objects == 512)
+                assert(audio.status().volume == 50)
+                assert(not camera.status().available)
+                assert(network.status().ip[4] == 1)
+            end
+            query()
+            collectgarbage('collect')
+            local baseline = collectgarbage('count')
+            for round = 1, 10 do
+                for i = 1, 20 do query() end
+                collectgarbage('collect')
+                assert(collectgarbage('count') <= baseline + 8)
+            end
+        "#,
+        );
+        assert_eq!(outcome, Step::Done);
+        assert!(vm.memory_peak() < 256 * 1024);
+        drop(vm);
+        released();
+    }
+}

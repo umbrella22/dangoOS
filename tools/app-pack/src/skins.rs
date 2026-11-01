@@ -23,7 +23,7 @@ pub fn check(root: &Path) -> Result<Vec<Value>> {
         require(
             entry.file_type().map_err(|e| e.to_string())?.is_dir()
                 && os::apps::registry::id_is_valid(&id)
-                && id != "default",
+                && id != os::companion::skins::PLACEHOLDER_ID,
             "invalid skin directory",
         )?;
         let directory = entry.path();

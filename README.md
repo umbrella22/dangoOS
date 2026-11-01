@@ -56,8 +56,8 @@
 
 | 安装包       | 用途                                                                                 |
 | ------------ | ------------------------------------------------------------------------------------ |
-| `*-full.zip` | 首次安装、恢复或更新内置应用及默认形象「鸣潮 · 心月狐团子」。包含完整系统镜像、三套 NAND 团子和安装工具。 |
-| `*-ota.zip`  | 已采用当前 A/B 布局的设备日常升级。包含固件、三套 NAND 团子和 USB 更新工具。         |
+| `*-full.zip` | 首次安装、恢复或更新系统资源。包含完整系统镜像、四套 NAND 团子、应用与字体包和安装工具。 |
+| `*-ota.zip`  | 已采用当前 A/B 布局的设备日常升级。包含固件、四套 NAND 团子、应用与字体包和 USB 更新工具。 |
 
 首次安装：按住 BOOT，短按 RESET，再松开 BOOT，进入下载模式。在解压目录执行：
 
@@ -66,7 +66,7 @@ python3 -m pip install -r requirements.txt
 python3 install.py --flash-port ROM_PORT --port RUNTIME_PORT
 ```
 
-将 `ROM_PORT` 换成下载模式端口，将 `RUNTIME_PORT` 换成启动后的 USB 端口，例如 `/dev/cu.usbmodem…`、`/dev/ttyACM0` 或 `COM3`。安装器会依次刷入系统、等待启动、安装三套团子。全量刷写覆盖 NOR 系统内容，独立 NAND 中的照片、存档和偏好保留。全新 NAND 需要显式初始化，具体参数见包内 `INSTALL.md`。
+将 `ROM_PORT` 换成下载模式端口，将 `RUNTIME_PORT` 换成启动后的 USB 端口，例如 `/dev/cu.usbmodem…`、`/dev/ttyACM0` 或 `COM3`。安装器会依次刷入系统、等待启动、安装四套团子与匹配字体。全量刷写覆盖 NOR 系统内容，独立 NAND 中的照片、存档和偏好保留。全新 NAND 需要显式初始化，具体参数见包内 `INSTALL.md`。
 
 已有设备可以直接使用设置中的无线更新。无线更新保留现有团子资源；需要同步新版团子时，在任一发布 ZIP 的解压目录执行：
 
@@ -74,7 +74,7 @@ python3 install.py --flash-port ROM_PORT --port RUNTIME_PORT
 python3 install.py --port RUNTIME_PORT
 ```
 
-安装器会校验并更新随包提供的三套资源，保留当前团子选择和其他用户文件。USB 固件升级步骤同样见包内 `INSTALL.md`。
+安装器会校验并更新随包提供的四套团子与匹配字体，保留当前团子选择和其他用户文件。所有完整角色均为独立资源；缺少资源时显示内置的[狐狸团子虚影与问号](screenshots/placeholder.png)。首次从 system 默认心月狐迁移时，补装 `default` 资源包即可恢复原角色。USB 固件升级步骤同样见包内 `INSTALL.md`。
 
 ## 源码与构建
 
@@ -86,7 +86,7 @@ dangoOS 使用 Rust、LVGL 和 Lua。应用代码、界面与资源可以独立�
 | [crates/lua-engine](crates/lua-engine/README.md) | Lua 运行时与硬件接口           |
 | [crates/fs](crates/fs/)                          | 文件系统与 NAND 存储           |
 | [apps](apps/README.md)                           | 五个内置 Lua 应用的源码        |
-| [dango-skin](dango-skin/)                        | 三套可分发团子的 BIN / JSON    |
+| [dango-skin](dango-skin/)                        | 四套可分发团子的 BIN / JSON    |
 | [scripts/release](scripts/release/README.md)     | 固件打包、校验与发布工具       |
 
 构建需要 `rust-toolchain.toml` 指定的 Rust、Espressif RISC-V GCC / newlib 和主机 libclang。其他机器需用环境变量覆盖 [工具链配置](.cargo/config.toml) 中的本机路径；Linux CI 的固定版本与安装过程见 [Firmware 工作流](.github/workflows/firmware.yml)。

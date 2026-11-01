@@ -33,6 +33,19 @@ impl WifiState {
     }
 }
 impl WifiState {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Idle => "idle",
+            Self::Scanning => "scanning",
+            Self::Associating => "associating",
+            Self::Dhcp => "dhcp",
+            Self::Connected => "connected",
+            Self::Fault => "fault",
+            Self::Reconnecting => "reconnecting",
+        }
+    }
+
     pub const fn enabled(self) -> bool {
         !matches!(self, Self::Off | Self::Fault)
     }

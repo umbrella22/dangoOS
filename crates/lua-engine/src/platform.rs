@@ -82,6 +82,19 @@ pub struct HeapInfo {
     pub allocated_blocks: u32,
     pub free_blocks: u32,
     pub total_blocks: u32,
+    /// Bits in `heap_fields`; an unsupported metric is absent in Lua, even
+    /// when its backing integer happens to be zero.
+    pub valid_fields: u32,
+    /// Minimum among explicit snapshots, not the allocator's lifetime minimum.
+    pub sampled_minimum_free_size: u32,
+}
+
+pub mod heap_fields {
+    pub const SIZES: u32 = 1;
+    pub const MINIMUM_FREE: u32 = 2;
+    pub const LARGEST_FREE: u32 = 4;
+    pub const BLOCK_COUNTS: u32 = 8;
+    pub const SAMPLED_MINIMUM_FREE: u32 = 16;
 }
 
 /// `heap_caps` flags as exposed in `system.heap.caps`.
@@ -390,6 +403,31 @@ unsafe extern "C" fn mosaico_host_heap_info(caps: u32, out: *mut HeapInfo) {
         .map(|c| c.host.heap_info(caps))
         .unwrap_or_default();
     out.write(info);
+}
+
+#[no_mangle]
+unsafe extern "C" fn mosaico_host_heap_probe(
+    caps: u32,
+    size: usize,
+    align: usize,
+    out: *mut u32,
+) -> c_int {
+    let Ok(layout) = Layout::from_size_align(size, align) else {
+        return esp_err::INVALID_ARG;
+    };
+    if size == 0 {
+        return esp_err::INVALID_ARG;
+    }
+    let Some(ctx) = current() else {
+        return esp_err::INVALID_STATE;
+    };
+    match ctx.host.heap_probe(caps, layout) {
+        Ok(success) => {
+            out.write(u32::from(success));
+            0
+        }
+        Err(error) => error,
+    }
 }
 
 // ---- snapshot hardware -----------------------------------------------------

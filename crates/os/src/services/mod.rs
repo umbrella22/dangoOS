@@ -8,6 +8,7 @@ pub(crate) mod feedback;
 pub mod input;
 pub mod power;
 pub mod radio;
+pub mod resources;
 pub mod settings;
 pub mod timer;
 pub mod update;

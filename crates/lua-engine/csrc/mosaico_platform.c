@@ -34,7 +34,11 @@
 typedef struct {
     uint32_t total_size, free_size, allocated_size, minimum_free_size, largest_free_block;
     uint32_t allocated_blocks, free_blocks, total_blocks;
+    uint32_t valid_fields, sampled_minimum_free_size;
 } mosaico_heap_info_t;
+
+enum { HEAP_SIZES = 1, HEAP_MINIMUM_FREE = 2, HEAP_LARGEST_FREE = 4,
+       HEAP_BLOCK_COUNTS = 8, HEAP_SAMPLED_MINIMUM_FREE = 16 };
 
 extern void *mosaico_host_alloc(size_t size, size_t align);
 extern void mosaico_host_free(void *ptr);
@@ -47,6 +51,7 @@ extern int mosaico_host_display_close(void);
 extern int mosaico_host_display_blit(int x0, int y0, int x1, int y1, const void *fb, size_t stride);
 extern int mosaico_host_display_touch(display_service_touch_snapshot_t *snapshot);
 extern void mosaico_host_heap_info(uint32_t caps, mosaico_heap_info_t *out);
+extern int mosaico_host_heap_probe(uint32_t caps, size_t size, size_t align, uint32_t *out);
 /* Asks the host to suspend the script. kind: 1 sleep(arg ms), 2 present.
  * Returns 1 when the caller must lua_yieldk now, 0 when it cannot yield. */
 extern int mosaico_lua_request(lua_State *L, int kind, uint32_t arg);
@@ -433,12 +438,17 @@ static int system_info(lua_State *L)
     lua_setfield(L, -2, "time");
     system_format_date(L, "%Y-%m-%d %H:%M:%S");
     lua_setfield(L, -2, "date");
-    system_set_int(L, "sram_free", sram.free_size);
-    system_set_int(L, "sram_total", sram.total_size);
-    system_set_int(L, "sram_largest", sram.largest_free_block);
-    if (psram.total_size) {
+    if (sram.valid_fields & HEAP_SIZES) {
+        system_set_int(L, "sram_free", sram.free_size);
+        system_set_int(L, "sram_total", sram.total_size);
+    }
+    if (sram.valid_fields & HEAP_LARGEST_FREE)
+        system_set_int(L, "sram_largest", sram.largest_free_block);
+    if ((psram.valid_fields & HEAP_SIZES) && psram.total_size) {
         system_set_int(L, "psram_free", psram.free_size);
         system_set_int(L, "psram_total", psram.total_size);
+        if (psram.valid_fields & HEAP_LARGEST_FREE)
+            system_set_int(L, "psram_largest", psram.largest_free_block);
     }
     (void)system_unix_seconds;
     return 1;
@@ -451,20 +461,53 @@ static int system_heap_get_info(lua_State *L)
     mosaico_host_heap_info((uint32_t)caps, &info);
     lua_createtable(L, 0, 9);
     system_set_int(L, "caps", caps);
-    system_set_int(L, "total_size", info.total_size);
-    system_set_int(L, "free_size", info.free_size);
-    system_set_int(L, "allocated_size", info.allocated_size);
-    system_set_int(L, "minimum_free_size", info.minimum_free_size);
-    system_set_int(L, "largest_free_block", info.largest_free_block);
-    system_set_int(L, "allocated_blocks", info.allocated_blocks);
-    system_set_int(L, "free_blocks", info.free_blocks);
-    system_set_int(L, "total_blocks", info.total_blocks);
+    if (info.valid_fields & HEAP_SIZES) {
+        system_set_int(L, "total_size", info.total_size);
+        system_set_int(L, "free_size", info.free_size);
+        system_set_int(L, "allocated_size", info.allocated_size);
+    }
+    if (info.valid_fields & HEAP_MINIMUM_FREE)
+        system_set_int(L, "minimum_free_size", info.minimum_free_size);
+    if (info.valid_fields & HEAP_SAMPLED_MINIMUM_FREE)
+        system_set_int(L, "sampled_minimum_free_size", info.sampled_minimum_free_size);
+    if (info.valid_fields & HEAP_LARGEST_FREE) {
+        system_set_int(L, "largest_free_block", info.largest_free_block);
+        system_set_int(L, "largest_free_block_alignment", 1);
+    }
+    if (info.valid_fields & HEAP_BLOCK_COUNTS) {
+        system_set_int(L, "allocated_blocks", info.allocated_blocks);
+        system_set_int(L, "free_blocks", info.free_blocks);
+        system_set_int(L, "total_blocks", info.total_blocks);
+    }
     return 1;
 }
 
 static int system_heap_get_task_watermarks(lua_State *L)
 {
     lua_newtable(L);
+    return 1;
+}
+
+static int system_heap_probe(lua_State *L)
+{
+    luaL_checktype(L, 1, LUA_TNUMBER);
+    luaL_checktype(L, 2, LUA_TNUMBER);
+    luaL_checktype(L, 3, LUA_TNUMBER);
+    lua_Integer caps = luaL_checkinteger(L, 1);
+    lua_Integer size = luaL_checkinteger(L, 2);
+    lua_Integer align = luaL_checkinteger(L, 3);
+    luaL_argcheck(L, caps == MALLOC_CAP_INTERNAL || caps == MALLOC_CAP_SPIRAM, 1,
+                  "probe requires INTERNAL or SPIRAM");
+    luaL_argcheck(L, size > 0 && (uint64_t)size <= SIZE_MAX, 2, "invalid allocation size");
+    luaL_argcheck(L, align > 0 && (uint64_t)align <= SIZE_MAX, 3, "invalid alignment");
+    uint32_t success = 0;
+    int error = mosaico_host_heap_probe((uint32_t)caps, (size_t)size, (size_t)align, &success);
+    if (error) {
+        lua_pushnil(L);
+        lua_pushinteger(L, error);
+        return 2;
+    }
+    lua_pushboolean(L, success);
     return 1;
 }
 
@@ -489,6 +532,8 @@ static int luaopen_system(lua_State *L)
     lua_createtable(L, 0, 4);
     lua_pushcfunction(L, system_heap_get_info);
     lua_setfield(L, -2, "get_info");
+    lua_pushcfunction(L, system_heap_probe);
+    lua_setfield(L, -2, "probe");
     lua_pushcfunction(L, system_heap_get_task_watermarks);
     lua_setfield(L, -2, "get_task_watermarks");
     lua_pushcfunction(L, system_heap_get_current_task);
