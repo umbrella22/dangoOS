@@ -16,6 +16,13 @@ default = ["dual-core-ui"]
 firmware = []
 # Core1 UI/Lua executor. Disable default features for a single-core build.
 dual-core-ui = []
+# Opt-in native UI diagnostics, strict properties and update metrics.
+ui-validation = ["rs_lvgl_ui/diagnostics", "rs_lvgl_ui/strict-properties", "rs_lvgl_ui/update-metrics"]
+
+[[test]]
+name = "ui_reliability"
+required-features = ["ui-validation"]
+
 [dependencies]
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 sha2 = { version = "0.10", default-features = false }

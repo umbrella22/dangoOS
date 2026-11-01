@@ -1,5 +1,9 @@
 //! Validated, owned skin resources. No file-backed pointer reaches the renderer.
-use alloc::{rc::Rc, string::String, vec::Vec};
+use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
+use miniz_oxide::inflate::{
+    core::{decompress, inflate_flags, DecompressorOxide},
+    TINFLStatus,
+};
 use {
     crate::companion::render::data, crate::companion::render::FoxPose,
     crate::companion::render::Img, crate::companion::render::Pose, crate::companion::render::H,
@@ -15,6 +19,42 @@ pub const MAX_DECODED_BYTES: usize = MAX_BYTES;
 const COMPRESSED_MAGIC: &[u8; 8] = b"MSKINZ1\0";
 pub const POSES: usize = 25;
 pub const GROUPS: usize = 11;
+
+// A non-inlined return lets Box::write initialize the large Huffman tables
+// directly in its heap allocation. Box::default() leaves a 10 KiB temporary
+// on the RISC-V stack, even in the optimized firmware.
+#[inline(never)]
+fn new_decompressor() -> DecompressorOxide {
+    DecompressorOxide::new()
+}
+
+/// Reuse one lazily allocated state while validating a package. Legacy RLE
+/// packages need no decoder. Neither this state nor decoded pixels are retained
+/// after validation; the renderer continues to own its separate working buffers.
+#[derive(Default)]
+struct SkinDecoder(Option<Box<DecompressorOxide>>);
+impl SkinDecoder {
+    fn decompress(&mut self, input: &[u8], limit: usize) -> Result<Vec<u8>, TINFLStatus> {
+        let state = self
+            .0
+            .get_or_insert_with(|| Box::write(Box::new_uninit(), new_decompressor()));
+        state.init();
+        let mut output = alloc::vec![0; limit];
+        let (status, _, written) = decompress(
+            state,
+            input,
+            &mut output,
+            0,
+            inflate_flags::TINFL_FLAG_PARSE_ZLIB_HEADER
+                | inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF,
+        );
+        if status != TINFLStatus::Done {
+            return Err(status);
+        }
+        output.truncate(written);
+        Ok(output)
+    }
+}
 
 #[derive(Debug)]
 pub struct OwnedPose {
@@ -118,6 +158,7 @@ impl Skin {
         if bytes.len() > MAX_BYTES {
             return Err("skin transfer size".into());
         }
+        let mut decoder = SkinDecoder::default();
         let bytes = if bytes.starts_with(COMPRESSED_MAGIC) {
             if bytes.len() < 12 {
                 return Err("skin compressed header".into());
@@ -126,9 +167,9 @@ impl Skin {
             if !(HEADER..=MAX_DECODED_BYTES).contains(&size) {
                 return Err("skin decoded size".into());
             }
-            let decoded =
-                miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&bytes[12..], size)
-                    .map_err(|_| String::from("skin compressed data"))?;
+            let decoded = decoder
+                .decompress(&bytes[12..], size)
+                .map_err(|_| String::from("skin compressed data"))?;
             if decoded.len() != size {
                 return Err("skin decoded length".into());
             }
@@ -197,9 +238,23 @@ impl Skin {
             {
                 return Err("skin base dimensions".into());
             }
-            validate_img(&base, &bytes[end..], colors, true, version == 2)?;
+            validate_img(
+                &base,
+                &bytes[end..],
+                colors,
+                true,
+                version == 2,
+                &mut decoder,
+            )?;
             for img in groups.iter().flatten() {
-                validate_img(img, &bytes[end..], colors, false, version == 2)?;
+                validate_img(
+                    img,
+                    &bytes[end..],
+                    colors,
+                    false,
+                    version == 2,
+                    &mut decoder,
+                )?;
             }
             table.push(OwnedPose { base, groups });
         }
@@ -267,6 +322,7 @@ fn validate_img(
     colors: usize,
     opaque: bool,
     indexed_zlib: bool,
+    decoder: &mut SkinDecoder,
 ) -> Result<(), String> {
     if img.w == 0
         || img.h == 0
@@ -284,7 +340,8 @@ fn validate_img(
     let b = blob.get(start..end).ok_or("skin RLE outside blob")?;
     if indexed_zlib {
         let size = img.w as usize * img.h as usize;
-        let pixels = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(b, size)
+        let pixels = decoder
+            .decompress(b, size)
             .map_err(|_| String::from("skin indexed zlib data"))?;
         if pixels.len() != size
             || pixels
@@ -481,6 +538,37 @@ mod tests {
         crate::companion::render::FoxRenderer, crate::companion::render::Scene,
         crate::companion::render::PIXELS,
     };
+    #[test]
+    fn validation_decoder_reuses_state_and_enforces_limits_after_failed_streams() {
+        let mut decoder = SkinDecoder::default();
+        assert!(decoder.0.is_none());
+        let plain: Vec<u8> = (0..16_384).map(|n| (n % 251) as u8).collect();
+        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&plain, 9);
+        assert_eq!(decoder.decompress(&compressed, plain.len()).unwrap(), plain);
+        let state = (&**decoder.0.as_ref().unwrap()) as *const DecompressorOxide;
+        assert!(decoder.decompress(&compressed, plain.len() - 1).is_err());
+        assert!(decoder
+            .decompress(&compressed[..compressed.len() - 1], plain.len())
+            .is_err());
+        let mut bad_checksum = compressed.clone();
+        *bad_checksum.last_mut().unwrap() ^= 1;
+        assert!(decoder.decompress(&bad_checksum, plain.len()).is_err());
+        assert!(decoder.decompress(b"invalid", plain.len()).is_err());
+        // Reset must recover from every previous failure, including a stream
+        // that exhausted its output buffer, and retain the same allocation.
+        for level in [0, 1, 9] {
+            let encoded = miniz_oxide::deflate::compress_to_vec_zlib(&plain, level);
+            assert_eq!(
+                decoder.decompress(&encoded, plain.len() + 1).unwrap(),
+                plain
+            );
+            assert_eq!(
+                (&**decoder.0.as_ref().unwrap()) as *const DecompressorOxide,
+                state
+            );
+        }
+    }
+
     #[test]
     #[ignore = "requires private assets/dango-family artwork"]
     fn family_packages_keep_independent_colours_and_decode_only_one_image_at_a_time() {

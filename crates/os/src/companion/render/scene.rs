@@ -106,7 +106,7 @@ impl Default for Layers {
     }
 }
 
-/// Whole-canvas nearest-neighbour warp about the bottom centre.
+/// Whole-canvas transform about the bottom centre, sampled in RGB565.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Warp {
     pub sx: f32,

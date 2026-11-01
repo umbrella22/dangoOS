@@ -1,6 +1,6 @@
 //! Shared settings controls, page frame and save feedback.
 use crate::shell::{
-    components::page::{card, fit_text, font_20, font_24, page, text},
+    components::page::{card, fit_text, font_20, font_24, page, text, text_static},
     messages::AppMsg,
     navigation::route::AppId,
     pages::settings::model::{Info, Page},
@@ -167,7 +167,7 @@ pub(super) fn frame(body: View<AppMsg>, settings_page: Page, info: Info) -> View
     let mut view = page(AppId::Settings.key(), settings_page.title(), body);
     if settings_page != Page::Root {
         view = view.child(
-            rs_lvgl_ui::button("‹")
+            rs_lvgl_ui::button_static("‹")
                 .key(Key::Named("settings-back"))
                 .style(
                     Style::neutral()
@@ -201,7 +201,7 @@ pub(super) fn frame(body: View<AppMsg>, settings_page: Page, info: Info) -> View
                 .offset(0, 430),
         );
     if info.save_error {
-        feedback = feedback.child(text("保存失败，请重新调整", font_20(), YELLOW));
+        feedback = feedback.child(text_static("保存失败，请重新调整", font_20(), YELLOW));
     } else if info.saving {
         feedback = feedback.child(loading_spinner("save-spinner"));
     } else if info.saved {

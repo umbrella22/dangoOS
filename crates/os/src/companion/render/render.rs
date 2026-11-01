@@ -3,8 +3,8 @@
 //! 1. The base pose and the "under" layers are decoded into an index buffer.
 //!    This step is skipped when the layer list did not change (signature
 //!    cache), which is the common case while the fox only breathes.
-//! 2. The index buffer is warped (nearest neighbour, about the bottom centre)
-//!    and looked up in the palette into the output canvas.
+//! 2. The index buffer is warped about the bottom centre with bilinear RGB565
+//!    sampling. Subpixel breathing must not jump entire rows and columns.
 //! 3. The "over" layers (Zzz, sweat, sparks) are stamped on top at their
 //!    warped position, with a Bayer stipple instead of alpha for fades.
 
@@ -25,6 +25,135 @@ use {
 
 /// 4x4 ordered-dither thresholds for [`Layer::fade`].
 const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+
+/// Separate RGB565 into three lanes with room for a five-bit blend weight.
+/// All weighted sums fit in u32 on the MCU; no 64-bit per-pixel arithmetic.
+const COLOR_LANES: u32 = 0x07e0_f81f;
+fn expanded(color: u16) -> u32 {
+    let color = u32::from(color);
+    (color | color << 16) & COLOR_LANES
+}
+
+fn blend(a: u32, b: u32, weight: u32) -> u32 {
+    // Round each channel independently before removing its five guard bits.
+    // a + (b - a) * weight / 32 saves a multiply; wrapping changes only
+    // discarded high bits after the shift and final lane mask.
+    a.wrapping_add(
+        b.wrapping_sub(a)
+            .wrapping_mul(weight)
+            .wrapping_add(0x0200_8010)
+            >> 5,
+    ) & COLOR_LANES
+}
+
+#[derive(Clone, Copy, Default)]
+struct Sample {
+    left: i16,
+    weight: u16,
+}
+
+fn sample(position: f32) -> Sample {
+    let fixed = round(position * 32.0);
+    Sample {
+        left: (fixed >> 5) as i16,
+        weight: (fixed & 31) as u16,
+    }
+}
+
+/// Horizontal filtering of one source row. Reused as the next output row's
+/// top row during breathing, instead of doing the same palette reads twice.
+/// Returns whether the row is entirely black.
+fn sample_row(
+    indices: &[u8],
+    source_y: i32,
+    colors: &[u32; 256],
+    xlut: &[Sample; W],
+    out: &mut [u32; W],
+) -> bool {
+    if source_y < 0 || source_y >= H as i32 {
+        out.fill(0);
+        return true;
+    }
+    let row = &indices[source_y as usize * W..(source_y as usize + 1) * W];
+    // Characters leave substantial black headroom for expression symbols.
+    // Blank rows need neither horizontal filtering nor a vertical pixel loop.
+    if row.iter().all(|&v| colors[v as usize] == 0) {
+        out.fill(0);
+        return true;
+    }
+    for (o, sx) in out.iter_mut().zip(xlut) {
+        let x = i32::from(sx.left);
+        let a = row.get(x as usize).map_or(0, |&v| colors[v as usize]);
+        let b = row.get((x + 1) as usize).map_or(0, |&v| colors[v as usize]);
+        *o = if a == b {
+            a
+        } else {
+            blend(a, b, u32::from(sx.weight))
+        };
+    }
+    false
+}
+
+fn warp(indices: &[u8], palette: &[u16], transform: Warp, out: &mut [u16]) {
+    if transform == Warp::IDENTITY {
+        for (o, &v) in out[..PIXELS].iter_mut().zip(indices) {
+            *o = palette.get(v as usize).copied().unwrap_or(0);
+        }
+        return;
+    }
+
+    // Small fixed tables on the UI stack, with no per-frame heap allocation
+    // and no second RGB canvas. Palette indices were checked at skin load.
+    let mut colors = [0; 256];
+    for (slot, &color) in colors.iter_mut().zip(palette) {
+        *slot = expanded(color);
+    }
+    let ax = W as f32 / 2.0;
+    let ay = (H - 1) as f32;
+    let mut xlut = [Sample::default(); W];
+    for (x, slot) in xlut.iter_mut().enumerate() {
+        *slot = sample(ax + (x as f32 - transform.dx as f32 - ax) / transform.sx);
+    }
+    let mut row_a = [0; W];
+    let mut row_b = [0; W];
+    let (mut a, mut b) = (&mut row_a, &mut row_b);
+    let (mut a_blank, mut b_blank) = (true, true);
+    let mut previous = None;
+    for y in 0..H {
+        let row = &mut out[y * W..(y + 1) * W];
+        let sy = sample(ay - (ay - (y as f32 - transform.dy as f32)) / transform.sy);
+        let top = i32::from(sy.left);
+        if top < -1 || top >= H as i32 {
+            row.fill(0);
+            continue;
+        }
+        match previous {
+            Some(p) if p == top => {}
+            Some(p) if p + 1 == top => {
+                core::mem::swap(&mut a, &mut b);
+                core::mem::swap(&mut a_blank, &mut b_blank);
+                b_blank = sample_row(indices, top + 1, &colors, &xlut, b);
+            }
+            _ => {
+                a_blank = sample_row(indices, top, &colors, &xlut, a);
+                b_blank = sample_row(indices, top + 1, &colors, &xlut, b);
+            }
+        }
+        previous = Some(top);
+        if a_blank && b_blank {
+            row.fill(0);
+            continue;
+        }
+        for ((o, &top), &bottom) in row.iter_mut().zip(a.iter()).zip(b.iter()) {
+            let rgb = if top == bottom {
+                top
+            } else {
+                blend(top, bottom, u32::from(sy.weight))
+            };
+            *o = (rgb | rgb >> 16) as u16;
+        }
+    }
+}
 
 /// Decode `img` into a `stride`-wide index buffer at (`x0`, `y0`), clipped,
 /// skipping transparent runs.
@@ -202,35 +331,7 @@ impl FoxRenderer {
         };
 
         let warp = scene.warp;
-        if warp == Warp::IDENTITY {
-            for (o, &v) in out[..PIXELS].iter_mut().zip(self.idx.iter()) {
-                *o = lookup(v);
-            }
-        } else {
-            let ax = W as f32 / 2.0;
-            let ay = (H - 1) as f32;
-            let mut xlut = [0i16; W];
-            for (x, slot) in xlut.iter_mut().enumerate() {
-                let sx = round(ax + (x as f32 - warp.dx as f32 - ax) / warp.sx);
-                *slot = if sx >= 0 && sx < W as i32 {
-                    sx as i16
-                } else {
-                    -1
-                };
-            }
-            for y in 0..H {
-                let row = &mut out[y * W..(y + 1) * W];
-                let sy = round(ay - (ay - (y as f32 - warp.dy as f32)) / warp.sy);
-                if sy < 0 || sy >= H as i32 {
-                    row.fill(0);
-                    continue;
-                }
-                let src = &self.idx[sy as usize * W..(sy as usize + 1) * W];
-                for (o, &sx) in row.iter_mut().zip(xlut.iter()) {
-                    *o = if sx >= 0 { lookup(src[sx as usize]) } else { 0 };
-                }
-            }
-        }
+        self::warp(&self.idx, pal, warp, out);
 
         for l in scene.over.iter() {
             let img = &l.img;
@@ -275,5 +376,122 @@ impl FoxRenderer {
 impl Default for FoxRenderer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rgb565_blends_round_each_channel_without_bleeding_between_lanes() {
+        let colors = [0, 0xffff, 0xf800, 0x07e0, 0x001f, 0x07ff, 0x8410];
+        for a in colors {
+            for b in colors {
+                for weight in 0..=32 {
+                    let mixed = blend(expanded(a), expanded(b), weight);
+                    let actual = (mixed | mixed >> 16) as u16;
+                    let mut expected = 0;
+                    for (shift, mask) in [(11, 31), (5, 63), (0, 31)] {
+                        let a = u32::from((a >> shift) & mask);
+                        let b = u32::from((b >> shift) & mask);
+                        expected |= (((a * (32 - weight) + b * weight + 16) / 32) as u16) << shift;
+                    }
+                    assert_eq!(actual, expected, "{a:04x} {b:04x} {weight}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn breathing_does_not_snap_rows_or_columns_at_the_nearest_pixel_boundary() {
+        let mut indices = vec![0; PIXELS];
+        let mut before = vec![0; PIXELS];
+        let mut after = vec![0; PIXELS];
+        for horizontal in [true, false] {
+            for y in 0..H {
+                for x in 0..W {
+                    indices[y * W + x] = (if horizontal { x } else { y } % 2) as u8;
+                }
+            }
+            let (anchor, target) = if horizontal {
+                (W / 2, 100)
+            } else {
+                (H - 1, 150)
+            };
+            for (fraction, out) in [(0.49, &mut before), (0.51, &mut after)] {
+                let scale =
+                    (target as f32 - anchor as f32) / (target as f32 + fraction - anchor as f32);
+                let transform = Warp {
+                    sx: if horizontal { scale } else { 1.0 },
+                    sy: if horizontal { 1.0 } else { scale },
+                    ..Warp::IDENTITY
+                };
+                warp(&indices, &[0, 0xffff], transform, out);
+            }
+            // A 0.02-pixel change formerly flipped this entire line from
+            // black to white, exposing a moving rectangular sampling seam.
+            let at = 150 * W + 100;
+            assert_eq!(before[at], 0x8410);
+            assert_eq!(after[at], before[at]);
+        }
+    }
+
+    #[test]
+    fn warping_preserves_integer_pixels_and_clips_to_black_without_touching_the_tail() {
+        // Palette zero deliberately is not black: outside the source image
+        // must still be black, independent of a package's palette ordering.
+        let indices = vec![0; PIXELS];
+        let mut out = vec![0x1234; PIXELS + 4];
+        warp(&indices, &[0xf800], Warp::IDENTITY, &mut out);
+        assert!(out[..PIXELS].iter().all(|&c| c == 0xf800));
+        warp(
+            &indices,
+            &[0xf800],
+            Warp {
+                sx: 0.5,
+                sy: 0.5,
+                ..Warp::IDENTITY
+            },
+            &mut out,
+        );
+        assert_eq!(out[0], 0);
+        assert_eq!(out[168 * W + 87], 0);
+        assert_eq!(out[168 * W + 88], 0xf800);
+        assert_eq!(out[(H - 1) * W + W / 2], 0xf800);
+        assert_eq!(&out[PIXELS..], &[0x1234; 4]);
+    }
+
+    #[test]
+    fn filtered_rows_survive_repeated_source_rows_and_skipped_source_rows() {
+        let mut indices = vec![0; PIXELS];
+        let mut out = vec![0; PIXELS];
+        indices[170 * W..171 * W].fill(1);
+        warp(
+            &indices,
+            &[0, 0xffff],
+            Warp {
+                sy: 2.0,
+                ..Warp::IDENTITY
+            },
+            &mut out,
+        );
+        for (y, expected) in [(3, 0), (4, 0x8410), (5, 0xffff), (6, 0x8410), (7, 0)] {
+            assert_eq!(out[y * W + W / 2], expected, "enlarged row {y}");
+        }
+        indices.fill(0);
+        indices[169 * W..170 * W].fill(1);
+        warp(
+            &indices,
+            &[0, 0xffff],
+            Warp {
+                sy: 0.5,
+                ..Warp::IDENTITY
+            },
+            &mut out,
+        );
+        for (y, expected) in [(251, 0), (252, 0xffff), (253, 0)] {
+            assert_eq!(out[y * W + W / 2], expected, "reduced row {y}");
+        }
     }
 }

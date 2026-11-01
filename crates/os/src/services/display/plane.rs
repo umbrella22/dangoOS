@@ -81,7 +81,7 @@ pub fn set_brightness(percent: u8) {
 
 /// The pixels a job uploads.
 pub enum Frame {
-    /// A fox canvas slot.
+    /// A Home slot: character pixels followed by its separate status band.
     Pool(ReadLease),
     /// LVGL's full-screen shadow frame (hub pages).
     Screen(ScreenLease),
@@ -99,7 +99,7 @@ pub enum Frame {
 impl Frame {
     fn pixels(&self) -> &[u16] {
         match self {
-            Frame::Pool(lease) => lease.pixels(),
+            Frame::Pool(lease) => &lease.pixels()[..crate::companion::render::PIXELS],
             Frame::Screen(lease) => lease.pixels(),
             Frame::Slide { new, .. } => new.pixels(),
         }
@@ -346,39 +346,41 @@ async fn run_plane(
             }
         }
 
-        let mut y = area.y0;
         let slide = matches!(job.canvas, Frame::Slide { .. });
-        while completed && !slide && y <= area.y1 {
-            let y2 = (y + CHUNK_ROWS - 1).min(area.y1);
-            let dst = DirtyRect {
-                x0: origin_x + area.x0,
-                y0: origin_y + y,
-                x1: origin_x + area.x1,
-                y1: origin_y + y2,
-            };
-            let src = DirtyRect {
-                x0: area.x0,
-                y0: y,
-                x1: area.x1,
-                y1: y2,
-            };
-            let mut result = panel
-                .write_canvas_async(dst, src, job.size, job.canvas.pixels())
+        if completed && !slide {
+            completed = upload(
+                &mut panel,
+                job.canvas.pixels(),
+                job.size,
+                (origin_x, origin_y),
+                area,
+            )
+            .await;
+        }
+        if completed {
+            if let Frame::Pool(lease) = &job.canvas {
+                use crate::companion::{render, status};
+                let at = (
+                    (i32::from(origin_x) + status::OFFSET.0) as u16,
+                    (i32::from(origin_y) + status::OFFSET.1) as u16,
+                );
+                // Keep the same lease through both uploads, including a full
+                // restore after clear_outside or wake. A failed band must not
+                // acknowledge a complete frame or restore panel brightness.
+                completed = upload(
+                    &mut panel,
+                    &lease.pixels()[render::PIXELS..],
+                    (status::WIDTH as u16, status::HEIGHT as u16),
+                    at,
+                    DirtyRect {
+                        x0: 0,
+                        y0: 0,
+                        x1: status::WIDTH as u16 - 1,
+                        y1: status::HEIGHT as u16 - 1,
+                    },
+                )
                 .await;
-            if result.is_err() {
-                result = panel
-                    .write_canvas_async(dst, src, job.size, job.canvas.pixels())
-                    .await;
             }
-            match result {
-                Ok(()) => {}
-                Err(error) => {
-                    warn!("plane: canvas {dst:?} failed: {error:?}");
-                    completed = false;
-                    break;
-                }
-            }
-            y = y2 + 1;
         }
 
         crate::services::power::button_task::frame_uploaded(job.shutdown_sleep, completed);
@@ -415,6 +417,41 @@ async fn run_plane(
         // Return the slot to the renderer after the completed transfer.
         drop(job);
     }
+}
+
+/// Transfer one rectangle in bounded bursts, retrying a failed burst once.
+async fn upload(
+    panel: &mut Display<esp_hal::Async>,
+    pixels: &[u16],
+    size: (u16, u16),
+    at: (u16, u16),
+    area: DirtyRect,
+) -> bool {
+    let mut y = area.y0;
+    while y <= area.y1 {
+        let y2 = (y + CHUNK_ROWS - 1).min(area.y1);
+        let dst = DirtyRect {
+            x0: at.0 + area.x0,
+            y0: at.1 + y,
+            x1: at.0 + area.x1,
+            y1: at.1 + y2,
+        };
+        let src = DirtyRect {
+            y0: y,
+            y1: y2,
+            ..area
+        };
+        let mut result = panel.write_canvas_async(dst, src, size, pixels).await;
+        if result.is_err() {
+            result = panel.write_canvas_async(dst, src, size, pixels).await;
+        }
+        if let Err(error) = result {
+            warn!("plane: canvas {dst:?} failed: {error:?}");
+            return false;
+        }
+        y = y2 + 1;
+    }
+    true
 }
 
 /// Top-left of the canvas on the panel: centred horizontally, [`FOX_DROP_PX`]

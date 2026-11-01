@@ -145,6 +145,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
 
     let display = rs_lvgl::Display::default();
     let mut ui = Ui::new(&display, theme()).expect("LVGL UI creation failed");
+    ui.set_event_queue_policy(crate::shell::events::native_queue_policy());
     let control = FoxControl::new(Expression::Idle);
     control.set_loading(true);
     // Must precede the mount: the widget hides its native canvas and leaves

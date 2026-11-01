@@ -1,12 +1,14 @@
-//! Compact Home link icons composited into the existing RGB565 character canvas.
-//! The panel plane and LVGL share the same pixels and service snapshot.
-use crate::companion::render::{H, W};
+//! Compact Home link icons in a separate band above the character canvas.
+//! Its pixels share the character's frame lease on both the panel and LVGL.
 use crate::services::radio::{BluetoothState, Snapshot, WifiLink, WifiState};
 
 mod icons;
 
-/// A centred pair inside the round panel's top safe area.
-pub const AREA: (usize, usize, usize, usize) = ((W - 80) / 2, 4, 80, 34);
+pub const WIDTH: usize = 80;
+pub const HEIGHT: usize = 34;
+pub const PIXELS: usize = WIDTH * HEIGHT;
+/// Band origin relative to the character canvas. Leave 14 px between them.
+pub const OFFSET: (i32, i32) = (((super::render::W - WIDTH) / 2) as i32, -48);
 const MUTED: u16 = 0x7bef;
 const DIM: u16 = 0x2945;
 const CONNECTED: u16 = 0x8f16;
@@ -35,17 +37,14 @@ fn draw(out: &mut [u16], mask: &[u8], width: usize, x: usize, y: usize, colors: 
         let r = (((color >> 11) & 31) * alpha + 8) / 16;
         let g = (((color >> 5) & 63) * alpha + 8) / 16;
         let b = ((color & 31) * alpha + 8) / 16;
-        out[(y + index / width) * W + x + index % width] = r << 11 | g << 5 | b;
+        out[(y + index / width) * WIDTH + x + index % width] = r << 11 | g << 5 | b;
     }
 }
 
-/// Draw into a leased frame. No heap allocation, extra canvas or LVGL object.
+/// Draw the complete band into its part of the leased frame, without allocating.
 pub fn render(out: &mut [u16], status: Snapshot) {
-    assert_eq!(out.len(), W * H);
-    let (x, y, width, height) = AREA;
-    for row in y..y + height {
-        out[row * W + x..row * W + x + width].fill(0);
-    }
+    assert_eq!(out.len(), PIXELS);
+    out.fill(0);
 
     let wifi_color = match status.wifi_link {
         WifiLink::Connected { .. } => CONNECTED,
@@ -65,7 +64,7 @@ pub fn render(out: &mut [u16], status: Snapshot) {
     for arc in 0..usize::from(arcs) {
         wifi[arc + 2] = CONNECTED;
     }
-    draw(out, &icons::WIFI, icons::WIFI_WIDTH, W / 2 - 31, 8, &wifi);
+    draw(out, &icons::WIFI, icons::WIFI_WIDTH, 9, 4, &wifi);
 
     let bluetooth_color = match status.bluetooth {
         BluetoothState::Off => DIM,
@@ -78,8 +77,8 @@ pub fn render(out: &mut [u16], status: Snapshot) {
         out,
         &icons::BLUETOOTH,
         icons::BLUETOOTH_WIDTH,
-        W / 2 + 12,
-        8,
+        52,
+        4,
         &[0, bluetooth_color],
     );
 }
@@ -102,7 +101,7 @@ mod tests {
         }
     }
     #[test]
-    fn every_status_is_confined_to_the_top_band() {
+    fn every_status_replaces_the_band_without_touching_adjacent_frame_pixels() {
         for wifi in [
             WifiState::Off,
             WifiState::Idle,
@@ -128,9 +127,9 @@ mod tests {
                         rssi_dbm: Some(-55),
                     },
                 ] {
-                    let mut out = alloc::vec![0xffff; W * H];
+                    let mut out = alloc::vec![0xffff; PIXELS + 2];
                     render(
-                        &mut out,
+                        &mut out[1..=PIXELS],
                         Snapshot {
                             wifi,
                             wifi_link,
@@ -138,14 +137,9 @@ mod tests {
                             ip: None,
                         },
                     );
-                    let (x, y, width, height) = AREA;
-                    for (index, pixel) in out.iter().enumerate() {
-                        if !(x..x + width).contains(&(index % W))
-                            || !(y..y + height).contains(&(index / W))
-                        {
-                            assert_eq!(*pixel, 0xffff, "status overwrites character at {index}");
-                        }
-                    }
+                    assert_eq!(out[0], 0xffff);
+                    assert_eq!(out[PIXELS + 1], 0xffff);
+                    assert!(out[1..=PIXELS].iter().all(|&p| p != 0xffff));
                 }
             }
         }

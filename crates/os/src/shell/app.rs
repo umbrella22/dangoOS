@@ -29,7 +29,7 @@ use alloc::string::String;
 use core::cell::Cell;
 use {crate::apps::lifecycle::uninstall::Identity, crate::apps::lifecycle::uninstall::Operation};
 
-use rs_lvgl_ui::{App, Color, Key, Style, Theme, View};
+use rs_lvgl_ui::{App, Color, Key, RenderDecision, Style, Theme, View};
 
 use crate::companion::behavior::Expression;
 use crate::companion::render::entrance;
@@ -274,6 +274,19 @@ impl MosaicoApp {
 
 impl App for MosaicoApp {
     type Msg = AppMsg;
+
+    fn update_with_render(&mut self, msg: AppMsg) -> RenderDecision {
+        // These only queue a service command. The camera snapshot is published
+        // separately by the UI task, which marks the view dirty on change.
+        // Slider messages must reconcile even when the model clamps their value.
+        let command_only = matches!(msg, AppMsg::CameraCapture | AppMsg::CameraRetry);
+        self.update(msg);
+        if command_only {
+            RenderDecision::Skip
+        } else {
+            RenderDecision::Reconcile
+        }
+    }
 
     fn update(&mut self, msg: AppMsg) {
         if self.screen.get() == Screen::LowBattery {

@@ -5,18 +5,18 @@ resolver = "2"
 exclude = ["vendor/embassy-usb-synopsys-otg", "vendor/esp-wifi-sys-esp32s31", "vendor/esp-radio", "vendor/esp-radio-rtos-driver", "vendor/esp-bluedroid", "vendor/esp-alloc"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["umbrella22", "Claude", "GLM"]
 
 [workspace.dependencies]
 # Published LVGL bindings, used directly by their package names.
 # Upgrade both packages together; Cargo.lock records the resolved versions.
-rs_lvgl = { version = "0.2.0", default-features = false, features = [
+rs_lvgl = { version = "0.3.0", default-features = false, features = [
     "alloc",
     "unsafe_no_autoinit",
 ] }
-rs_lvgl_ui = { version = "0.2.0", default-features = false, features = [
+rs_lvgl_ui = { version = "0.3.0", default-features = false, features = [
     "alloc",
     "no-autoinit",
     # Native hub controls, Lua images/dialogs and the fox/splash canvases.

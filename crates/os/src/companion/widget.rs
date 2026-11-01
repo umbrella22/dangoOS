@@ -1,6 +1,6 @@
 //! `FoxWidget`: the fox-dango character as an LVGL custom widget.
 //!
-//! The widget renders 352x336 RGB565 frames with [`FoxRenderer`] into a
+//! The widget renders a 352x336 character and a small status band into one
 //! two-slot [`CanvasPool`] at a bounded cadence. Application code drives the
 //! mounted instance through a shared [`FoxControl`]: `rs_lvgl_ui::custom` keeps the
 //! mounted widget when a later `App::view` builds a new descriptor, so the
@@ -30,6 +30,7 @@ use rs_lvgl::sys as lvgl_sys;
 use rs_lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
 
 use crate::companion::behavior::Expression;
+use crate::companion::status;
 use {
     crate::companion::render as fox, crate::companion::render::entrance,
     crate::companion::render::FoxAnimator, crate::companion::render::FoxInput,
@@ -44,6 +45,8 @@ use {
 pub const CANVAS_WIDTH: usize = fox::W;
 /// Canvas height in pixels.
 pub const CANVAS_HEIGHT: usize = fox::H;
+/// Each slot owns both images until LVGL or the panel finishes reading them.
+pub const FRAME_PIXELS: usize = fox::PIXELS + status::PIXELS;
 
 /// Minimum interval between rendered frames: 20 fps.
 ///
@@ -168,8 +171,8 @@ impl FoxControl {
         })
     }
 
-    /// Composite link status into the same canvas sent to both LVGL and the
-    /// hardware plane. A changed measurement renders on the next UI tick.
+    /// Update the status band sent with the character to LVGL or the plane.
+    /// A changed measurement renders on the next UI tick.
     pub fn set_radio_status(&self, status: crate::services::radio::Snapshot) {
         if self.radio_status.replace(Some(status)) != Some(status) {
             self.mark_urgent();
@@ -195,7 +198,7 @@ impl FoxControl {
         if let Some(pool) = self.pool.get() {
             return pool;
         }
-        let pool = CanvasPool::leak(CANVAS_WIDTH * CANVAS_HEIGHT);
+        let pool = CanvasPool::leak(FRAME_PIXELS);
         self.pool.set(Some(pool));
         pool
     }
@@ -341,6 +344,7 @@ pub struct FoxWidget {
     since_frame_ms: u32,
     /// Native canvas, kept so the LVGL path can repoint and invalidate it.
     canvas: Option<NonNull<lvgl_sys::lv_obj_t>>,
+    status_canvas: Option<NonNull<lvgl_sys::lv_obj_t>>,
     #[cfg(target_os = "none")]
     render_budget: crate::platform::runtime::frequency::device::Budget,
 }
@@ -359,6 +363,7 @@ impl FoxWidget {
             last_expression: None,
             since_frame_ms: 0,
             canvas: None,
+            status_canvas: None,
             // Leave half the 50 ms frame interval for upload and scheduling.
             #[cfg(target_os = "none")]
             render_budget: crate::platform::runtime::frequency::device::Budget::new(25_000),
@@ -412,11 +417,24 @@ impl FoxWidget {
     fn show_latest(&mut self, pool: &'static CanvasPool, object: &mut CustomObject) {
         self.shown = None;
         self.shown = pool.take_ready();
-        if let (Some(shown), Some(canvas)) = (self.shown.as_ref(), self.canvas) {
+        if let (Some(shown), Some(canvas), Some(status_canvas)) =
+            (self.shown.as_ref(), self.canvas, self.status_canvas)
+        {
             // SAFETY: `canvas` is the live native canvas created in `create`;
             // the pool buffer is `'static` and `self.shown` keeps the renderer
             // out of it until the next frame.
-            unsafe { set_canvas_buffer(canvas, shown.as_ptr().cast_mut()) };
+            unsafe {
+                let pixels = shown.as_ptr().cast_mut();
+                set_canvas_buffer(canvas, pixels, CANVAS_WIDTH, CANVAS_HEIGHT);
+                set_canvas_buffer(
+                    status_canvas,
+                    pixels.add(fox::PIXELS),
+                    status::WIDTH,
+                    status::HEIGHT,
+                );
+                // This band sits outside its parent's character rectangle.
+                lvgl_sys::lv_obj_invalidate(status_canvas.as_ptr());
+            };
         }
         object.invalidate();
     }
@@ -427,15 +445,20 @@ impl FoxWidget {
 /// # Safety
 ///
 /// `canvas` must be a live LVGL canvas and `pixels` a `'static` buffer of
-/// `CANVAS_WIDTH * CANVAS_HEIGHT` RGB565 pixels.
-unsafe fn set_canvas_buffer(canvas: NonNull<lvgl_sys::lv_obj_t>, pixels: *mut u16) {
+/// `width * height` RGB565 pixels, protected by the displayed frame lease.
+unsafe fn set_canvas_buffer(
+    canvas: NonNull<lvgl_sys::lv_obj_t>,
+    pixels: *mut u16,
+    width: usize,
+    height: usize,
+) {
     // SAFETY: guaranteed by the caller.
     unsafe {
         lvgl_sys::lv_canvas_set_buffer(
             canvas.as_ptr(),
             pixels.cast(),
-            CANVAS_WIDTH as i32,
-            CANVAS_HEIGHT as i32,
+            width as i32,
+            height as i32,
             lvgl_sys::lv_color_format_t_LV_COLOR_FORMAT_RGB565,
         );
     }
@@ -476,6 +499,13 @@ impl CustomWidget for FoxWidget {
         let Some(canvas) = NonNull::new(canvas) else {
             return Err(UiError::Allocation);
         };
+        // The child follows the character's visibility and native lifetime,
+        // but draws above it; both buffers come from the same read lease.
+        let status_canvas = unsafe { lvgl_sys::lv_canvas_create(canvas.as_ptr()) };
+        let Some(status_canvas) = NonNull::new(status_canvas) else {
+            unsafe { lvgl_sys::lv_obj_delete(canvas.as_ptr()) };
+            return Err(UiError::Allocation);
+        };
 
         // SAFETY: `canvas` was just created as a child of `parent`. The pool
         // buffers are leaked and outlive the canvas. On the LVGL path `shown`
@@ -483,10 +513,29 @@ impl CustomWidget for FoxWidget {
         // into the displayed slot; on the plane path the canvas is hidden and
         // LVGL never reads its pixels.
         unsafe {
-            set_canvas_buffer(canvas, first_ptr);
+            set_canvas_buffer(canvas, first_ptr, CANVAS_WIDTH, CANVAS_HEIGHT);
             // The size only settles on the next layout pass otherwise.
             lvgl_sys::lv_obj_set_size(canvas.as_ptr(), CANVAS_WIDTH as i32, CANVAS_HEIGHT as i32);
             lvgl_sys::lv_obj_center(canvas.as_ptr());
+            lvgl_sys::lv_obj_add_flag(
+                canvas.as_ptr(),
+                lvgl_sys::lv_obj_flag_t_LV_OBJ_FLAG_OVERFLOW_VISIBLE,
+            );
+            // LVGL clips visible overflow to the parent's extended draw area.
+            lvgl_sys::lv_obj_set_ext_draw_size(canvas.as_ptr(), -status::OFFSET.1);
+            set_canvas_buffer(
+                status_canvas,
+                first_ptr.add(fox::PIXELS),
+                status::WIDTH,
+                status::HEIGHT,
+            );
+            lvgl_sys::lv_obj_set_size(
+                status_canvas.as_ptr(),
+                status::WIDTH as i32,
+                status::HEIGHT as i32,
+            );
+            lvgl_sys::lv_obj_set_pos(status_canvas.as_ptr(), status::OFFSET.0, status::OFFSET.1);
+            lvgl_sys::lv_obj_set_clickable(status_canvas.as_ptr(), false);
             // A canvas is not clickable by default; the custom node's
             // on_event handler needs real pointer events.
             lvgl_sys::lv_obj_set_clickable(canvas.as_ptr(), true);
@@ -510,6 +559,7 @@ impl CustomWidget for FoxWidget {
                 self.pool = Some(pool);
                 self.shown = shown;
                 self.canvas = Some(canvas);
+                self.status_canvas = Some(status_canvas);
                 #[cfg(test)]
                 self.control
                     .creates
@@ -580,16 +630,19 @@ impl CustomWidget for FoxWidget {
         // synchronous scope runs on the sole LVGL owner, outside C callbacks;
         // no allocator, LVGL or global lock is held when requesting the clock.
         let mut raster = || {
+            let (character, band) = lease.pixels_mut().split_at_mut(fox::PIXELS);
             let pose = if self.control.loading() {
-                fox::loading::render(lease.pixels_mut());
+                fox::loading::render(character);
                 None
             } else {
                 let scene = self.animator.scene(input);
-                self.renderer.render(&scene, lease.pixels_mut());
+                self.renderer.render(&scene, character);
                 Some(scene.pose)
             };
             if let Some(status) = self.control.radio_status.get() {
-                crate::companion::status::render(lease.pixels_mut(), status);
+                status::render(band, status);
+            } else {
+                band.fill(0);
             }
             pose
         };
@@ -616,6 +669,7 @@ impl CustomWidget for FoxWidget {
             .deletes
             .set(self.control.deletes.get().saturating_add(1));
         self.canvas = None;
+        self.status_canvas = None;
         // Nothing to free: the pool belongs to the control and is leaked, so
         // the native canvas (deleted by the reconciler after this hook) never
         // references freed pixels. Dropping `self.shown` with the widget
@@ -799,17 +853,11 @@ mod tests {
             let frame = control
                 .take_frame()
                 .expect("link changes publish an urgent plane frame");
-            let (x, y, width, height) = crate::companion::status::AREA;
-            for (index, &pixel) in frame.pixels().iter().enumerate() {
-                if !(x..x + width).contains(&(index % CANVAS_WIDTH))
-                    || !(y..y + height).contains(&(index / CANVAS_WIDTH))
-                {
-                    assert_eq!(
-                        pixel, baseline[index],
-                        "status must not move or replace the character"
-                    );
-                }
-            }
+            assert_eq!(
+                &frame.pixels()[..fox::PIXELS],
+                &baseline[..fox::PIXELS],
+                "status must not move, erase or replace any part of the character"
+            );
             if status == Snapshot::new() {
                 assert_eq!(
                     frame.pixels(),
@@ -828,6 +876,95 @@ mod tests {
             );
         }
         ui.unmount();
+        drop(ui);
+        unsafe {
+            display.delete();
+            rs_lvgl::deinit();
+        }
+    }
+
+    #[test]
+    fn native_status_band_draws_above_the_character_and_leaves_no_pixels_after_unmount() {
+        use crate::services::radio::{BluetoothState, Snapshot, WifiLink, WifiState};
+        use core::cell::RefCell;
+        use core::ptr;
+        let _guard = test_support::lock();
+        unsafe { rs_lvgl::deinit() };
+        rs_lvgl::init();
+        let pixels = Rc::new(RefCell::new(alloc::vec![0u16; 480 * 480]));
+        let output = Rc::clone(&pixels);
+        let display = Display::register::<_, { 480 * 4 }>(480, 480, move |region| {
+            let width = (region.area.x2 - region.area.x1 + 1) as usize;
+            let height = (region.area.y2 - region.area.y1 + 1) as usize;
+            let mut out = output.borrow_mut();
+            for y in 0..height {
+                for x in 0..width {
+                    let color = region.colors[y * width + x];
+                    out[(region.area.y1 as usize + y) * 480 + region.area.x1 as usize + x] =
+                        (u16::from(color.r() >> 3) << 11)
+                            | (u16::from(color.g() >> 2) << 5)
+                            | u16::from(color.b() >> 3);
+                }
+            }
+        })
+        .unwrap();
+        unsafe {
+            lvgl_sys::lv_obj_set_style_bg_color(
+                lvgl_sys::lv_screen_active(),
+                lvgl_sys::lv_color_hex(0),
+                0,
+            );
+        }
+        let control = FoxControl::new(Expression::Idle);
+        control.set_radio_status(Snapshot::new());
+        let mut ui = mount(&control, &display);
+        let mut previous_character = None;
+        for snapshot in [
+            Snapshot::new(),
+            Snapshot {
+                wifi: WifiState::Connected,
+                wifi_link: WifiLink::Connected {
+                    rssi_dbm: Some(-55),
+                },
+                bluetooth: BluetoothState::Streaming,
+                ip: None,
+            },
+        ] {
+            control.set_radio_status(snapshot);
+            ui.tick(0).unwrap();
+            unsafe { lvgl_sys::lv_refr_now(ptr::null_mut()) };
+            let mut expected = alloc::vec![0; status::PIXELS];
+            status::render(&mut expected, snapshot);
+            let out = pixels.borrow();
+            let left = (480 - CANVAS_WIDTH) / 2 + status::OFFSET.0 as usize;
+            let top = ((480 - CANVAS_HEIGHT) as i32 / 2 + status::OFFSET.1) as usize;
+            for y in 0..(480 - CANVAS_HEIGHT) / 2 {
+                for x in 0..480 {
+                    let expected = if (left..left + status::WIDTH).contains(&x)
+                        && (top..top + status::HEIGHT).contains(&y)
+                    {
+                        expected[(y - top) * status::WIDTH + x - left]
+                    } else {
+                        0
+                    };
+                    assert_eq!(out[y * 480 + x], expected, "status at {x},{y}");
+                }
+            }
+            let character = out[(480 - CANVAS_HEIGHT) / 2 * 480..].to_vec();
+            if let Some(previous) = &previous_character {
+                assert_eq!(
+                    &character, previous,
+                    "radio changes leave the character intact"
+                );
+            }
+            previous_character = Some(character);
+        }
+        ui.unmount();
+        unsafe { lvgl_sys::lv_refr_now(ptr::null_mut()) };
+        assert!(
+            pixels.borrow().iter().all(|&c| c == 0),
+            "the outlying child must be cleared with its parent"
+        );
         drop(ui);
         unsafe {
             display.delete();

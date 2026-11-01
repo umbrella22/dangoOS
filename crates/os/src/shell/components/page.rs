@@ -31,6 +31,10 @@ pub(crate) fn text(content: impl Into<String>, font: Font, color: Color) -> View
     rs_lvgl_ui::label(content).style(Style::neutral().font(font).fg(color))
 }
 
+pub(crate) fn text_static(content: &'static str, font: Font, color: Color) -> View<AppMsg> {
+    rs_lvgl_ui::label_static(content).style(Style::neutral().font(font).fg(color))
+}
+
 /// A full-screen page: black field, centred title, home indicator.
 pub(crate) fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -> View<AppMsg> {
     rs_lvgl_ui::obj()
@@ -43,7 +47,7 @@ pub(crate) fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -
                 .height(Size::Percent(100)),
         )
         .child(
-            text(title, font_30(), TITLE)
+            text_static(title, font_30(), TITLE)
                 .key(Key::Named("title"))
                 .style(Style::default().align(Align::TopMid).offset(0, 30)),
         )
@@ -81,7 +85,7 @@ pub(crate) fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>
                 .height(Size::Px(ROW_H))
                 .flex_align(FlexAlign::SpaceBetween, FlexAlign::Center),
         )
-        .child(text(label, font_24(), TEXT).key(Key::Named("label")))
+        .child(text_static(label, font_24(), TEXT).key(Key::Named("label")))
         .child(trailing)
 }
 

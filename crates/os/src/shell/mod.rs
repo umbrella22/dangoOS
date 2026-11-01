@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod components;
+pub mod events;
 pub mod lifecycle;
 pub mod messages;
 pub mod model;
