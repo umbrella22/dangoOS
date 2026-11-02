@@ -53,7 +53,7 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
     }
     if !info.storage_ready {
         body = body.child(note("character-loading", "正在读取团子形象"));
-    } else if session.skins.len() <= 1 {
+    } else if session.skins.is_empty() {
         body = body.child(note("character-empty", "安装团子形象后可在这里切换"));
     }
     if let Some(message) = session.message {

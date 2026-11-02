@@ -10,6 +10,9 @@ use alloc::{format, string::String};
 use rs_lvgl_ui::{Align, FlexAlign, Key, Part, ScrollDir, ScrollbarMode, Size, Style, View};
 
 pub(super) fn list(key: &'static str) -> View<AppMsg> {
+    // Keep the 400 px controls at x=40; reserve a separate lane to their right
+    // for LVGL's overlay scrollbar, including when the list becomes scrollable.
+    const SCROLLBAR_GUTTER: i16 = 16;
     rs_lvgl_ui::column([])
         .key(Key::Named(key))
         .scrollable(true)
@@ -17,12 +20,17 @@ pub(super) fn list(key: &'static str) -> View<AppMsg> {
         .scrollbar_mode(ScrollbarMode::Auto)
         .style(
             Style::neutral()
-                .width(Size::Px(400))
+                .width(Size::Px(400 + SCROLLBAR_GUTTER))
                 .height(Size::Px(320))
                 .gap(8)
                 .align(Align::TopMid)
-                .offset(0, 92)
+                .offset(SCROLLBAR_GUTTER / 2, 92)
+                .pad_right(SCROLLBAR_GUTTER)
                 .pad_bottom(12),
+        )
+        .part_style(
+            Part::Scrollbar,
+            Style::default().width(Size::Px(4)).pad_right(4),
         )
 }
 pub(super) fn entry(

@@ -124,6 +124,33 @@ fn capture(name: &str, pixels: &Rc<RefCell<Vec<u8>>>) {
     }
 }
 
+unsafe fn assert_scrollbar_has_its_own_lane(row_label: &str) {
+    unsafe {
+        let row = sys::lv_obj_get_parent(label(sys::lv_screen_active(), row_label).unwrap());
+        let list = sys::lv_obj_get_parent(row);
+        let mut horizontal = core::mem::zeroed();
+        let mut vertical: sys::lv_area_t = core::mem::zeroed();
+        sys::lv_obj_get_scrollbar_area(list, &mut horizontal, &mut vertical);
+        assert!(
+            vertical.y2 > vertical.y1,
+            "the overflowing list has a scrollbar"
+        );
+        for index in 0..sys::lv_obj_get_child_count(list) {
+            let mut area: sys::lv_area_t = core::mem::zeroed();
+            sys::lv_obj_get_coords(sys::lv_obj_get_child(list, index as i32), &mut area);
+            assert_eq!(area.x1, 40, "controls keep their original left edge");
+            assert_eq!(
+                area.x2 - area.x1 + 1,
+                400,
+                "controls keep their original width"
+            );
+            assert!(area.x2 + 4 < vertical.x1, "scrollbar must clear every card");
+        }
+        assert_eq!(sys::lv_obj_get_scroll_left(list), 0);
+        assert_eq!(sys::lv_obj_get_scroll_right(list), 0);
+    }
+}
+
 #[test]
 fn categories_controls_and_wifi_password_use_native_events() {
     rs_lvgl::init();
@@ -180,6 +207,7 @@ fn categories_controls_and_wifi_password_use_native_events() {
             label(sys::lv_screen_active(), "玄灵 · 月蚀  ›").is_some(),
             "root displays the active character"
         );
+        assert_scrollbar_has_its_own_lane("更换团子");
     }
     capture("01-settings", &pixels);
     tap(&mut ui, &mut app, 240, 124);
@@ -208,6 +236,7 @@ fn categories_controls_and_wifi_password_use_native_events() {
             sys::lv_color_make(255, 76, 1)
         ));
         assert!(label(sys::lv_screen_active(), "选择后立即切换，重启后保留。").is_none());
+        assert!(label(sys::lv_screen_active(), "团子虚影").is_none());
     }
     capture("01-character", &pixels);
     tap(&mut ui, &mut app, 240, 248);
@@ -644,6 +673,35 @@ fn categories_controls_and_wifi_password_use_native_events() {
         );
     }
     capture("15-sensors-updated", &pixels);
+
+    // A fallback can still be the active renderer, but it is not a choice.
+    app.go(Page::App(AppId::Settings));
+    app.settings_session_mut().skins.clear();
+    app.settings_session_mut().selected_skin = os::companion::skins::PLACEHOLDER_ID.into();
+    ui.mark_dirty();
+    run(&mut ui, &mut app, 100);
+    unsafe {
+        assert!(label(sys::lv_screen_active(), "团子虚影  ›").is_some());
+    }
+    app.update(AppMsg::SettingsPage(settings::Page::Character));
+    ui.mark_dirty();
+    run(&mut ui, &mut app, 100);
+    unsafe {
+        assert!(label(sys::lv_screen_active(), "团子虚影").is_none());
+        assert!(label(sys::lv_screen_active(), "安装团子形象后可在这里切换").is_some());
+    }
+    app.settings_session_mut()
+        .skins
+        .push(os::companion::skins::Choice {
+            id: "default".into(),
+            name: "鸣潮 · 心月狐团子".into(),
+        });
+    ui.mark_dirty();
+    run(&mut ui, &mut app, 100);
+    unsafe {
+        assert!(label(sys::lv_screen_active(), "鸣潮 · 心月狐团子").is_some());
+        assert!(label(sys::lv_screen_active(), "安装团子形象后可在这里切换").is_none());
+    }
     ui.unmount();
     drop(ui);
     unsafe {

@@ -60,7 +60,8 @@ NAND 未挂载时默认退出，只有显式增加 `--format-nand` 才会格式�
 无线 OTA 只取独立应用 BIN，保留已有 NAND 资源；需要更新团子资源时使用 ZIP 内的
 USB 安装器。心月狐也通过独立包交付；Lua 应用可通过独立 bundle 写入 Data，作为 system 同 ID 应用的更新。
 首次从 system 心月狐迁移时，缺少 NAND `default` 包会显示虚影；补装后重新加载或重启恢复。
-已有选择记录不改写，旧 system 中的完整皮肤不再读取，`placeholder` 可在设置中单独选择。
+已有选择记录不改写，旧 system 中的完整皮肤不再读取；内置 `placeholder` 用于资源缺失时兜底，
+不出现在设置的团子候选列表中。
 
 两个 ZIP 都包含 `applications/<id>/`、`ui-fonts/` 和对应哈希清单。`install.py` 默认保留
 Data 应用，带 `--update-apps` 才替换同 ID 更新并保留存档。`bundle-push` 可只上传单个

@@ -45,11 +45,9 @@ pub struct Choice {
 }
 /// Lightweight catalog: opening Settings reads names, never every image blob.
 /// Full validation remains part of selecting and loading one resource.
+/// The built-in placeholder is a missing-resource fallback, not a character choice.
 pub fn choices(v: &mut Vfs) -> Result<Vec<Choice>, String> {
-    let mut choices = alloc::vec![Choice {
-        id: PLACEHOLDER_ID.into(),
-        name: PLACEHOLDER_NAME.into()
-    }];
+    let mut choices = Vec::new();
     let entries = match v.read_dir(ROOT) {
         Ok(entries) => entries,
         Err(Errno::NOENT) => return Ok(choices),
@@ -88,7 +86,7 @@ pub fn choices(v: &mut Vfs) -> Result<Vec<Choice>, String> {
         "black-blue" => 3,
         _ => 4,
     };
-    choices[1..].sort_by(|a, b| {
+    choices.sort_by(|a, b| {
         order(&a.id)
             .cmp(&order(&b.id))
             .then_with(|| a.id.cmp(&b.id))
@@ -382,7 +380,7 @@ mod tests {
         assert_eq!(fallback.id, PLACEHOLDER_ID);
         assert_eq!(pixels(fallback.skin), pixels(Skin::builtin()));
         assert_eq!(selected(&mut v).unwrap(), "default");
-        assert_eq!(choices(&mut v).unwrap().len(), 1);
+        assert!(choices(&mut v).unwrap().is_empty());
         assert!(select(&mut v, "default").is_err());
 
         install(&mut v, "default", 0);
@@ -390,11 +388,11 @@ mod tests {
         assert_eq!(loaded.id, "default");
         assert_ne!(pixels(loaded.skin), pixels(Skin::builtin()));
         let catalog = choices(&mut v).unwrap();
-        assert_eq!(catalog[0].id, PLACEHOLDER_ID);
         assert_eq!(
-            (catalog[1].id.as_str(), catalog[1].name.as_str()),
+            (catalog[0].id.as_str(), catalog[0].name.as_str()),
             ("default", DEFAULT_NAME)
         );
+        assert_eq!(catalog.len(), 1);
         assert_eq!(list(&mut v).unwrap(), "skin-ls placeholder default");
 
         // An explicitly selected placeholder stays selected after installing
@@ -438,7 +436,6 @@ mod tests {
                 .map(|c| (c.id.as_str(), c.name.as_str()))
                 .collect::<Vec<_>>(),
             [
-                (PLACEHOLDER_ID, PLACEHOLDER_NAME),
                 ("default", "鸣潮 · 心月狐团子"),
                 ("eclipse", "玄灵 · 月蚀"),
                 ("normal", "玄灵 · 常态"),
@@ -488,7 +485,7 @@ mod tests {
         let catalog = choices(&mut v).unwrap();
         assert_eq!(
             catalog.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
-            [PLACEHOLDER_NAME, "玄灵 · 月蚀", "玄灵 · 常态", "智谱团子"]
+            ["玄灵 · 月蚀", "玄灵 · 常态", "智谱团子"]
         );
         select(&mut v, "normal").unwrap();
         assert_eq!(selected(&mut v).unwrap(), "normal");

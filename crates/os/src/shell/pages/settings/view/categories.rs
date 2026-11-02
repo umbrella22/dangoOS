@@ -22,7 +22,13 @@ pub(super) fn view(hub: &Hub, session: &Session) -> View<AppMsg> {
                     .iter()
                     .find(|choice| choice.id == session.selected_skin)
                     .map(|choice| choice.name.as_str())
-                    .unwrap_or("读取中")
+                    .unwrap_or(
+                        if session.selected_skin == crate::companion::skins::PLACEHOLDER_ID {
+                            crate::companion::skins::PLACEHOLDER_NAME
+                        } else {
+                            "读取中"
+                        }
+                    )
             ),
             AppMsg::SettingsPage(Page::Character),
         ))
