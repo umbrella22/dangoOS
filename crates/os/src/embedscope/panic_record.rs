@@ -28,7 +28,7 @@ mod tests {
 
     #[test]
     fn marker_preserves_the_recorded_build_including_maximum_utf8_bytes() {
-        let maximum = format!("{}x", "界".repeat(21));
+        let maximum = format!("{}x", "\u{754c}".repeat(21));
         assert_eq!(maximum.len(), 64);
         for build in ["dango-0.4.0+escope.old", maximum.as_str()] {
             let mut text = String::new();

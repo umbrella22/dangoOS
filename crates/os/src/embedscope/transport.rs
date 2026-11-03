@@ -72,6 +72,7 @@ async fn receive(rx: &mut Receiver<'static, Driver<'static>>) {
     let mut packet = [0; 512];
     loop {
         rx.wait_connection().await;
+        connection(rx.dtr());
         if !connected() || !rx.dtr() {
             Timer::after_millis(5).await;
             continue;
@@ -88,6 +89,18 @@ async fn receive(rx: &mut Receiver<'static, Driver<'static>>) {
             }
             Either::Second(()) => continue,
         };
+        // DTR can change while read_packet is pending. Fence the bytes using
+        // the current control state, before decoding the first new Hello.
+        // Otherwise that Hello is discarded with the previous epoch and the
+        // host has no response to continue the handshake.
+        connection(rx.dtr());
+        if current != epoch() {
+            decoder = FrameDecoder::new();
+            current = epoch();
+        }
+        if !connected() {
+            continue;
+        }
         for &byte in &packet[..count] {
             if let Some(Ok(frame)) = decoder.push(byte) {
                 let mut item = WireFrame {
