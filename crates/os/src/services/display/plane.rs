@@ -236,13 +236,26 @@ async fn run_plane(
 ) {
     info!("plane: fixed canvas path ready");
 
+    #[cfg(feature = "embedscope")]
+    let mut final_capture = crate::embedscope::FinalCapture::new();
     let mut applied_brightness: Option<u8> = None;
     let mut sleeping = false;
     let mut full_after_wake = false;
     let mut restored_cycle = 0;
 
     loop {
-        let mut job = match select(POWER_REQUEST.wait(), display.next_job()).await {
+        #[cfg(feature = "embedscope")]
+        let next = select(
+            POWER_REQUEST.wait(),
+            select(
+                crate::embedscope::FinalCapture::request(),
+                display.next_job(),
+            ),
+        )
+        .await;
+        #[cfg(not(feature = "embedscope"))]
+        let next = select(POWER_REQUEST.wait(), display.next_job()).await;
+        let mut job = match next {
             Either::First(sleep) => {
                 // Return every queued canvas lease before acknowledging standby.
                 JOBS.reset();
@@ -267,7 +280,15 @@ async fn run_plane(
                 POWER_DONE.signal(result.is_ok());
                 continue;
             }
+            #[cfg(not(feature = "embedscope"))]
             Either::Second(job) => job,
+            #[cfg(feature = "embedscope")]
+            Either::Second(Either::First(request)) => {
+                final_capture.serve(request);
+                continue;
+            }
+            #[cfg(feature = "embedscope")]
+            Either::Second(Either::Second(job)) => job,
         };
         if sleeping {
             continue;
@@ -280,6 +301,8 @@ async fn run_plane(
         if !job.urgent {
             let _ = select(te.wait_for_rising_edge(), Timer::after(TE_TIMEOUT)).await;
         }
+        #[cfg(feature = "embedscope")]
+        let upload_started = embassy_time::Instant::now();
         let mut completed = true;
 
         let (canvas_w, canvas_h) = job.size;
@@ -381,6 +404,85 @@ async fn run_plane(
                 )
                 .await;
             }
+        }
+
+        #[cfg(feature = "embedscope")]
+        if completed {
+            // Copy while the original leases still protect every source, then
+            // release them normally. USB capture never retains those leases.
+            if job.clear_outside {
+                final_capture.clear_outside((origin_x, origin_y), job.size);
+            }
+            let source = match &job.canvas {
+                Frame::Pool(lease) => {
+                    use crate::companion::{render, status};
+                    final_capture.blit(
+                        &lease.pixels()[..render::PIXELS],
+                        canvas_w as usize,
+                        area,
+                        (origin_x + area.x0, origin_y + area.y0),
+                    );
+                    let at = (
+                        (i32::from(origin_x) + status::OFFSET.0) as u16,
+                        (i32::from(origin_y) + status::OFFSET.1) as u16,
+                    );
+                    final_capture.blit(
+                        &lease.pixels()[render::PIXELS..],
+                        status::WIDTH,
+                        DirtyRect {
+                            x0: 0,
+                            y0: 0,
+                            x1: status::WIDTH as u16 - 1,
+                            y1: status::HEIGHT as u16 - 1,
+                        },
+                        at,
+                    );
+                    "Home"
+                }
+                Frame::Screen(lease) => {
+                    final_capture.blit(
+                        lease.pixels(),
+                        canvas_w as usize,
+                        area,
+                        (origin_x + area.x0, origin_y + area.y0),
+                    );
+                    "Screen"
+                }
+                Frame::Slide {
+                    new,
+                    old,
+                    direction,
+                    offset,
+                } => {
+                    let (bands, count) = transition::bands(*direction, *offset, WIDTH as u16);
+                    for band in bands.iter().take(count).flatten() {
+                        let pixels = match band.source {
+                            Source::New => new.pixels(),
+                            Source::Old => old.pixels(),
+                        };
+                        final_capture.blit(
+                            pixels,
+                            WIDTH,
+                            DirtyRect {
+                                x0: band.src_x,
+                                y0: 0,
+                                x1: band.src_x + band.width - 1,
+                                y1: HEIGHT as u16 - 1,
+                            },
+                            (band.dst_x, 0),
+                        );
+                    }
+                    "Slide"
+                }
+            };
+            final_capture.complete(
+                upload_started
+                    .elapsed()
+                    .as_millis()
+                    .max(1)
+                    .min(u32::MAX as u64) as u32,
+                source,
+            );
         }
 
         crate::services::power::button_task::frame_uploaded(job.shutdown_sleep, completed);

@@ -72,6 +72,8 @@ impl log::Log for UsbLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
+        #[cfg(feature = "embedscope")]
+        crate::embedscope::record(record);
         let mut line = LogLine::new();
         let _ = write!(line, "[{}] {}", record.level(), record.args());
         let _ = LOG_CHANNEL.try_send(line.finish());

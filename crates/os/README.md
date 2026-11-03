@@ -77,6 +77,32 @@ OTA 输入必须是已经生成并验证的固件 BIN。下载模式恢复入口
 `scripts/device/flash.sh --rom-recovery-slot0 <PORT>`；该入口只写 slot 0，并保留
 已有启动选择。常规升级流程见 [USB OTA](../../docs/ota/usb-update.md)。
 
+## 可选 EmbedScope 调试
+
+`embedscope` 默认关闭。适配器使用 EmbedScope SDK，复用系统的
+LVGL 9.6 / rs_lvgl 0.3.1。
+
+```sh
+# release 诊断固件：独立的第二路 CDC、Agent、日志、树、显示捕获和输入
+cargo fw --features embedscope
+
+# release 正常固件：不包含 EmbedScope
+cargo fw
+```
+
+在开发、设备验收和问题复现时显式开启；正式交付省略该 feature。
+`cargo fw` 已包含 `--release`，优化 profile 不会移除已经启用的诊断。
+features 会合并，正式构建不要使用 `--all-features`。
+构建命令不更新设备；安装并启动关闭诊断的新镜像后，诊断 CDC 才会消失。
+
+诊断固件保留原控制台、应用管理和 OTA，第二路 CDC 传输二进制帧。
+用 `escope --json devices` 枚举实际接口，连接第二路并使用 `--dtr on`。
+树请求在 UI 线程处理；截图是最后完成的最终显示提交，覆盖 Home、Screen
+和 Slide；输入经过系统触摸队列。堆最低水位缺测返回 `null`。
+
+接入、端口选择与调试步骤见
+[EmbedScope 团子 OS 指南](https://umbrella22.github.io/EmbedScope_website/integration/dango.html)。
+
 ## 控制台
 
 设备 USB-C 连接 USB-OTG HS。固件在 `USB_HS` 上枚举 CDC-ACM，并安装唯一的

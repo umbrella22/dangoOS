@@ -9,7 +9,13 @@ use esp_hal::system::Cpu;
 
 // Replaces the 8 KiB bt_lifecycle thread as well as hosting storage/encoding.
 // Net internal stack cost is 8 KiB. The UI retains its own 40 KiB on Core1.
+#[cfg(not(feature = "embedscope"))]
 pub const STACK_BYTES: usize = 16 * 1024;
+// The optional second CDC adds framing and USB calls to this same thread.
+// Physical startup testing exceeded the original 16 KiB stack during mount.
+// Reserve 16 KiB more Internal heap; the main/IRQ and Core1 budgets are separate.
+#[cfg(feature = "embedscope")]
+pub const STACK_BYTES: usize = 32 * 1024;
 static READY: Signal<CriticalSectionRawMutex, SendSpawner> = Signal::new();
 type Job = Box<dyn FnOnce() + Send>;
 static JOBS: Channel<CriticalSectionRawMutex, Job, 4> = Channel::new();

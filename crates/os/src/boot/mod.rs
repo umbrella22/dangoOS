@@ -65,6 +65,8 @@ pub async fn run(spawner: Spawner) {
     // request Internal capability from this heap plus the reclaimed region.
     esp_alloc::heap_allocator!(size: 160 * 1024);
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
+    #[cfg(feature = "embedscope")]
+    crate::embedscope::init();
 
     // The flash file systems are mounted once USB is up (see the end), so a
     // failure there shows up on the console.
@@ -380,7 +382,10 @@ async fn usb_task(
     // The board does not expose USB-Serial-JTAG on that connector, so this
     // is the only log path.
     let usb = Usb::new_hs(usb_hs);
+    #[cfg(not(feature = "embedscope"))]
     let ep_out_buffer = make_static!([u8; 1024], [0u8; 1024]);
+    #[cfg(feature = "embedscope")]
+    let ep_out_buffer = make_static!([u8; 2048], [0u8; 2048]);
     let driver = Driver::new(usb, ep_out_buffer, UsbDriverConfig::default());
 
     let mut usb_config = embassy_usb::Config::new(0x303A, 0x4001);
@@ -389,7 +394,10 @@ async fn usb_task(
     usb_config.product = Some("Mosaico S31 R1 console");
     usb_config.serial_number = Some("mosaico-s31-r1");
 
+    #[cfg(not(feature = "embedscope"))]
     let config_descriptor = make_static!([u8; 256], [0u8; 256]);
+    #[cfg(feature = "embedscope")]
+    let config_descriptor = make_static!([u8; 512], [0u8; 512]);
     let bos_descriptor = make_static!([u8; 256], [0u8; 256]);
     let control_buf = make_static!([u8; 64], [0u8; 64]);
     let cdc_state = make_static!(State<'static>, State::new());
@@ -406,14 +414,25 @@ async fn usb_task(
     // High-speed CDC requires a 512-byte packet size.
     let class = CdcAcmClass::new(&mut builder, cdc_state, 512);
     let (mut tx, mut rx) = class.split();
+    // App push/OTA stays on interfaces 0/1. Diagnostics uses its own 2/3.
+    #[cfg(feature = "embedscope")]
+    let scope_state = make_static!(State<'static>, State::new());
+    #[cfg(feature = "embedscope")]
+    let scope_class = CdcAcmClass::new(&mut builder, scope_state, 512);
     let mut usb_device = builder.build();
+    let storage = mount_storage(flash);
+    #[cfg(feature = "embedscope")]
+    let background =
+        embassy_futures::join::join(storage, crate::embedscope::transport::run(scope_class));
+    #[cfg(not(feature = "embedscope"))]
+    let background = storage;
 
     info!("USB-OTG HS CDC console starting (512-byte packets, app push)");
     join4(
         usb_device.run(),
         console::pump(&mut tx),
         console::receive(&mut rx),
-        mount_storage(flash),
+        background,
     )
     .await;
 }

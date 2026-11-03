@@ -17,6 +17,8 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use log::{info, warn};
 
 const MAGIC: u32 = 0x4D53_5031; // "MSP1"
+#[cfg(feature = "embedscope")]
+const SCOPE_MAGIC: u32 = 0x4553_4332; // "ESC2": metadata bound to a text marker.
 
 const TEXT: usize = 248;
 
@@ -29,6 +31,14 @@ struct Record {
     /// The [`Stage`] the panic happened in.
     stage: u32,
     text: [u8; TEXT],
+    #[cfg(feature = "embedscope")]
+    scope_magic: u32,
+    #[cfg(feature = "embedscope")]
+    scope_build: [u8; 64],
+    #[cfg(feature = "embedscope")]
+    scope_build_len: u32,
+    #[cfg(feature = "embedscope")]
+    scope_boot: u32,
 }
 
 // SAFETY: only integers and byte arrays; any bit pattern is a valid Record
@@ -42,6 +52,14 @@ static mut RECORD: Record = Record {
     count: 0,
     stage: 0,
     text: [0; TEXT],
+    #[cfg(feature = "embedscope")]
+    scope_magic: 0,
+    #[cfg(feature = "embedscope")]
+    scope_build: [0; 64],
+    #[cfg(feature = "embedscope")]
+    scope_build_len: 0,
+    #[cfg(feature = "embedscope")]
+    scope_boot: 0,
 };
 
 /// Boot steps that [`skip`] can leave out.
@@ -118,6 +136,9 @@ fn panic(info: &PanicInfo) -> ! {
         buf: &mut rec.text,
         len: 0,
     };
+    #[cfg(feature = "embedscope")]
+    let _ =
+        crate::embedscope::panic_record::write_marker(&mut sink, env!("DANGO_EMBEDSCOPE_BUILD_ID"));
     // The message first (it carries the PC for CPU exceptions), then the
     // location without its long directory part.
     let _ = write!(sink, "{}", info.message());
@@ -128,6 +149,14 @@ fn panic(info: &PanicInfo) -> ! {
     rec.len = sink.len as u32;
     rec.count = count;
     rec.stage = CURRENT.load(Ordering::Relaxed);
+    #[cfg(feature = "embedscope")]
+    {
+        let build = env!("DANGO_EMBEDSCOPE_BUILD_ID").as_bytes();
+        rec.scope_build[..build.len()].copy_from_slice(build);
+        rec.scope_build_len = build.len() as u32;
+        rec.scope_boot = DIAGNOSTIC_BOOT.load(Ordering::Relaxed);
+        rec.scope_magic = SCOPE_MAGIC;
+    }
     rec.magic = MAGIC;
     esp_hal::system::software_reset()
 }
@@ -139,6 +168,8 @@ pub fn report_last_boot() {
     // SAFETY: called once at boot, before any other task runs.
     let rec = unsafe { &mut *addr_of_mut!(RECORD) };
     if rec.magic == MAGIC {
+        #[cfg(feature = "embedscope")]
+        save_diagnostic(rec);
         let len = (rec.len as usize).min(TEXT);
         let text = core::str::from_utf8(&rec.text[..len]).unwrap_or("<not UTF-8>");
         PANICKED.store(true, Ordering::Relaxed);
@@ -166,5 +197,71 @@ pub fn report_last_boot() {
     } else {
         info!("[boot] reset {reason:?}");
         rec.count = 0;
+    }
+    // Never leave an attribution tail for an older firmware to inherit.
+    #[cfg(feature = "embedscope")]
+    {
+        rec.scope_magic = 0;
+        rec.scope_build_len = 0;
+        rec.scope_boot = 0;
+    }
+}
+
+#[cfg(feature = "embedscope")]
+static DIAGNOSTIC_BOOT: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "embedscope")]
+struct DiagnosticCrash {
+    present: bool,
+    message: [u8; TEXT],
+    len: usize,
+    build: [u8; 64],
+    build_len: usize,
+    boot_id: u32,
+}
+#[cfg(feature = "embedscope")]
+static mut DIAGNOSTIC_CRASH: DiagnosticCrash = DiagnosticCrash {
+    present: false,
+    message: [0; TEXT],
+    len: 0,
+    build: [0; 64],
+    build_len: 0,
+    boot_id: 0,
+};
+#[cfg(feature = "embedscope")]
+pub(crate) fn set_diagnostic_boot(id: u32) {
+    DIAGNOSTIC_BOOT.store(id, Ordering::Relaxed);
+}
+#[cfg(feature = "embedscope")]
+fn save_diagnostic(record: &Record) {
+    // report_last_boot is the sole writer, before either executor starts.
+    let saved = unsafe { &mut *core::ptr::addr_of_mut!(DIAGNOSTIC_CRASH) };
+    saved.present = true;
+    saved.len = (record.len as usize).min(TEXT);
+    saved.message[..saved.len].copy_from_slice(&record.text[..saved.len]);
+    saved.build_len = 0;
+    saved.boot_id = 0;
+    let build_len = record.scope_build_len as usize;
+    if record.scope_magic == SCOPE_MAGIC
+        && build_len <= record.scope_build.len()
+        && crate::embedscope::panic_record::matches_build(
+            &record.text[..saved.len],
+            &record.scope_build[..build_len],
+        )
+    {
+        saved.build_len = build_len;
+        saved.build[..saved.build_len].copy_from_slice(&record.scope_build[..saved.build_len]);
+        saved.boot_id = record.scope_boot;
+    }
+}
+#[cfg(feature = "embedscope")]
+pub(crate) fn diagnostic_summary() -> escope_protocol::CrashInfo<'static> {
+    // Immutable after report_last_boot completed, before tasks were spawned.
+    let saved = unsafe { &*core::ptr::addr_of!(DIAGNOSTIC_CRASH) };
+    escope_protocol::CrashInfo {
+        present: saved.present,
+        reason: if saved.present { "panic" } else { "none" },
+        build_id: core::str::from_utf8(&saved.build[..saved.build_len]).unwrap_or("unknown"),
+        message: core::str::from_utf8(&saved.message[..saved.len]).unwrap_or("<not UTF-8>"),
+        boot_id: saved.boot_id,
     }
 }

@@ -212,8 +212,26 @@ pub async fn ui_task(mut plane: PlaneUi) {
     // The next fox frame must clear what the previous page left around it.
 
     let mut standby = crate::services::power::coordinator::Coordinator::new();
+    #[cfg(feature = "embedscope")]
+    let mut diagnostics = crate::embedscope::UiAgent::new();
+    #[cfg(feature = "embedscope")]
+    ui.set_diagnostic_sink(Some(Rc::new(|event| {
+        if matches!(
+            event,
+            rs_lvgl_ui::DiagnosticEvent::Error { .. }
+                | rs_lvgl_ui::DiagnosticEvent::IgnoredProperty(_)
+        ) {
+            warn!(target: "rs_lvgl_ui.diagnostic", "{event:?}");
+        }
+    })));
 
     loop {
+        #[cfg(feature = "embedscope")]
+        diagnostics.poll(
+            &ui,
+            app.page(),
+            buttons::low_battery_requested() || crate::services::update::ota::device::pauses_ui(),
+        );
         // Native controller/host lifecycle calls can preempt this thread for
         // longer than a resident Lua callback's wall deadline. Acknowledge only
         // here, after the preceding callback finished, then retain its VM state

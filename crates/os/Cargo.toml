@@ -18,12 +18,17 @@ firmware = []
 dual-core-ui = []
 # Opt-in native UI diagnostics, strict properties and update metrics.
 ui-validation = ["rs_lvgl_ui/diagnostics", "rs_lvgl_ui/strict-properties", "rs_lvgl_ui/update-metrics"]
+# Independent binary CDC, UI-thread Agent and final-plane capture.
+embedscope = ["dep:escope-protocol", "dep:escope-agent", "dep:escope-lvgl", "rs_lvgl_ui/diagnostics"]
 
 [[test]]
 name = "ui_reliability"
 required-features = ["ui-validation"]
 
 [dependencies]
+escope-protocol = { version = "0.1.0", optional = true }
+escope-agent = { version = "0.1.0", optional = true }
+escope-lvgl = { version = "0.1.0", features = ["native"], optional = true }
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 sha2 = { version = "0.10", default-features = false }
 md-5 = { version = "0.10", default-features = false }
@@ -78,6 +83,7 @@ rlsf = { version = "0.2", features = ["unstable"] }
 # Exercise the firmware runner with real DHCP and a manually advanced clock.
 embassy-net = { version = "0.8", default-features = false, features = ["dhcpv4", "medium-ethernet", "tcp", "udp", "dns"] }
 embassy-time = { version = "0.5", features = ["mock-driver", "generic-queue-8"] }
+embassy-sync = "0.8"
 critical-section = { workspace = true, features = ["std"] }
 
 [[bin]]

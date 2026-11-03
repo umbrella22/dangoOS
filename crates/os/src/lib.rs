@@ -9,6 +9,8 @@ pub mod apps;
 pub mod boot;
 pub mod companion;
 pub mod console;
+#[cfg(feature = "embedscope")]
+pub mod embedscope;
 pub mod formats;
 pub mod platform;
 pub mod services;

@@ -65,6 +65,13 @@ fn publish(event: TouchEvent) {
     }
 }
 
+/// Reset must deliver release even when the physical-input queue is full.
+#[cfg(feature = "embedscope")]
+pub(crate) fn inject_release(event: TouchEvent) {
+    debug_assert!(!event.pressed);
+    publish(event);
+}
+
 /// 等待 GPIO6 下降沿或 5 ms 回退定时器，然后读取一份 CST9220 报告。
 ///
 /// 每次有效报告都会进入 [`INPUT`]，由 UI 侧按顺序处理。
