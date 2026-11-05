@@ -104,7 +104,7 @@ pub(crate) fn switch(key: &'static str, on: bool, msg: fn(bool) -> AppMsg) -> Vi
             Style::default().background(ACCENT),
         )
         .part_style(Part::Knob, Style::default().background(TEXT))
-        .on_value_changed(move |v| msg(v != 0))
+        .on_toggle(msg)
 }
 
 pub(crate) fn fit_text(name: &str, max: u32) -> String {

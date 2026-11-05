@@ -89,7 +89,8 @@ OTA 输入必须是已经生成并验证的固件 BIN。下载模式恢复入口
 ## 可选 EmbedScope 调试
 
 `embedscope` 默认关闭。适配器使用 EmbedScope SDK，复用系统的
-LVGL 9.6 / rs_lvgl 0.4.0。
+LVGL 9.6 / rs_lvgl 0.5.0。应用的 `TreeSource` 在 UI 线程采集原生对象；
+`escope-lvgl` 使用默认 feature 集，原生 LVGL 统一由 `rs_lvgl_sys` 提供。
 
 ```sh
 # release 诊断固件：独立的第二路 CDC、Agent、日志、树、显示捕获和输入

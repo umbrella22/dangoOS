@@ -2,6 +2,14 @@
 
 ## 未发布
 
+## v0.4.2 — 2026-11-06
+
+- 将 rs_lvgl、rs_lvgl_ui、rs_lvgl_sys 和 rs_lvgl_codegen 统一升级至 crates.io 的 0.5.0，继续使用 LVGL 9.6。
+- 设置开关使用 `on_toggle(bool)` 直接传递选中状态，沿用现有消息处理和状态回写。
+- EmbedScope 使用应用已有的 `TreeSource`，移除未使用的旧版原生适配器 feature；普通固件和可选诊断构建均由同一套 rs_lvgl_sys 提供原生 LVGL。
+
+沿用双 6 MiB A/B 与独立 NAND 布局，从 v0.4.0 / v0.4.1 升级无需重新分区。安装方式与验证范围见 [v0.4.2 发布说明](scripts/release/notes/v0.4.2.md)。
+
 ## v0.4.1 — 2026-11-05
 
 - 升级至 rs_lvgl / rs_lvgl_ui 0.4.0，适配 `App::Action` 和新版样式接口；EmbedScope 相关依赖同步至 0.2.0，共用一套原生 LVGL。
