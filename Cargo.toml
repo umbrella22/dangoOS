@@ -1,22 +1,24 @@
 [workspace]
 # Device runtime components and the host-side application packaging tool.
-members = ["crates/os", "crates/lua-engine", "crates/fs", "tools/app-pack"]
+members = ["crates/os", "crates/lua-engine", "crates/app-host", "crates/fs", "tools/app-pack", "tests/benchmarks/script-engines/runner"]
 resolver = "2"
 exclude = ["vendor/embassy-usb-synopsys-otg", "vendor/esp-wifi-sys-esp32s31", "vendor/esp-radio", "vendor/esp-radio-rtos-driver", "vendor/esp-bluedroid", "vendor/esp-alloc"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 authors = ["umbrella22", "Claude", "GLM"]
 
 [workspace.dependencies]
+# Share one published engine revision between the OS and host benchmark runner.
+ts-engine = { package = "embedts-engine", git = "https://github.com/umbrella22/EmbedTypescript.git", rev = "98eaf67207874467eaffcc725780ed319f65a5ee", default-features = false }
 # Published LVGL bindings, used directly by their package names.
 # Upgrade both packages together; Cargo.lock records the resolved versions.
-rs_lvgl = { version = "0.3.1", default-features = false, features = [
+rs_lvgl = { version = "0.4.0", default-features = false, features = [
     "alloc",
     "unsafe_no_autoinit",
 ] }
-rs_lvgl_ui = { version = "0.3.1", default-features = false, features = [
+rs_lvgl_ui = { version = "0.4.0", default-features = false, features = [
     "alloc",
     "no-autoinit",
     # Native hub controls, Lua images/dialogs and the fox/splash canvases.

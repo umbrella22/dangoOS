@@ -251,6 +251,9 @@ fn aliases_share_descriptors_and_atomic_rename_without_double_mounting() {
     assert_eq!(&buf, b"same media");
     assert_eq!(v.read_file("/data/shared.bin").unwrap(), buf);
     assert_eq!(v.space("/nand"), v.space("/data"));
-    assert_eq!(v.rename("/nand/shared.bin", "/system/shared.bin"), Err(Errno::XDEV));
+    assert_eq!(
+        v.rename("/nand/shared.bin", "/system/shared.bin"),
+        Err(Errno::XDEV)
+    );
     assert!(v.read_dir("/").unwrap().iter().any(|e| e.name == "nand"));
 }

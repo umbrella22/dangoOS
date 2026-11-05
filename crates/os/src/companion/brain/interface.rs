@@ -1,6 +1,6 @@
 //! Typed/raw callback inputs and staged expression, visual, haptic and LED output.
 use crate::companion::behavior::{
-    affect::{EventKind, HapticPattern, SensorEvent, SystemCommand},
+    affect::{EventKind, HapticPattern, SystemCommand},
     Expression,
 };
 use crate::{companion::render::FoxPose, FoxVisual};
@@ -85,40 +85,8 @@ pub fn expression(name: &str) -> Option<Expression> {
         .position(|n| *n == name)
         .map(|i| Expression::ALL[i])
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Output {
-    pub expression: Expression,
-    pub visual: FoxVisual,
-    pub play: Option<(FoxPose, u64)>,
-    pub haptic: Option<HapticPattern>,
-    pub command: Option<SystemCommand>,
-    pub leds: Option<[[u8; 3]; 6]>,
-}
-impl Default for Output {
-    fn default() -> Self {
-        Self {
-            expression: Expression::Idle,
-            visual: FoxVisual::IDLE,
-            play: None,
-            haptic: None,
-            command: None,
-            leds: None,
-        }
-    }
-}
-/// Commands generated internally; raw JSON remains the public compatibility path.
-#[derive(Clone, Copy, Debug)]
-pub(super) enum Input {
-    Tick(u64),
-    Sensor(SensorEvent),
-    Pointer(crate::companion::behavior::personality::PointerSample),
-    Interaction(u64),
-    IgnoreTouch(u64),
-}
-pub(super) enum Inbox {
-    Raw(String),
-    Typed(Input),
-}
+pub(super) use super::input::{Inbox, Input};
+pub use super::output::Output;
 pub(super) struct BrainHost {
     pub(super) inbox: Option<Inbox>,
     pub(super) response: Option<String>,

@@ -115,14 +115,18 @@ mod tests {
     }
     #[test]
     fn native_and_lua_expire_connection_edges_at_four_seconds_without_replaying_them() {
-        for lua in [false, true] {
+        for lua in [false, true]
+            .into_iter()
+            .filter(|lua| cfg!(feature = "lua-engine") || !lua)
+        {
             let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
+            #[cfg(feature = "lua-engine")]
             if lua {
                 runtime
                     .enable_brain(
                         crate::companion::brain::DEFAULT_SOURCE,
                         0,
-                        &lua_engine::GLOBAL_ALLOCATOR,
+                        &app_host::GLOBAL_ALLOCATOR,
                         None,
                     )
                     .unwrap();
@@ -222,7 +226,10 @@ mod tests {
     }
     #[test]
     fn quiet_ticks_expire_each_link_expression_without_another_service_event() {
-        for lua in [false, true] {
+        for lua in [false, true]
+            .into_iter()
+            .filter(|lua| cfg!(feature = "lua-engine") || !lua)
+        {
             for (kind, expression) in [
                 (
                     EventKind::NetworkConnection(true),
@@ -242,12 +249,13 @@ mod tests {
                 ),
             ] {
                 let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
+                #[cfg(feature = "lua-engine")]
                 if lua {
                     runtime
                         .enable_brain(
                             crate::companion::brain::DEFAULT_SOURCE,
                             0,
-                            &lua_engine::GLOBAL_ALLOCATOR,
+                            &app_host::GLOBAL_ALLOCATOR,
                             None,
                         )
                         .unwrap();

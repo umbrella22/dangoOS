@@ -1,0 +1,137 @@
+{
+  "format": "embedts-artifacts-v1",
+  "producer": "embedts-builder",
+  "version": "0.1.0",
+  "typescript": "7.1.0-beta",
+  "tsrs_commit": "77d3cddb44540734abc33a42ccca4d3f33bee527",
+  "engine_id": "ee250cff0a7d84a7ad12e21fcf380fe1ae3d85c60f1e75ea6f151bb809518eef",
+  "host_abi": 3,
+  "artifacts": [
+    {
+      "source": "examples/brain/default.ts",
+      "source_sha256": "00cbb379cd77cf9afe824dcd090b8cbda5094a171d03453595f94a6e5b2ba889",
+      "path": "brain/default.etb.hex",
+      "bytes": 48753,
+      "sha256": "918f61ef3cf97b2a490743aa1bba5b9d297a3666ff928887dbc2f5e9d0e897c2"
+    },
+    {
+      "source": "tests/fixtures/dangoos/brain-angry.mjs",
+      "source_sha256": "188aca0d99029c66fd5f73e60e7e1f039d1ebf3590e2f1cf88375cb64e0dc7c6",
+      "path": "fixtures/brain-angry.etb",
+      "bytes": 336,
+      "sha256": "d2da6eeaccec2a017938bfd293035e72f4b58213016e8bfa7b6f098d111909f6"
+    },
+    {
+      "source": "tests/fixtures/dangoos/brain-bad-first.mjs",
+      "source_sha256": "250f591e7bed61ac5f9a352230ce81638f4fe1e05c887be4cc4ee4104c9eb98d",
+      "path": "fixtures/brain-bad-first.etb",
+      "bytes": 246,
+      "sha256": "973faaf3d33b308a5c29618b3e4acdeda57a33ff912116f8b654ecb39c990643"
+    },
+    {
+      "source": "tests/fixtures/dangoos/brain-forbidden.mjs",
+      "source_sha256": "3eca5caf9a78a35df409b79911f066a1559258f75ef678159f626cb603cee00a",
+      "path": "fixtures/brain-forbidden.etb",
+      "bytes": 241,
+      "sha256": "9b1f2b524854815a343b2ad78cafa3afe6a53af12594b3ecaad9b36dab4ac72d"
+    },
+    {
+      "source": "tests/fixtures/dangoos/brain-happy.mjs",
+      "source_sha256": "e369c93c1adaf21475123680a5acb119349467e953e9faed3fcdd7bae1206766",
+      "path": "fixtures/brain-happy.etb",
+      "bytes": 336,
+      "sha256": "7d421f28fd730322505f393c310d2e2c08dd01e5f9d6a5571a491f5e4d809cb6"
+    },
+    {
+      "source": "tests/fixtures/dangoos/brain-later-fault.mjs",
+      "source_sha256": "b70d59f3f3747f2b5f21b81e6455580faf368ec747b37775a9038d04c68265f6",
+      "path": "fixtures/brain-later-fault.etb",
+      "bytes": 343,
+      "sha256": "7f1e0d1c6ecdbc67f4b80e94891ba4bcd1dc11daf8c8bee029ef52c213cdcf7a"
+    },
+    {
+      "source": "tests/fixtures/dangoos/brain-loop.mjs",
+      "source_sha256": "1cbcdf8bb5b547682ce486e6c9a9e603946e131a02d37dfc5c3d2de9cfa64358",
+      "path": "fixtures/brain-loop.etb",
+      "bytes": 174,
+      "sha256": "06375cf6a36ba68a275a94c900732d43d13f5e9822bd8ee107cce9e2eee68a0f"
+    },
+    {
+      "source": "tests/fixtures/dangoos/host-request.mjs",
+      "source_sha256": "34ce28b474cf180a581e7e3267f89c03e49746cd70328250f83b6fff9da1f287",
+      "path": "fixtures/host-request.etb",
+      "bytes": 365,
+      "sha256": "9cc905cb444a2d80f29a386c99aa4cfdff0c39f46f29af6e37936c81d81c57be"
+    },
+    {
+      "source": "tests/fixtures/dangoos/memory-churn.mjs",
+      "source_sha256": "93dfee44eeb60748a745539c538eb66d0a3de569d87c303f237e9411b63b15f7",
+      "path": "fixtures/memory-churn.etb",
+      "bytes": 730,
+      "sha256": "909038a4c58c1e2a23a27fd2a39eb71caa4be2f2d061d52d9147e4a0c287968f"
+    },
+    {
+      "source": "tests/fixtures/dangoos/memory-resident.mjs",
+      "source_sha256": "474a8d6bdce088ebd173e4bb72af382588154b1228c70ca9c1b2f5dc870eee67",
+      "path": "fixtures/memory-resident.etb",
+      "bytes": 745,
+      "sha256": "3401cfb05d34ce357333a5aed65de3e464f5a8fbc948f549e22b16e07dce7d38"
+    },
+    {
+      "source": "tests/fixtures/dangoos/scheduling-zero-sleep.mjs",
+      "source_sha256": "f6d99ca11a5467e1189ad82364c5a7c6b8d88a9af3cfbe476ec2f9b6b39bf324",
+      "path": "fixtures/scheduling-zero-sleep.etb",
+      "bytes": 280,
+      "sha256": "5749bdd32afc5d82c3b583cb45251c937dd8c209af7ecd1bdfe65f1086705fd6"
+    },
+    {
+      "source": "tests/fixtures/dangoos/selftest.mjs",
+      "source_sha256": "58feaa5d1eff53ee9ee2fe5406a0c0bfe96ec99fe15769f77940ca4eaeca38d8",
+      "path": "selftest.etb",
+      "bytes": 218,
+      "sha256": "90cb097bcb81e1c12d4f83390d1eb8f3bca56c238a83a471efa9d8ae522ef4b0"
+    },
+    {
+      "source": "tests/fixtures/dangoos/ts-app.ts",
+      "source_sha256": "3f08020d595054235103d342c550a4f9b2b4191313efb574fe2fccc909ea487f",
+      "path": "fixtures/ts-app.etb",
+      "bytes": 9815,
+      "sha256": "a757bd323b1ab860dd00ec6b8bfc1b162434fd51c662143e0053879c2c1e2e32"
+    },
+    {
+      "source": "tests/fixtures/dangoos/ts-graphics.ts",
+      "source_sha256": "122b3016d7d8acb47ce19c6911ef497d3e4c82e30b75a26754d7d47698851db6",
+      "path": "fixtures/ts-graphics.etb",
+      "bytes": 18201,
+      "sha256": "4ca377d68d57e8e09f8aae201e3fb7ec6058802cbe178f0494e98c35bdb44ad8"
+    },
+    {
+      "source": "tests/fixtures/dangoos/ts-hardware.ts",
+      "source_sha256": "a81a97b9a17698c592a8190374ba85859eceb228fd0713f8e64bfa3648e097cb",
+      "path": "fixtures/ts-hardware.etb",
+      "bytes": 12588,
+      "sha256": "dfdb2ed9f97e91e7f86e8de46d19537f60b65746d2b50a1e8563097f790fe3a6"
+    },
+    {
+      "source": "tests/fixtures/dangoos/ts-official.ts",
+      "source_sha256": "895f578727dd7aea907412cc29e5195e73b04fdd3ddfd3e7445db44483cda582",
+      "path": "fixtures/ts-official.etb",
+      "bytes": 62873,
+      "sha256": "d9f3afb6ea5052d12f2a8823ec7a925f05bf757755dbf2a63d5a1e89c32303f2"
+    },
+    {
+      "source": "tests/fixtures/dangoos/ts-ui-batch.ts",
+      "source_sha256": "4508fe2884d735d9bb1b175ea2447d2627c060411f339b3dca1cf4f6c71f1ebd",
+      "path": "fixtures/ts-ui-batch.etb",
+      "bytes": 10114,
+      "sha256": "de937f87dde510114545d8c89d660439fa999eee84ff4515ed86674585e3f6e3"
+    },
+    {
+      "source": "tests/fixtures/dangoos/ts-ui-cost.ts",
+      "source_sha256": "3f1fd39b736051d3b9503c90595d0b977436b484c778a9d0a3fc93fad4ab83d7",
+      "path": "fixtures/ts-ui-cost.etb",
+      "bytes": 9655,
+      "sha256": "9bd8e2d882d87b27fad5821b530eb87b344f00e2f4975e126e1016c517d18b6e"
+    }
+  ]
+}

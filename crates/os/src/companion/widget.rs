@@ -690,7 +690,7 @@ mod tests {
             control: Rc<FoxControl>,
         }
         impl rs_lvgl_ui::App for App {
-            type Msg = ();
+            type Action = ();
             fn update(&mut self, (): ()) {}
             fn view(&self, _theme: &rs_lvgl_ui::Theme) -> rs_lvgl_ui::View<()> {
                 rs_lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)))
@@ -704,6 +704,7 @@ mod tests {
         ui
     }
 
+    #[cfg(feature = "lua-engine")]
     #[test]
     fn resident_lua_selects_pose_while_rust_renderer_keeps_animating_and_expires_it() {
         let _guard = test_support::lock();
@@ -972,6 +973,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "lua-engine")]
     #[test]
     fn default_brain_touch_ages_after_drains_and_publishes_an_urgent_frame() {
         let _guard = test_support::lock();

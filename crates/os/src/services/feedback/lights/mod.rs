@@ -94,13 +94,13 @@ pub fn available() -> bool {
 }
 pub fn lua_frame(pixels: [[u8; 3]; 6]) -> Result<(), i32> {
     if shutting_down() {
-        return Err(lua_engine::esp_err::INVALID_STATE);
+        return Err(app_host::esp_err::INVALID_STATE);
     }
     if !available() {
-        return Err(lua_engine::esp_err::NOT_SUPPORTED);
+        return Err(app_host::esp_err::NOT_SUPPORTED);
     }
     if OWNER.load(Ordering::Acquire) != Owner::Lua as u8 {
-        return Err(lua_engine::esp_err::INVALID_STATE);
+        return Err(app_host::esp_err::INVALID_STATE);
     }
     let frame = pixels.map(|[r, g, b]| Rgb { r, g, b });
     critical_section::with(|cs| *LUA_FRAME.borrow_ref_mut(cs) = Some(frame));

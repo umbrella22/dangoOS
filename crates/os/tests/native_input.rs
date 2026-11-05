@@ -1,6 +1,6 @@
 //! Real LVGL timer-pointer tests for native clean/rebuild transactions.
-use lua_engine::ui::UiCommand;
-use os::apps::lua::native_ui::LuaLvglService;
+use app_host::ui::UiCommand;
+use os::apps::native_ui::NativeUiService;
 use rs_lvgl::{sys as s, Display};
 use serde_json::{json, Value};
 use std::{
@@ -31,7 +31,7 @@ unsafe extern "C" fn disabled(_: *mut s::lv_indev_t, d: *mut s::lv_indev_data_t)
         (*d).state = s::lv_indev_state_t_LV_INDEV_STATE_RELEASED;
     }
 }
-fn call(service: &mut LuaLvglService, op: &str, args: Value) -> Value {
+fn call(service: &mut NativeUiService, op: &str, args: Value) -> Value {
     let reply = service
         .execute(UiCommand {
             op: op.into(),
@@ -55,7 +55,7 @@ fn pressed() {
 fn released() {
     DOWN.store(false, Ordering::Relaxed);
 }
-fn button(service: &mut LuaLvglService, screen: u64) {
+fn button(service: &mut NativeUiService, screen: u64) {
     let id = call(
         service,
         "create",
@@ -65,7 +65,7 @@ fn button(service: &mut LuaLvglService, screen: u64) {
     .unwrap();
     call(service, "on", json!([id, "clicked", 7]));
 }
-fn events(service: &mut LuaLvglService) -> Value {
+fn events(service: &mut NativeUiService) -> Value {
     call(service, "events", json!([0]))
 }
 #[test]
@@ -83,7 +83,7 @@ fn native_input() {
         p
     };
     let timer = unsafe { s::lv_indev_get_read_timer(indev) };
-    let mut service = LuaLvglService::new(80, 80);
+    let mut service = NativeUiService::new(80, 80);
     call(&mut service, "init", json!([{}]));
     let screen = call(&mut service, "create", json!(["screen", 0, {}]))[0]
         .as_u64()

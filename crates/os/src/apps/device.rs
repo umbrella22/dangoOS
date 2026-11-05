@@ -152,7 +152,7 @@ pub fn acknowledge_management_refresh() {
         let mut phase = MANAGING.borrow_ref_mut(cs);
         if *phase == crate::apps::lifecycle::uninstall::Phase::AwaitingRefresh {
             phase.acknowledge_refresh();
-            crate::apps::lua::task::release_management();
+            crate::apps::runtime::release_management();
         }
     });
 }
@@ -162,7 +162,7 @@ pub async fn manage(op: crate::apps::lifecycle::uninstall::Operation) -> Result<
         return Err("系统更新进行中".into());
     }
     critical_section::with(|cs| MANAGING.borrow_ref_mut(cs).acquire()).map_err(String::from)?;
-    crate::apps::lua::task::quiesce().await;
+    crate::apps::runtime::quiesce().await;
     let result = crate::platform::runtime::executors::services::run(move || {
         ::fs::global::with(|vfs| Ok(crate::apps::lifecycle::uninstall::execute(vfs, op)))
     })

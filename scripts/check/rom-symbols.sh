@@ -25,7 +25,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 sed -nE 's/^[[:space:]]*(PROVIDE[[:space:]]*\([[:space:]]*)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\2/p' \
     "$ROM"/*.ld | sort -u > "$tmp/rom"
-libs=$(ls "$BUILD"/fs-*/out/*.a "$BUILD"/lua-engine-*/out/*.a "$BUILD"/esp-bluedroid-*/out/*.a 2>/dev/null || true)
+libs=$(ls "$BUILD"/fs-*/out/*.a "$BUILD"/app-host-*/out/*.a "$BUILD"/lua-engine-*/out/*.a "$BUILD"/embedts-engine-*/out/*.a "$BUILD"/esp-bluedroid-*/out/*.a 2>/dev/null || true)
 [ -n "$libs" ] || { echo "no C libraries under $BUILD; run cargo fw first" >&2; exit 2; }
 for a in $libs; do "$NM" --defined-only -g "$a" 2>/dev/null | awk 'NF==3{print $3}'; done \
     | sort -u > "$tmp/ours"

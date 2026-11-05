@@ -2,7 +2,7 @@
 //! Lua's worker publishes completion after VM drop and before starting a queued
 //! replacement. Display leases retain pixels through their final upload.
 use super::is_lua_page;
-use crate::apps::lua::task as lua;
+use crate::apps::runtime as lua;
 use crate::companion::{render::entrance, runtime::Runtime};
 use crate::services::{
     display::lvgl_port::{self, DisplayPort},

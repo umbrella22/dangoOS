@@ -1,0 +1,15 @@
+[package]
+name = "script-bench-runner"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[features]
+default = []
+lua = ["dep:lua-engine"]
+ts = ["dep:ts-engine"]
+
+[dependencies]
+lua-engine = { path = "../../../../crates/lua-engine", optional = true }
+ts-engine = { workspace = true, optional = true }
+serde_json = "1"

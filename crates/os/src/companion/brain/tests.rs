@@ -25,14 +25,15 @@ fn source_compilation_latency_does_not_spend_callback_wall_budget() {
             DELAYED.store(true, Ordering::SeqCst);
             NOW.fetch_add(CALLBACK_US + 1, Ordering::SeqCst);
         }
-        unsafe { (lua_engine::GLOBAL_ALLOCATOR.alloc)(layout) }
+        unsafe { (app_host::GLOBAL_ALLOCATOR.alloc)(layout) }
     }
     unsafe fn deallocate(ptr: *mut u8, layout: core::alloc::Layout) {
-        unsafe { (lua_engine::GLOBAL_ALLOCATOR.dealloc)(ptr, layout) }
+        unsafe { (app_host::GLOBAL_ALLOCATOR.dealloc)(ptr, layout) }
     }
     static ALLOCATOR: RawAllocator = RawAllocator {
         alloc: allocate,
         dealloc: deallocate,
+        realloc: None,
     };
     NOW.store(0, Ordering::SeqCst);
     DELAYED.store(false, Ordering::SeqCst);
@@ -104,7 +105,7 @@ fn source_compilation_latency_does_not_spend_callback_wall_budget() {
 
 #[test]
 fn standalone_source_keeps_lexical_isolation_lines_and_size_boundary() {
-    let allocator = &lua_engine::GLOBAL_ALLOCATOR;
+    let allocator = &app_host::GLOBAL_ALLOCATOR;
     let isolated = r#"
           assert(SOURCE==nil and START_MS==nil and module==nil and host==nil and safe==nil and json==nil)
           assert(load==nil and require==nil and debug==nil and package==nil)
@@ -140,7 +141,7 @@ fn standalone_source_keeps_lexical_isolation_lines_and_size_boundary() {
 
 #[test]
 fn bounded_adversaries_and_transactional_replacement() {
-    let allocator = &lua_engine::GLOBAL_ALLOCATOR;
+    let allocator = &app_host::GLOBAL_ALLOCATOR;
     for source in [
         "while true do end",
         "while true do pcall(function() while true do end end) end",
@@ -184,7 +185,7 @@ fn async_commit_failure_or_cancellation_keeps_active_vm_and_output() {
     };
     let old = "return {on_event=function()end,tick=function()fox.set_expression('Happy')end}";
     let next = "return {on_event=function()end,tick=function()fox.set_expression('Curious')end}";
-    let mut brain = Controller::new(old, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
+    let mut brain = Controller::new(old, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
     let mut cx = Context::from_waker(Waker::noop());
     {
         let mut change =
@@ -216,7 +217,7 @@ fn restricted_gc_and_string_colon_paths_cannot_run_unbounded_code() {
             assert(coroutine==nil and debug==nil and io==nil and os==nil and require==nil)
             return {on_event=function()end,tick=function()fox.set_expression('Happy')end}
         "#;
-    let mut b = BrainVm::new(source, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
+    let mut b = BrainVm::new(source, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
     assert_eq!(b.output().expression, Expression::Happy);
     assert!(b.memory_used() <= HEAP_MAX);
 }
@@ -230,7 +231,7 @@ fn foreground_vm_and_resident_callbacks_keep_independent_state() {
     let mut foreground = Vm::new(
         Box::new(Foreground),
         Limits::default(),
-        &lua_engine::GLOBAL_ALLOCATOR,
+        &app_host::GLOBAL_ALLOCATOR,
         1,
     )
     .unwrap();
@@ -240,8 +241,7 @@ fn foreground_vm_and_resident_callbacks_keep_independent_state() {
     foreground
         .load("foreground", b"for i=1,5 do coroutine.yield() end")
         .unwrap();
-    let mut brain =
-        Controller::new(DEFAULT_SOURCE, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
+    let mut brain = Controller::new(DEFAULT_SOURCE, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
     for now in 1..=5 {
         assert!(matches!(foreground.resume(), Step::Slice));
         brain.tick(now);
@@ -398,8 +398,8 @@ return {on_event=function(e)last=signature(e);return e.pressed end,
  tick=function(n)last=signature(n) end,
  Affect={new=function()return {read=function()return last end}end}}
 "#;
-    let mut raw = BrainVm::new(source, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
-    let mut typed = BrainVm::new(source, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
+    let mut raw = BrainVm::new(source, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
+    let mut typed = BrainVm::new(source, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
     for brain in [&mut raw, &mut typed] {
         brain
             .rpc(
@@ -422,8 +422,8 @@ return {on_event=function(e)last=signature(e);return e.pressed end,
 }
 #[test]
 fn typed_default_brain_replays_raw_outputs_and_expiry() {
-    let mut raw = BrainVm::new(DEFAULT_SOURCE, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
-    let mut typed = BrainVm::new(DEFAULT_SOURCE, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
+    let mut raw = BrainVm::new(DEFAULT_SOURCE, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
+    let mut typed = BrainVm::new(DEFAULT_SOURCE, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
     for input in inputs()
         .into_iter()
         .chain((0..120).map(|n| Input::Tick(n * 100)))
@@ -440,8 +440,8 @@ n=n+1
 if n==1 then fox.play('Happy',10);haptic.play('Happy');fox.command('Hub');fox.set_expression('Happy');fox.set_expression('Angry');led_strip.set(1,1,2,3)
 elseif e.type=='IgnoreTouch' then fox.play('Curious',7) end
 end}"#;
-    raw = BrainVm::new(source, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
-    typed = BrainVm::new(source, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
+    raw = BrainVm::new(source, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
+    typed = BrainVm::new(source, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
     for input in [
         Input::Interaction(100),
         Input::Tick(109),
@@ -485,8 +485,8 @@ fn typed_controller_acceptance_and_failures_match_raw_fallback() {
         let source = format!(
             "return {{tick=function()end,on_event=function()fox.set_expression('Happy');return {result} end}}"
         );
-        let mut raw = Controller::new(&source, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
-        let mut typed = Controller::new(&source, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
+        let mut raw = Controller::new(&source, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
+        let mut typed = Controller::new(&source, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
         let p = crate::companion::behavior::personality::PointerSample {
             at_ms: 123,
             x: 1,

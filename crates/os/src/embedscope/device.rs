@@ -99,7 +99,7 @@ impl Backend for Device {
                 if !payload.is_empty() {
                     return Err(Status::InvalidArgument);
                 }
-                use lua_engine::{caps, heap_fields};
+                use app_host::{caps, heap_fields};
                 let internal = crate::platform::runtime::heap::snapshot(caps::INTERNAL);
                 let psram = crate::platform::runtime::heap::snapshot(caps::SPIRAM);
                 let frame = LAST_FRAME_MS.load(Ordering::Relaxed);

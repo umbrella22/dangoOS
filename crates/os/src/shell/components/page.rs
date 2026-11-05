@@ -28,11 +28,11 @@ pub(crate) fn font_icon() -> Font {
 }
 
 pub(crate) fn text(content: impl Into<String>, font: Font, color: Color) -> View<AppMsg> {
-    rs_lvgl_ui::label(content).style(Style::neutral().font(font).fg(color))
+    rs_lvgl_ui::label(content).style(Style::neutral().font(font).text_color(color))
 }
 
 pub(crate) fn text_static(content: &'static str, font: Font, color: Color) -> View<AppMsg> {
-    rs_lvgl_ui::label_static(content).style(Style::neutral().font(font).fg(color))
+    rs_lvgl_ui::label_static(content).style(Style::neutral().font(font).text_color(color))
 }
 
 /// A full-screen page: black field, centred title, home indicator.
@@ -42,7 +42,7 @@ pub(crate) fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -
         .scrollable(false)
         .style(
             Style::neutral()
-                .bg(BG)
+                .background(BG)
                 .width(Size::Percent(100))
                 .height(Size::Percent(100)),
         )
@@ -59,7 +59,7 @@ pub(crate) fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -
 pub(crate) fn home_indicator() -> View<AppMsg> {
     rs_lvgl_ui::obj().key(Key::Named("home-pill")).style(
         Style::neutral()
-            .bg(WEAK)
+            .background(WEAK)
             .radius(3)
             .width(Size::Px(96))
             .height(Size::Px(6))
@@ -69,7 +69,7 @@ pub(crate) fn home_indicator() -> View<AppMsg> {
 }
 
 pub(crate) fn card() -> Style {
-    Style::neutral().bg(CARD).radius(RADIUS).pad(20)
+    Style::neutral().background(CARD).radius(RADIUS).padding(20)
 }
 
 /// A 68 px row: label on the left, `trailing` on the right.
@@ -79,8 +79,8 @@ pub(crate) fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>
         .scrollable(false)
         .style(
             card()
-                .pad_top(0)
-                .pad_bottom(0)
+                .padding_top(0)
+                .padding_bottom(0)
                 .width(Size::Percent(100))
                 .height(Size::Px(ROW_H))
                 .flex_align(FlexAlign::SpaceBetween, FlexAlign::Center),
@@ -96,10 +96,14 @@ pub(crate) fn switch(key: &'static str, on: bool, msg: fn(bool) -> AppMsg) -> Vi
             Style::default()
                 .width(Size::Px(64))
                 .height(Size::Px(34))
-                .bg(CARD_HI),
+                .background(CARD_HI),
         )
-        .part_state_style(Part::Indicator, State::CHECKED, Style::default().bg(ACCENT))
-        .part_style(Part::Knob, Style::default().bg(TEXT))
+        .part_state_style(
+            Part::Indicator,
+            State::CHECKED,
+            Style::default().background(ACCENT),
+        )
+        .part_style(Part::Knob, Style::default().background(TEXT))
         .on_value_changed(move |v| msg(v != 0))
 }
 

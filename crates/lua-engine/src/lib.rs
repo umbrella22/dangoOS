@@ -20,8 +20,8 @@ extern crate std;
 mod call;
 mod ffi;
 mod hardware;
+pub use app_host::jpeg;
 pub use hardware::{ButtonEdge, HapticPreset, HardwareRequest, HardwareSnapshot, OnboardButtons};
-pub mod jpeg;
 mod platform;
 mod services;
 pub use services::{

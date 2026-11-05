@@ -78,11 +78,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c583acf993cf4245c4acb0a2cc2ab1f9cc097de73411bb6d3647ff6af2b1013d"
 
 [[package]]
-name = "app-pack"
-version = "0.4.0"
+name = "app-host"
+version = "0.4.1"
 dependencies = [
+ "cc",
+ "serde",
+]
+
+[[package]]
+name = "app-pack"
+version = "0.4.1"
+dependencies = [
+ "app-host",
  "fs",
- "lua-engine",
  "os",
  "serde_json",
  "sha2 0.10.9",
@@ -1029,6 +1037,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedts-engine"
+version = "0.1.0"
+source = "git+https://github.com/umbrella22/EmbedTypescript.git?rev=98eaf67207874467eaffcc725780ed319f65a5ee#98eaf67207874467eaffcc725780ed319f65a5ee"
+dependencies = [
+ "cc",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "enumset"
 version = "1.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1057,28 +1075,28 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "escope-agent"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d87bdff8da26512d619f5c36162ec3e1d691af1df3dfe9fb9131ffd8c9229936"
+checksum = "a2c5db477a40d1e4371d42fcf9a5b21fe2ef7767bfbd694aa668d4d30dce34db"
 dependencies = [
  "escope-protocol",
 ]
 
 [[package]]
 name = "escope-lvgl"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a205a5db3bc17c0f42d4238983875141fc61aee309b0033b78a9d9f4dafe97e"
+checksum = "df8c2f416037a111364610b22fc507b1c6a5738ef2147f7a3cbe49ded1c0e27d"
 dependencies = [
  "escope-protocol",
- "rs_lvgl",
+ "rs_lvgl_sys",
 ]
 
 [[package]]
 name = "escope-protocol"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04dd480b1c6da5286743f15725b5423c58bf3d9c5337b395c65d4002d0d9a87b"
+checksum = "921569b9da224cf35e38e0b580f6b864125300324de965c6899565337ffb601d"
 dependencies = [
  "minicbor",
 ]
@@ -1587,7 +1605,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fs"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "cc",
 ]
@@ -1950,8 +1968,9 @@ dependencies = [
 
 [[package]]
 name = "lua-engine"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
+ "app-host",
  "cc",
  "critical-section",
  "fs",
@@ -2128,8 +2147,9 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "os"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
+ "app-host",
  "critical-section",
  "embassy-executor",
  "embassy-futures",
@@ -2139,6 +2159,7 @@ dependencies = [
  "embassy-usb",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
+ "embedts-engine",
  "escope-agent",
  "escope-lvgl",
  "escope-protocol",
@@ -2529,9 +2550,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8868d953ae1b0f6f20082b6b999f133dc93d55124dba18073ebdbeffc9b9810"
+checksum = "fc13518c195e8d4aeac213cd1fda6a270186fe2b2491e3b35ef00fc5c324d87a"
 dependencies = [
  "bitflags 2.13.2",
  "cstr_core",
@@ -2546,9 +2567,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl_codegen"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b7cbc81f47007628fb438194366bf5bf5d7b79b09ad2502d93431224cdd97a"
+checksum = "f518458d45dc0381702cdc29e6e2d29b2322c7a03d6b2c8434c23602fc5b75d8"
 dependencies = [
  "Inflector",
  "lazy_static",
@@ -2560,9 +2581,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl_sys"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44a0fa17e3085d566176f6c7ef63ba518e13ccac882ee017e6fd82917e148233"
+checksum = "8a115765549ae3d8099165d36f1f3524418cdecf0aa98f1ecee43040ae2a2e03"
 dependencies = [
  "bindgen",
  "cc",
@@ -2571,9 +2592,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl_ui"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b55a00c715e0b490aaec2f32ca87eb76344e69edb49a39defb6f6f9d462759af"
+checksum = "d60b667b928e6e0ed8dd62f56767e6e8001349ec0fbaac9dc8194e7a8f6623c1"
 dependencies = [
  "cstr_core",
  "cty",
@@ -2721,6 +2742,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "script-bench-runner"
+version = "0.4.1"
+dependencies = [
+ "embedts-engine",
+ "lua-engine",
+ "serde_json",
+]
+
+[[package]]
 name = "sdio"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2863,9 +2893,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.15.2"
+version = "1.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 
 [[package]]
 name = "smoltcp"

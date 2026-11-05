@@ -4,6 +4,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 extern crate alloc;
 
+#[cfg(all(feature = "lua-engine", feature = "ts-engine"))]
+compile_error!(
+    "os requires exactly one script engine: lua-engine and ts-engine are mutually exclusive"
+);
+#[cfg(not(any(feature = "lua-engine", feature = "ts-engine")))]
+compile_error!("os requires exactly one script engine: enable lua-engine or ts-engine");
+
 pub mod apps;
 #[cfg(target_os = "none")]
 pub mod boot;

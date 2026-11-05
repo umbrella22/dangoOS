@@ -1,28 +1,8 @@
 //! Typed ownership boundary: the embedding executes commands on its UI owner.
 use crate::{Call, Error, Request, Ret, Vm};
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 pub const REQUEST: u32 = 0x4C560001;
-pub const COMMAND_BYTES_MAX: usize = 2 * 1024 * 1024;
-#[derive(Debug)]
-pub struct UiCommand {
-    pub op: String,
-    pub args: String,
-    pub bytes: Vec<u8>,
-    pub root: String,
-}
-#[derive(Debug)]
-pub struct UiReply {
-    pub json: String,
-    pub bytes: Vec<u8>,
-}
-impl UiReply {
-    pub fn json(json: String) -> Self {
-        Self {
-            json,
-            bytes: Vec::new(),
-        }
-    }
-}
+pub use app_host::ui::{UiCommand, UiReply, COMMAND_BYTES_MAX};
 pub(crate) fn register(vm: &mut Vm) -> Result<(), String> {
     vm.register("_lvgl", &[("request", request), ("reply", reply)])
 }

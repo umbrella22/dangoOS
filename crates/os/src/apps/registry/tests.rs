@@ -206,8 +206,9 @@ fn scan_merges_roots_with_shadowing_and_order() {
     assert_eq!((dino.title.as_str(), dino.origin), ("Dino 2", Origin::Data));
     assert_eq!(dino.app.entry, "/data/apps/dino/scripts/main.lua");
     let album = &reg.apps[reg.find("album").unwrap()];
-    assert!(album.missing.is_empty());
-    assert!(album.runnable() && reg.apps[0].runnable());
+    assert_eq!(album.missing.is_empty(), cfg!(feature = "lua-engine"));
+    assert_eq!(album.runnable(), cfg!(feature = "lua-engine"));
+    assert_eq!(reg.apps[0].runnable(), cfg!(feature = "lua-engine"));
     let snake = &reg.apps[reg.find("snake").unwrap()];
     assert_eq!(
         (snake.title.as_str(), snake.origin),
@@ -243,8 +244,47 @@ fn no_lua_apps_without_a_file_system() {
 }
 
 #[test]
+fn engine_selection_rejects_the_other_entry_and_does_not_scan_bytecode_as_lua() {
+    let mut v = vfs();
+    for (id, extension) in [("lua", "lua"), ("ts", "etb")] {
+        put(
+            &mut v,
+            &format!("/data/apps/{id}/launcher.json"),
+            &manifest(id, "").replace("main.lua", &format!("main.{extension}")),
+        );
+        // A binary package can contain Lua-like bytes, with no module meaning.
+        let source = if extension == "etb" {
+            "\0require('missing')"
+        } else {
+            "return 42"
+        };
+        put(
+            &mut v,
+            &format!("/data/apps/{id}/scripts/main.{extension}"),
+            source,
+        );
+    }
+    let registry = Registry::scan(&mut v, &mut IconCache::new(), &mut |_| {});
+    for (id, selected, missing) in [
+        ("lua", cfg!(feature = "lua-engine"), "engine:lua"),
+        ("ts", cfg!(feature = "ts-engine"), "engine:ts"),
+    ] {
+        let entry = &registry.apps[registry.find(id).unwrap()];
+        assert_eq!(entry.runnable(), selected);
+        assert_eq!(
+            entry.missing,
+            if selected {
+                Vec::<String>::new()
+            } else {
+                alloc::vec![missing.into()]
+            }
+        );
+    }
+}
+
+#[test]
 fn icons_scale_into_the_box_and_are_cached() {
-    let img = lua_engine::jpeg::Rgb888 {
+    let img = app_host::jpeg::Rgb888 {
         width: 48,
         height: 24,
         pixels: alloc::vec![255; 48 * 24 * 3],
@@ -252,7 +292,7 @@ fn icons_scale_into_the_box_and_are_cached() {
     let i = scale_to_box(&img);
     assert_eq!((i.width, i.height, i.rgb565.len()), (96, 48, 96 * 48 * 2));
     assert_eq!(&i.rgb565[..2], &[0xFF, 0xFF]);
-    let big = lua_engine::jpeg::Rgb888 {
+    let big = app_host::jpeg::Rgb888 {
         width: 200,
         height: 100,
         pixels: alloc::vec![0; 200 * 100 * 3],

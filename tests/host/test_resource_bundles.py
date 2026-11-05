@@ -28,12 +28,13 @@ def fonts_fixture(root):
     return report
 
 
-def app_fixture(root):
+def app_fixture(root, engine="lua"):
     (root / "payload/scripts").mkdir(parents=True)
-    manifest = {"schema_version": 1, "id": "example", "entry": "scripts/main.lua"}
+    entry = "scripts/main.etb" if engine == "ts" else "scripts/main.lua"
+    manifest = {"schema_version": 1, "id": "example", "entry": entry}
     (root / "payload/launcher.json").write_text(json.dumps(manifest))
-    (root / "payload/scripts/main.lua").write_text("return 42")
-    report = {"schema": 1, "kind": "dango-lua-application", "id": "example",
+    (root / "payload" / entry).write_bytes(b"\0\xfftransport fixture" if engine == "ts" else b"return 42")
+    report = {"schema": 1, "kind": "embedts-application" if engine == "ts" else "dango-lua-application", "id": "example",
               "files": BUNDLES.inventory(root / "payload"), "documentation": {}}
     (root / "bundle.json").write_text(json.dumps(report))
     return report
@@ -57,6 +58,15 @@ class ResourceBundlesTests(unittest.TestCase):
         self.assertEqual(BUNDLES.application(self.root)["id"], "example")
         (self.root / "payload/scripts/main.lua").write_text("return 43")
         with self.assertRaisesRegex(ValueError, "inventory"):
+            BUNDLES.application(self.root)
+
+    def test_ts_transport_preserves_binary_bytes_and_rejects_engine_mismatch(self):
+        report = app_fixture(self.root, "ts")
+        self.assertEqual(BUNDLES.application(self.root), report)
+        self.assertEqual((self.root / "payload/scripts/main.etb").read_bytes(), b"\0\xfftransport fixture")
+        report["kind"] = "dango-lua-application"
+        (self.root / "bundle.json").write_text(json.dumps(report))
+        with self.assertRaisesRegex(ValueError, "engine kind"):
             BUNDLES.application(self.root)
 
     def test_release_rejects_stale_firmware_pin_even_when_resource_files_match_catalog(self):

@@ -45,6 +45,7 @@ unsafe fn psram_dealloc(ptr: *mut u8, layout: Layout) {
 pub(crate) static PSRAM: RawAllocator = RawAllocator {
     alloc: psram_alloc,
     dealloc: psram_dealloc,
+    realloc: None,
 };
 
 pub(super) fn clock_us() -> u64 {
@@ -208,116 +209,18 @@ impl Drop for DeviceHost {
 
 impl Host for DeviceHost {
     fn service_snapshot(&mut self) -> lua_engine::ServiceSnapshot {
-        use crate::services::{audio, camera, radio};
-        let a = audio::task::snapshot();
-        let c = camera::task::snapshot();
-        lua_engine::ServiceSnapshot {
-            audio: Some(lua_engine::AudioStatus {
-                available: audio::task::available(),
-                controls_available: audio::task::available() && !service_controls_blocked(),
-                state: a.state.name(),
-                sample_rate_hz: a.rate,
-                volume: a.volume,
-                output_ceiling_db: audio::volume::OUTPUT_CEILING_DB,
-                muted: a.muted,
-                tx_frames: a.tx_frames,
-                rx_frames: a.rx_frames,
-                underruns: a.underruns,
-                overruns: a.overruns,
-                peak: a.peak,
-                error: a.error,
-            }),
-            camera: Some(lua_engine::CameraStatus {
-                available: crate::platform::drivers::camera::slot::present(),
-                state: c.state.name(),
-                sensor: c.sensor(),
-                width: c.width,
-                height: c.height,
-                frames: c.frames,
-                dropped: c.dropped,
-                saved: c.saved,
-                error: c.error,
-            }),
-            network: Some(lua_engine::NetworkStatus {
-                wifi_state: radio::device::wifi::state().name(),
-                bluetooth_state: radio::device::classic::state().name(),
-                ip: radio::device::wifi::ip(),
-            }),
-            native_ui: Some(crate::apps::lua::native_ui::limits()),
-        }
+        crate::apps::host_device::service_snapshot(service_controls_blocked())
     }
 
     fn audio_control(&mut self, request: lua_engine::AudioControl) -> Result<(), i32> {
-        if service_controls_blocked() {
-            return Err(esp_err::INVALID_STATE);
-        }
-        if !crate::services::audio::task::available() {
-            return Err(esp_err::NOT_SUPPORTED);
-        }
-        match request {
-            lua_engine::AudioControl::Volume(value) if value <= 100 => {
-                crate::services::audio::task::volume(value)
-            }
-            lua_engine::AudioControl::Muted(value) => crate::services::audio::task::mute(value),
-            _ => return Err(esp_err::INVALID_ARG),
-        }
-        Ok(())
+        crate::apps::host_device::audio_control(request, service_controls_blocked())
     }
 
-    fn hardware_snapshot(&mut self) -> lua_engine::HardwareSnapshot {
-        let mut snapshot = crate::services::input::sensors::lua_snapshot();
-        snapshot.onboard = crate::services::power::button_task::snapshot();
-        snapshot.led_generation = crate::services::feedback::lights::generation();
-        if crate::services::feedback::haptic::available() {
-            snapshot.available |= 32;
-        } else {
-            snapshot.available &= !32;
-        }
-        if crate::services::feedback::lights::available() {
-            snapshot.available |= 16;
-        } else {
-            snapshot.available &= !16;
-        }
-        snapshot
+    fn hardware_snapshot(&mut self) -> app_host::HardwareSnapshot {
+        crate::apps::host_device::hardware_snapshot()
     }
     fn hardware_request(&mut self, request: lua_engine::HardwareRequest) -> Result<(), i32> {
-        use crate::companion::behavior::affect::HapticPattern;
-        use lua_engine::{HapticPreset, HardwareRequest};
-        match request {
-            HardwareRequest::Haptic(preset) => {
-                if !crate::services::feedback::haptic::available() {
-                    return Err(esp_err::NOT_SUPPORTED);
-                }
-                if !crate::services::feedback::haptic::enabled() {
-                    return Err(esp_err::INVALID_STATE);
-                }
-                let pattern = match preset {
-                    HapticPreset::Panic => HapticPattern::Panic,
-                    HapticPreset::Angry => HapticPattern::Angry,
-                    HapticPreset::Surprised => HapticPattern::Surprised,
-                    HapticPreset::Puzzled => HapticPattern::Puzzled,
-                    HapticPreset::Happy => HapticPattern::Happy,
-                    HapticPreset::Satisfied => HapticPattern::Satisfied,
-                    HapticPreset::Confused => HapticPattern::Confused,
-                    HapticPreset::Listening => HapticPattern::Listening,
-                    HapticPreset::Thinking => HapticPattern::Thinking,
-                    HapticPreset::Error => HapticPattern::Error,
-                    HapticPreset::ModuleInsert => HapticPattern::ModuleInsert,
-                    HapticPreset::ModuleRemove => HapticPattern::ModuleRemove,
-                    HapticPreset::MagneticContact => HapticPattern::MagneticContact,
-                };
-                if crate::services::feedback::haptic::play(pattern) {
-                    Ok(())
-                } else {
-                    Err(esp_err::INVALID_STATE)
-                }
-            }
-            HardwareRequest::LedFrame(frame) => crate::services::feedback::lights::lua_frame(frame),
-            HardwareRequest::LedRelease => {
-                crate::services::feedback::lights::lua_release();
-                Ok(())
-            }
-        }
+        crate::apps::host_device::hardware_request(request)
     }
 
     fn print(&mut self, line: &[u8]) {
@@ -380,12 +283,7 @@ impl Host for DeviceHost {
     }
 
     fn heap_probe(&mut self, caps_mask: u32, layout: Layout) -> Result<bool, i32> {
-        let capability = match caps_mask {
-            lua_engine::caps::INTERNAL => esp_alloc::MemoryCapability::Internal,
-            lua_engine::caps::SPIRAM => esp_alloc::MemoryCapability::External,
-            _ => return Err(esp_err::INVALID_ARG),
-        };
-        Ok(esp_alloc::HEAP.probe_caps(capability.into(), layout))
+        crate::apps::host_device::heap_probe(caps_mask, layout)
     }
 }
 
@@ -485,7 +383,7 @@ async fn run(app: LuaApp) -> Option<LuaApp> {
 
     let mut busy_us = 0u64;
     let mut stopping = false;
-    let mut redraw_boundary = crate::apps::lua::native_ui::RedrawBoundary::default();
+    let mut redraw_boundary = crate::apps::native_ui::RedrawBoundary::default();
     let mut next = None;
     // One compute burst may span many short VM slices. Only actual waits
     // finish it; cooperative yields must not hide sustained computation.

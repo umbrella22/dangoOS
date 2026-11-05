@@ -715,6 +715,97 @@ impl EspHeap {
         ptr
     }
 
+    /// Resize within the allocation's original region, preserving capabilities.
+    /// TLSF first shrinks or grows in place. Failure retains the original block.
+    /// With `internal-heap-stats`, use explicit allocate/copy/free so counters
+    /// include the temporary overlap hidden inside the TLSF resize operation.
+    ///
+    /// # Safety
+    /// `ptr` must be live in this heap with `layout`; `new_size` must be nonzero
+    /// and form a valid Layout with the original alignment.
+    pub unsafe fn realloc_region(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let Some(original) = NonNull::new(ptr) else {
+            return ptr::null_mut();
+        };
+        let Ok(resized_layout) = Layout::from_size_align(new_size, layout.align()) else {
+            return ptr::null_mut();
+        };
+        if new_size == 0 {
+            return ptr::null_mut();
+        }
+        if new_size == layout.size() {
+            return ptr;
+        }
+        let result = self.inner.with(|this| {
+            #[cfg(feature = "internal-heap-stats")]
+            let before = this.used();
+            let Some(region) = this
+                .heap
+                .iter_mut()
+                .flatten()
+                .find(|r| r.heap.contains(original))
+            else {
+                return (ptr::null_mut(), EnumSet::empty());
+            };
+            #[cfg(feature = "internal-heap-stats")]
+            let region_before = region.heap.used();
+            #[cfg(feature = "internal-heap-stats")]
+            let mut transient_region_usage = 0;
+            let resized = {
+                #[cfg(all(heap_algorithm_tlsf, not(feature = "internal-heap-stats")))]
+                {
+                    unsafe { region.heap.reallocate(original, resized_layout) }
+                }
+                #[cfg(any(heap_algorithm_llff, feature = "internal-heap-stats"))]
+                {
+                    region.allocate(resized_layout).map(|new| {
+                        #[cfg(feature = "internal-heap-stats")]
+                        {
+                            transient_region_usage = region.heap.used();
+                        }
+                        unsafe {
+                            ptr::copy_nonoverlapping(
+                                ptr,
+                                new.as_ptr(),
+                                layout.size().min(new_size),
+                            );
+                            region.try_deallocate(original, layout);
+                        }
+                        new
+                    })
+                }
+            };
+            let capabilities = region.capabilities;
+            #[cfg(feature = "internal-heap-stats")]
+            if resized.is_some() {
+                let allocated = transient_region_usage - region_before;
+                let freed = transient_region_usage - region.heap.used();
+                this.internal_heap_stats.total_allocated = this
+                    .internal_heap_stats
+                    .total_allocated
+                    .saturating_add(allocated as u64);
+                this.internal_heap_stats.total_freed = this
+                    .internal_heap_stats
+                    .total_freed
+                    .saturating_add(freed as u64);
+                this.internal_heap_stats.max_usage =
+                    this.internal_heap_stats.max_usage.max(before + allocated);
+            }
+            (
+                resized.map_or(ptr::null_mut(), NonNull::as_ptr),
+                capabilities,
+            )
+        });
+        #[cfg(feature = "alloc-hooks")]
+        if !result.0.is_null() {
+            unsafe {
+                _esp_alloc_dealloc(self, ptr.addr(), layout.size());
+                _esp_alloc_alloc(self, result.1, result.0.addr(), new_size);
+            }
+        }
+        result.0
+    }
+
     /// Deallocate memory.
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         #[cfg(feature = "alloc-hooks")]

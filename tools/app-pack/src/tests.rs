@@ -5,6 +5,31 @@ fn apps() -> Vec<Package> {
 }
 
 #[test]
+fn variant_directories_preserve_ids_without_reserving_language_names() {
+    let root = std::env::temp_dir().join(format!("dango-variant-ids-{}", std::process::id()));
+    assert!(!root.exists());
+    for (relative, id) in [("ts", "ts"), ("snake/lua", "snake")] {
+        let path = root.join(relative);
+        host_fs::create_dir_all(&path).unwrap();
+        host_fs::write(
+            path.join("launcher.json"),
+            format!(r#"{{"schema_version":1,"id":"{id}","entry":"main.lua"}}"#),
+        )
+        .unwrap();
+        host_fs::write(path.join("main.lua"), "return 42").unwrap();
+        assert_eq!(Package::read(&path).unwrap().id, id);
+    }
+    host_fs::write(
+        root.join("ts/launcher.json"),
+        br#"{"schema_version":1,"id":"other","entry":"main.lua"}"#,
+    )
+    .unwrap();
+    assert!(Package::read(&root.join("ts")).is_err());
+    host_fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(feature = "lua-engine")]
+#[test]
 fn fresh_system_contains_apps_and_fonts_without_character_skins_and_rebuilds_identically() {
     let packages = apps();
     assert_eq!(
@@ -128,4 +153,66 @@ fn standalone_bundle_verifies_actual_payload_and_detects_tampering() {
     host_fs::write(out.join("payload/scripts/main.lua"), b"return 999").unwrap();
     assert!(bundle::verify(&out).unwrap_err().contains("inventory"));
     host_fs::remove_dir_all(out).unwrap();
+}
+
+#[test]
+fn ts_bundle_preserves_binary_payload_and_checks_engine_kind() {
+    let out = std::env::temp_dir().join(format!("dango-ts-bundle-{}", std::process::id()));
+    assert!(!out.exists());
+    // Transport fixture only; executable bytecode is validated by ts-engine.
+    let bytecode = b"\0\xffbinary package";
+    let package = Package {
+        id: "example".into(),
+        files: Tree::from([
+            (
+                "launcher.json".into(),
+                Entry::File(br#"{"schema_version":1,"id":"example","entry":"main.etb"}"#.to_vec()),
+            ),
+            ("main.etb".into(), Entry::File(bytecode.to_vec())),
+        ]),
+        documentation: Tree::new(),
+    };
+    let mut report = bundle::export(&package, &out).unwrap();
+    assert_eq!(report["kind"], "embedts-application");
+    assert_eq!(
+        host_fs::read(out.join("payload/main.etb")).unwrap(),
+        bytecode
+    );
+    assert_eq!(bundle::verify(&out).unwrap(), report);
+    report["kind"] = "dango-lua-application".into();
+    host_fs::write(
+        out.join("bundle.json"),
+        serde_json::to_vec(&report).unwrap(),
+    )
+    .unwrap();
+    assert!(bundle::verify(&out).unwrap_err().contains("engine kind"));
+    host_fs::remove_dir_all(out).unwrap();
+}
+
+#[cfg(feature = "ts-engine")]
+#[test]
+fn precompiled_embedts_system_preserves_bytecode_and_registers_a_runnable_application() {
+    let bytes = include_bytes!("../../../artifacts/embedts/selftest.etb");
+    let package = Package {
+        id: "ts-fixture".into(),
+        files: Tree::from([
+            (
+                "launcher.json".into(),
+                Entry::File(
+                    br#"{"schema_version":1,"id":"ts-fixture","entry":"scripts/main.etb"}"#
+                        .to_vec(),
+                ),
+            ),
+            ("scripts".into(), Entry::Directory),
+            ("scripts/main.etb".into(), Entry::File(bytes.to_vec())),
+        ]),
+        documentation: Tree::new(),
+    };
+    let (image, report) = build_system(0x1f0000, &[package]).unwrap();
+    assert_eq!(report["applications"][0]["id"], "ts-fixture");
+    assert_eq!(report["applications"][0]["runnable"], true);
+    let tree = snapshot(&image).unwrap();
+    assert!(
+        matches!(&tree["/apps/ts-fixture/scripts/main.etb"], Entry::File(actual) if actual == bytes)
+    );
 }

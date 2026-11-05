@@ -101,7 +101,7 @@ fn tile(
     let square = square
         .style(
             Style::neutral()
-                .bg(bg)
+                .background(bg)
                 .radius(28)
                 .width(Size::Px(96))
                 .height(Size::Px(96))
@@ -224,7 +224,7 @@ pub fn launcher(registry: &Registry) -> View<AppMsg> {
         .scrollable(false)
         .style(
             Style::neutral()
-                .bg(BG)
+                .background(BG)
                 .width(Size::Percent(100))
                 .height(Size::Percent(100)),
         )
@@ -308,7 +308,7 @@ pub fn launcher_managed(
                 .on_click(AppMsg::ManageCancel)
                 .style(
                     Style::neutral()
-                        .bg(BG)
+                        .background(BG)
                         .width(Size::Percent(100))
                         .height(Size::Percent(100))
                         .align(Align::Center),

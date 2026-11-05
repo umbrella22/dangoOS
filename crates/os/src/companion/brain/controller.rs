@@ -1,11 +1,11 @@
 //! Resident VM lifetime and isolated replacement across durable commits.
 use super::{
-    interface::{Inbox, Input},
+    input::{Inbox, Input},
     BrainVm, Output,
 };
 use crate::companion::behavior::affect::SensorEvent;
 use alloc::string::String;
-use lua_engine::RawAllocator;
+use app_host::RawAllocator;
 
 /// Resident brain ownership. Replacement validates init and first tick in an
 /// isolated VM; no candidate output escapes before the swap.
@@ -15,6 +15,41 @@ pub struct Controller {
     allocator: &'static RawAllocator,
     clock: Option<fn() -> u64>,
     error: Option<String>,
+    #[cfg(all(feature = "firmware", feature = "ts-engine"))]
+    execution: crate::platform::runtime::frequency::device::Budget,
+    #[cfg(all(feature = "firmware", feature = "embedscope"))]
+    profile: CallbackProfile,
+}
+
+#[cfg(all(feature = "firmware", feature = "embedscope"))]
+#[derive(Default)]
+struct CallbackProfile {
+    since: u64,
+    calls: u32,
+    total_us: u64,
+    max_us: u64,
+}
+#[cfg(all(feature = "firmware", feature = "embedscope"))]
+impl CallbackProfile {
+    fn record(&mut self, elapsed: u64) {
+        let now = crate::platform::runtime::time::now_us();
+        self.calls += 1;
+        self.total_us += elapsed;
+        self.max_us = self.max_us.max(elapsed);
+        if now.saturating_sub(self.since) >= 5_000_000 {
+            log::info!(
+                "brain: callbacks={} total_us={} max_us={} window_us={}",
+                self.calls,
+                self.total_us,
+                self.max_us,
+                now.saturating_sub(self.since)
+            );
+            *self = Self {
+                since: now,
+                ..Self::default()
+            };
+        }
+    }
 }
 impl Controller {
     pub fn new(
@@ -30,6 +65,10 @@ impl Controller {
             allocator,
             clock,
             error: None,
+            #[cfg(all(feature = "firmware", feature = "ts-engine"))]
+            execution: crate::platform::runtime::frequency::device::Budget::new(2_000),
+            #[cfg(all(feature = "firmware", feature = "embedscope"))]
+            profile: CallbackProfile::default(),
         })
     }
     pub fn inactive(
@@ -44,6 +83,10 @@ impl Controller {
             allocator,
             clock,
             error: Some(error),
+            #[cfg(all(feature = "firmware", feature = "ts-engine"))]
+            execution: crate::platform::runtime::frequency::device::Budget::new(2_000),
+            #[cfg(all(feature = "firmware", feature = "embedscope"))]
+            profile: CallbackProfile::default(),
         }
     }
     pub fn replace(&mut self, source: &str, now: u64) -> Result<(), String> {
@@ -95,7 +138,18 @@ impl Controller {
         self.dispatch_inbox(Inbox::Typed(input), now)
     }
     fn dispatch_inbox(&mut self, input: Inbox, now: u64) -> Option<String> {
-        let result = self.active.as_mut()?.rpc_inbox(input, now);
+        #[cfg(all(feature = "firmware", feature = "embedscope"))]
+        let started = crate::platform::runtime::time::now_us();
+        let active = self.active.as_mut()?;
+        #[cfg(all(feature = "firmware", feature = "ts-engine"))]
+        let result = self.execution.run(true, || active.rpc_inbox(input, now));
+        #[cfg(all(feature = "firmware", feature = "ts-engine"))]
+        self.execution.finish();
+        #[cfg(not(all(feature = "firmware", feature = "ts-engine")))]
+        let result = active.rpc_inbox(input, now);
+        #[cfg(all(feature = "firmware", feature = "embedscope"))]
+        self.profile
+            .record(crate::platform::runtime::time::now_us().saturating_sub(started));
 
         match result {
             Ok(v) => Some(v),

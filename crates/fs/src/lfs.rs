@@ -346,7 +346,12 @@ impl Fs {
             unsafe { mfs_destroy(raw.as_ptr()) };
             return Err(e);
         }
-        Ok(Self { raw, _dev: dev, read_only: false, geometry })
+        Ok(Self {
+            raw,
+            _dev: dev,
+            read_only: false,
+            geometry,
+        })
     }
 
     fn m(&self) -> *mut c_void {

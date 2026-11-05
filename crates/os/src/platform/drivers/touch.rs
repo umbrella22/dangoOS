@@ -27,7 +27,6 @@ const REG_RESOLUTION: u16 = 0xD1F8;
 const REG_PROJECT_ID: u16 = 0xD204;
 
 const CHIP_ID: u16 = 0x9220;
-const REPORT_ACK: u8 = 0xAB;
 const POINT_SIZE: usize = 5;
 /// 官方组件 MAX_POINTS = 2 → 报告 2×5+5 = 15 字节
 const MAX_POINTS: usize = 2;
@@ -41,7 +40,10 @@ pub use crate::platform::drivers::touch::protocol::TouchState;
 /// 无效数据不代表手指抬起，调用方应保留上一次有效指针状态。
 #[derive(Debug, Clone, Copy)]
 pub enum TouchError {
-    InvalidReport(protocol::ReportError),
+    InvalidReport {
+        error: protocol::ReportError,
+        report: [u8; REPORT_LEN],
+    },
     I2c {
         stage: &'static str,
         error: I2cError,
@@ -51,7 +53,9 @@ pub enum TouchError {
 impl core::fmt::Display for TouchError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::InvalidReport(error) => write!(f, "invalid report: {error:?}"),
+            Self::InvalidReport { error, report } => {
+                write!(f, "invalid report: {error:?} raw={report:02X?}")
+            }
             Self::I2c { stage, error } => write!(f, "I2C {stage}: {error}"),
         }
     }
@@ -83,16 +87,17 @@ impl Cst9220 {
         Some(dev)
     }
 
-    /// 读一份报告。错误单独返回，避免制造虚假的 PointerReleased。
+    /// 读一份报告；`Ok(None)` 表示没有新采样，保留上次指针状态。
+    /// 错误单独返回，避免制造虚假的 PointerReleased。
     ///
     /// 地址写入、裸读和 ACK 保持独立事务，但共用一次总线租约。
-    pub async fn poll(&mut self) -> Result<TouchState, TouchError> {
+    pub async fn poll(&mut self) -> Result<Option<TouchState>, TouchError> {
         let mut report = [0u8; REPORT_LEN];
         crate::platform::buses::shared_i2c::touch_report_async(
             self.addr,
             REG_REPORT,
             &mut report,
-            self.ack_reports.then_some(REPORT_ACK),
+            self.ack_reports.then_some(protocol::REPORT_ACK),
         )
         .await
         .unwrap_or(Err(I2cError::FifoExceeded))
@@ -106,7 +111,7 @@ impl Cst9220 {
             crate::platform::board::LCD_WIDTH,
             crate::platform::board::LCD_HEIGHT,
         )
-        .map_err(TouchError::InvalidReport)
+        .map_err(|error| TouchError::InvalidReport { error, report })
     }
 
     // ---- 官方 identify 流程: D11E 探测 → D109 正常 → D101 报告页 → 身份读取 ----

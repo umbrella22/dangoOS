@@ -29,7 +29,7 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
                     .width(Size::Px(400))
                     .height(Size::Px(52))
                     .font(font_24())
-                    .fg(TEXT)
+                    .text_color(TEXT)
                     .align(Align::TopLeft)
                     .offset(40, 112),
             )
@@ -43,7 +43,7 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
                     .width(Size::Px(188))
                     .height(Size::Px(44))
                     .font(font_24())
-                    .fg(TEXT)
+                    .text_color(TEXT)
                     .align(Align::TopLeft)
                     .offset(40, 177),
             )
@@ -57,8 +57,8 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
                     .width(Size::Px(188))
                     .height(Size::Px(44))
                     .font(font_24())
-                    .bg(ACCENT)
-                    .fg(TEXT)
+                    .background(ACCENT)
+                    .text_color(TEXT)
                     .align(Align::TopLeft)
                     .offset(252, 177),
             )
@@ -71,19 +71,23 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
                 Style::default()
                     .width(Size::Px(400))
                     .height(Size::Px(184))
-                    .bg(BG)
+                    .background(BG)
                     .align(Align::TopMid)
                     .offset(0, 238),
             )
             .part_style(
                 Part::Items,
                 Style::neutral()
-                    .bg(CARD_HI)
-                    .fg(TEXT)
+                    .background(CARD_HI)
+                    .text_color(TEXT)
                     .font(font_20())
                     .radius(8),
             )
-            .part_state_style(Part::Items, State::PRESSED, Style::default().bg(ACCENT)),
+            .part_state_style(
+                Part::Items,
+                State::PRESSED,
+                Style::default().background(ACCENT),
+            ),
     )
     .child(
         text(

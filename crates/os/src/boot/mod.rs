@@ -22,7 +22,7 @@ use esp_rtos::embassy::InterruptExecutor;
 use log::{info, warn};
 
 #[cfg(not(feature = "dual-core-ui"))]
-use crate::apps::lua::task as lua;
+use crate::apps::runtime as lua;
 #[cfg(not(feature = "dual-core-ui"))]
 use crate::shell::runtime as ui;
 use {
@@ -327,8 +327,8 @@ pub async fn run(spawner: Spawner) {
     #[cfg(not(feature = "dual-core-ui"))]
     {
         spawner.spawn(ui::ui_task(plane_ui).unwrap());
-        spawner.spawn(lua::lua_task().unwrap());
-        info!("UI/Lua executor on Core0 (single-core mode)");
+        spawner.spawn(lua::app_task().unwrap());
+        info!("UI/app executor on Core0 (single-core mode)");
     }
     #[cfg(feature = "dual-core-ui")]
     ui_executor::start(peripherals.CPU_CTRL, plane_ui);

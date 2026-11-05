@@ -56,24 +56,7 @@ impl Default for Limits {
     }
 }
 
-/// Memory for Lua's heap. The firmware routes this to PSRAM.
-pub struct RawAllocator {
-    pub alloc: unsafe fn(Layout) -> *mut u8,
-    pub dealloc: unsafe fn(*mut u8, Layout),
-}
-
-unsafe fn global_alloc(layout: Layout) -> *mut u8 {
-    alloc::alloc::alloc(layout)
-}
-unsafe fn global_dealloc(ptr: *mut u8, layout: Layout) {
-    alloc::alloc::dealloc(ptr, layout)
-}
-
-/// The Rust global allocator.
-pub static GLOBAL_ALLOCATOR: RawAllocator = RawAllocator {
-    alloc: global_alloc,
-    dealloc: global_dealloc,
-};
+pub use app_host::{RawAllocator, GLOBAL_ALLOCATOR};
 
 /// What the embedding provides to a script. Everything but `print` is
 /// optional; the defaults behave like a board without that hardware.

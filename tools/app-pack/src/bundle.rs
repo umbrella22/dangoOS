@@ -26,13 +26,26 @@ fn write_tree(root: &Path, tree: &Tree) -> Result<()> {
     }
     Ok(())
 }
+fn bundle_kind(package: &Package) -> Result<&'static str> {
+    let Some(Entry::File(bytes)) = package.files.get("launcher.json") else {
+        return Err("launcher.json missing".into());
+    };
+    let text = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
+    let manifest = os::apps::registry::parse_manifest(text, &package.id)?;
+    Ok(if manifest.entry.ends_with(".etb") {
+        "embedts-application"
+    } else {
+        "dango-lua-application"
+    })
+}
 pub fn export(package: &Package, out: &Path) -> Result<Value> {
     package.validate()?;
+    let kind = bundle_kind(package)?;
     validate_transport(&package.files)?;
     fs::create_dir(out).map_err(|e| e.to_string())?;
     write_tree(&out.join("payload"), &package.files)?;
     write_tree(&out.join("documentation"), &package.documentation)?;
-    let report = json!({"schema":1, "kind":"dango-lua-application", "id":package.id,
+    let report = json!({"schema":1, "kind":kind, "id":package.id,
         "files":inventory(&package.files), "documentation":inventory(&package.documentation)});
     write_new(
         &out.join("bundle.json"),
@@ -46,7 +59,11 @@ pub fn verify(root: &Path) -> Result<Value> {
         serde_json::from_slice(&fs::read(root.join("bundle.json")).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
     crate::image::require(
-        report["schema"] == 1 && report["kind"] == "dango-lua-application",
+        report["schema"] == 1
+            && matches!(
+                report["kind"].as_str(),
+                Some("dango-lua-application" | "embedts-application")
+            ),
         "unsupported application bundle",
     )?;
     let id = report["id"].as_str().ok_or("bundle id missing")?;
@@ -66,6 +83,10 @@ pub fn verify(root: &Path) -> Result<Value> {
         documentation,
     };
     package.validate()?;
+    crate::image::require(
+        report["kind"] == bundle_kind(&package)?,
+        "application engine kind mismatch",
+    )?;
     validate_transport(&package.files)?;
     crate::image::require(
         inventory(&package.files) == report["files"]

@@ -5,11 +5,26 @@ use alloc::{format, string::String};
 
 use crate::companion::brain::SOURCE_MAX;
 
+pub const UPLOAD_NAME: &str = if cfg!(feature = "ts-engine") {
+    "source.etb.hex"
+} else {
+    "source.lua"
+};
 pub const ROOT: &str = "/data/brain";
+#[cfg(feature = "lua-engine")]
 pub const ACTIVE: &str = "/data/brain/active.lua";
 pub const STAGING: &str = "/data/brain/.incoming";
+#[cfg(feature = "lua-engine")]
 pub const STAGED_SOURCE: &str = "/data/brain/.incoming/resident/source.lua";
+#[cfg(feature = "lua-engine")]
 const NEXT: &str = "/data/brain/.next.lua";
+
+#[cfg(feature = "ts-engine")]
+pub const ACTIVE: &str = "/data/brain/active.etb.hex";
+#[cfg(feature = "ts-engine")]
+pub const STAGED_SOURCE: &str = "/data/brain/.incoming/resident/source.etb.hex";
+#[cfg(feature = "ts-engine")]
+const NEXT: &str = "/data/brain/.next.etb.hex";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -106,7 +121,7 @@ pub fn error_line(text: &str) -> String {
     out
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "lua-engine"))]
 mod tests {
     use super::*;
     use ::fs::{Fs, Geometry, RamDevice};
@@ -127,7 +142,7 @@ mod tests {
         let new = "return {on_event=function()end,tick=function()fox.set_expression('Angry')end}";
         let mut v = vfs();
         persist(&mut v, Some(old)).unwrap();
-        let mut brain = Controller::new(old, 0, &lua_engine::GLOBAL_ALLOCATOR, None).unwrap();
+        let mut brain = Controller::new(old, 0, &app_host::GLOBAL_ALLOCATOR, None).unwrap();
         assert!(brain
             .replace_with_commit("error('bad candidate')", 1, || persist(&mut v, Some("bad")))
             .is_err());

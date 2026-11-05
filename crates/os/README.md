@@ -11,7 +11,7 @@ HAL、执行器和设备任务在实际子模块上通过 `target_os = "none"` �
 | `boot` | 堆 region、硬件与执行器初始化，服务启动及存储恢复接线 |
 | `companion` | 行为与个性、常驻 brain、角色动画/渲染/皮肤和 Home 控件 |
 | `shell` | 唯一路由、页面、组件、主题、生命周期协调和 UI 循环 |
-| `apps` | 应用注册与管理、前台 Lua VM 和 native UI 桥接 |
+| `apps` | 应用注册与管理、所选前台 VM 和独立 native UI 桥接 |
 | `services` | 音频、相机、无线、输入、显示、反馈、电源、偏好、计时器与更新 |
 | `platform` | 板型、外设驱动、共享总线、存储、执行器及 C 运行支持 |
 | `console` | USB CDC 日志/传输、协议会话和功能请求分派 |
@@ -19,16 +19,16 @@ HAL、执行器和设备任务在实际子模块上通过 `target_os = "none"` �
 
 ## 任务调度
 
-默认 `dual-core-ui` 使用 Core1 UI/Lua 线程；Core0 主线程运行输入、传感器和无线，
+默认 `dual-core-ui` 使用 Core1 UI/应用线程；Core0 主线程运行输入、传感器和无线，
 Core0 服务线程处理同步文件与资源工作。显示和音频继续使用 Core0 中断执行器。
-关闭默认 feature 时复用 Core0 线程执行器。核心绑定、栈和优先级由
+单核构建关闭默认 features 并显式选择一个脚本引擎，复用 Core0 线程执行器。核心绑定、栈和优先级由
 `boot` 与 `platform/runtime/executors` 装配，详情见 [双核任务](../../docs/architecture/dual-core.md)。
 
 | 任务入口 | 执行位置 | 行为 |
 | --- | --- | --- |
 | `services/display/plane.rs` | Core0 中断，FROM_CPU_INTR1，优先级 2 | 独占 CO5300；352×336 Home 画布位于面板 (64,88)，按既有分块协议执行 QSPI DMA；Screen/Snapshot/Pool 租约保护在途像素 |
 | `shell/runtime/mod.rs` | Core1 UI 线程 | 独占 LVGL；传感器与指针按既有顺序处理；50 ms 动画节奏及紧急变更绘制、导航和帧交接 |
-| `apps/lua/task.rs` | Core1 UI 线程 | 执行前台应用 VM；停止状态在 VM 析构后发布，原生桥接清理继续由 UI 任务处理 |
+| `apps/runtime.rs` → `apps/lua/task.rs` 或 `apps/ts.rs` | Core1 UI 线程 | 执行所选前台 VM；停止状态在 VM 析构后发布，原生桥接清理继续由 UI 任务处理 |
 | `boot::usb_task`、`console` | Core0 服务线程 | USB 栈与 CDC 收发、日志及延迟存储挂载；启动时优先提供控制台 |
 | `services/input/touch.rs`、`sensors.rs` | Core0 主线程 | CST9220、BMI270、BMM150、电量与扩展槽输入，输出有界事件 |
 | `services/feedback/haptic`、`lights` | Core0 主线程 | RMT 马达波形与扩展板 WS2812 心情灯 |
@@ -60,7 +60,7 @@ RSSI，界面显示 Wi-Fi 图标、信号/状态及蓝牙状态；未知信号�
 - Embassy 依赖包含 `embassy-executor 0.10`、`embassy-time 0.5`、`embassy-usb 0.6`、
   `embassy-futures 0.1`、`embassy-sync 0.8`。
 - ESP 依赖位于 `[target.'cfg(target_os = "none")'.dependencies]`。
-  `rs_lvgl`、`rs_lvgl_ui`、`log`、`lua-engine` 和 `fs` 是普通依赖，因此库可以在主机构建。
+  `rs_lvgl`、`rs_lvgl_ui`、`log`、`app-host`、所选引擎和 `fs` 是普通依赖，因此库可以在主机构建。
 
 ## 构建、测试与更新
 
@@ -70,8 +70,17 @@ RSSI，界面显示 Wi-Fi 图标、信号/状态及蓝牙状态；未知信号�
 cargo test -p os --offline
 ./scripts/check/drivers.sh
 cargo fw --offline
+# TS 开发固件；Lua 与 TS features 互斥
+cargo fw-ts --offline
 python3 scripts/device/console.py ota <固件.bin>
 ```
+
+默认选择 `lua-engine`。`--no-default-features` 后必须显式选择 `lua-engine` 或
+`ts-engine`；同时选择或均未选择时构建失败，`--all-features` 也会失败。
+TS 通过外部 `embedts-engine` 运行预编译 `.etb` 包，提供异步入口、共享原生 UI、services 存储和系统/硬件桥。
+同时提供 framebuffer、字体、图像处理、独立 worker 和受限常驻 TS brain。
+`brain-push` 接受主机编译的 `.etb`，候选验证和首 tick 成功后才提交持久选择。
+完整构建和限制见外部 [embedts-engine](https://github.com/umbrella22/EmbedTypescript/blob/main/engine/README.md)。
 
 OTA 输入必须是已经生成并验证的固件 BIN。下载模式恢复入口为
 `scripts/device/flash.sh --rom-recovery-slot0 <PORT>`；该入口只写 slot 0，并保留
@@ -80,7 +89,7 @@ OTA 输入必须是已经生成并验证的固件 BIN。下载模式恢复入口
 ## 可选 EmbedScope 调试
 
 `embedscope` 默认关闭。适配器使用 EmbedScope SDK，复用系统的
-LVGL 9.6 / rs_lvgl 0.3.1。
+LVGL 9.6 / rs_lvgl 0.4.0。
 
 ```sh
 # release 诊断固件：独立的第二路 CDC、Agent、日志、树、显示捕获和输入
@@ -118,3 +127,5 @@ espflash monitor --chip esp32s31 --port /dev/cu.usbmodemmosaico_s31_r11
 
 如果 `espflash monitor` 没有输出，可用 pyserial 等串口工具读取。
 运行时端口只在固件运行期间存在，下载模式使用另一个端口名。
+
+TS 构建器、SDK 与应用源码位于独立 EmbedTypescript 仓库。OS 构建与测试消费 `artifacts/embedts`，不包含源码编译依赖。接入流程见 [EmbedTS 接入](EMBEDTS.md)。

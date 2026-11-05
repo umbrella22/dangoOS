@@ -186,14 +186,14 @@ fn shell_native_queue_and_controlled_writeback() {
         // is a fixture policy, not the product's logical speaker volume limit.
         struct Clamped(MosaicoApp);
         impl App for Clamped {
-            type Msg = AppMsg;
-            fn update(&mut self, msg: AppMsg) {
-                self.0.update(msg);
+            type Action = AppMsg;
+            fn update(&mut self, action: AppMsg) {
+                self.0.update(action);
             }
-            fn update_with_render(&mut self, msg: AppMsg) -> RenderDecision {
-                self.0.update_with_render(match msg {
+            fn update_with_render(&mut self, action: AppMsg) -> RenderDecision {
+                self.0.update_with_render(match action {
                     AppMsg::AudioVolume(v) => AppMsg::AudioVolume(v.min(50)),
-                    msg => msg,
+                    action => action,
                 })
             }
             fn view(&self, theme: &Theme) -> View<AppMsg> {
@@ -270,19 +270,19 @@ fn real_pages_strict_validation_and_skip_decisions() {
 
         struct Overlay(MosaicoApp, bool);
         impl App for Overlay {
-            type Msg = AppMsg;
-            fn update(&mut self, msg: AppMsg) {
-                if let AppMsg::Lights(on) = msg {
+            type Action = AppMsg;
+            fn update(&mut self, action: AppMsg) {
+                if let AppMsg::Lights(on) = action {
                     self.1 = on;
                 }
-                self.0.update(msg);
+                self.0.update(action);
             }
-            fn update_with_render(&mut self, msg: AppMsg) -> RenderDecision {
-                if matches!(msg, AppMsg::Lights(_)) {
-                    self.update(msg);
+            fn update_with_render(&mut self, action: AppMsg) -> RenderDecision {
+                if matches!(action, AppMsg::Lights(_)) {
+                    self.update(action);
                     RenderDecision::Reconcile
                 } else {
-                    self.0.update_with_render(msg)
+                    self.0.update_with_render(action)
                 }
             }
             fn view(&self, theme: &Theme) -> View<AppMsg> {
@@ -360,9 +360,9 @@ struct Resources {
     fail: bool,
 }
 impl App for Resources {
-    type Msg = AppMsg;
-    fn update(&mut self, msg: AppMsg) {
-        self.shell.update(msg);
+    type Action = AppMsg;
+    fn update(&mut self, action: AppMsg) {
+        self.shell.update(action);
     }
     fn view(&self, theme: &Theme) -> View<AppMsg> {
         let mut view = self.shell.view(theme);

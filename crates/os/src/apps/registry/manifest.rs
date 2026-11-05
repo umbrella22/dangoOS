@@ -55,7 +55,7 @@ pub fn parse_manifest(text: &str, dir_name: &str) -> Result<Manifest, String> {
         return Err(format!("id {id:?} does not match the directory"));
     }
     let entry = string("entry")?.ok_or("entry missing")?;
-    if !relative_path_is_valid(&entry) || !entry.ends_with(".lua") {
+    if !relative_path_is_valid(&entry) || !(entry.ends_with(".lua") || entry.ends_with(".etb")) {
         return Err(format!("bad entry {entry:?}"));
     }
     let icon = string("icon")?;

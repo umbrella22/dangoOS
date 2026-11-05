@@ -82,7 +82,7 @@ python3 scripts/release/package.py verify target/release-candidate --allow-dirty
 `--allow-dirty` 只用于检查本地未提交改动，manifest 会记录该状态，发布器拒绝发布这类产物。
 输出目录必须不存在。`--upstream-image` 可指定已下载的官方底包，仍需匹配固定的完整哈希。
 
-正式发布先更新 workspace 版本及 Cargo.lock 中四个本地包的版本，保留外部依赖版本，
+正式发布先更新 workspace 版本及 Cargo.lock 中各 workspace 包的版本，保留外部依赖版本，
 并添加对应的 `notes/vX.Y.Z.md`。提交后等待分支流水线通过，再创建并推送 annotated tag：
 
 ```sh

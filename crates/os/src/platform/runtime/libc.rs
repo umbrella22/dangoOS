@@ -12,7 +12,7 @@
 //! - `abort` / `_exit`, which Lua only reaches on an internal panic.
 //!
 //! Lua's own heap does not come through here: it uses `lua_Alloc` on PSRAM
-//! (see `crate::apps::lua::task`).
+//! (see `crate::apps::runtime`).
 
 use core::ffi::{c_char, c_int, c_void};
 

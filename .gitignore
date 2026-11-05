@@ -13,3 +13,5 @@ __pycache__/
 # Private artwork, source images and generation prompts. Generated build inputs
 # live in crates/os/src/assets and dango-skin.
 /assets/
+node_modules/
+dist/

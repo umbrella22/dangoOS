@@ -1,0 +1,2 @@
+# Binary application inputs are produced by the external EmbedTS builder.
+*.etb binary

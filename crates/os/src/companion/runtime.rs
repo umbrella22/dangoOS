@@ -255,7 +255,7 @@ impl Runtime {
         &mut self,
         source: &str,
         now: u64,
-        allocator: &'static lua_engine::RawAllocator,
+        allocator: &'static app_host::RawAllocator,
         clock: Option<fn() -> u64>,
     ) -> Result<(), alloc::string::String> {
         let candidate =
@@ -502,6 +502,24 @@ mod tests {
         crate::companion::behavior::affect::EventSource,
         crate::companion::behavior::affect::ReactionReason,
     };
+
+    #[cfg(feature = "ts-engine")]
+    #[test]
+    fn ts_rejects_lua_source_and_retains_native_reactions() {
+        let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
+        assert!(runtime
+            .enable_brain("return {}", 0, &app_host::GLOBAL_ALLOCATOR, None)
+            .is_err());
+        assert!(!runtime.brain_active());
+        assert!(runtime.brain_error().unwrap().contains("bytecode envelope"));
+        runtime.on_sensor(SensorEvent {
+            at_ms: 100,
+            source: EventSource::Touch,
+            kind: EventKind::TouchPoke,
+        });
+        runtime.tick(100);
+        assert_eq!(runtime.expression(), Expression::Puzzled);
+    }
     use {
         crate::companion::behavior::personality::SCREEN_CENTER_X,
         crate::companion::behavior::personality::SCREEN_CENTER_Y,
@@ -515,7 +533,7 @@ mod tests {
             .enable_brain(
                 crate::companion::brain::DEFAULT_SOURCE,
                 0,
-                &lua_engine::GLOBAL_ALLOCATOR,
+                &app_host::GLOBAL_ALLOCATOR,
                 None,
             )
             .unwrap();
@@ -561,7 +579,7 @@ mod tests {
             .enable_brain(
                 "error('bad persisted selection')",
                 6100,
-                &lua_engine::GLOBAL_ALLOCATOR,
+                &app_host::GLOBAL_ALLOCATOR,
                 None
             )
             .is_err());
@@ -569,21 +587,24 @@ mod tests {
         assert_eq!(runtime.expression(), Expression::Dying);
         assert_eq!(native.tick(6200), runtime.tick(6200));
         assert_eq!(runtime.expression(), native.expression());
-        runtime
-            .reload_brain(
-                "return {on_event=function()end,tick=function()fox.set_expression('Happy')end}",
-                6300,
-            )
-            .unwrap();
+        #[cfg(feature = "lua-engine")]
+        let happy = "return {on_event=function()end,tick=function()fox.set_expression('Happy')end}"
+            .to_string();
+        #[cfg(feature = "ts-engine")]
+        let happy = crate::companion::brain::ts_vm::encode(include_bytes!(
+            "../../../../artifacts/embedts/fixtures/brain-happy.etb"
+        ));
+        runtime.reload_brain(&happy, 6300).unwrap();
         assert!(runtime.brain_active());
         assert_eq!(runtime.expression(), Expression::Happy);
     }
 
+    #[cfg(feature = "lua-engine")]
     #[test]
     fn native_urgent_reflexes_override_custom_brain_and_default_off_home_filter_matches() {
         let control = FoxControl::new(Expression::Idle);
         let mut custom = Runtime::new(0, Rc::clone(&control));
-        custom.enable_brain("return {on_event=function()end,tick=function()fox.set_expression('Happy');fox.play('Charging',5000);haptic.play('Happy')end}",0,&lua_engine::GLOBAL_ALLOCATOR,None).unwrap();
+        custom.enable_brain("return {on_event=function()end,tick=function()fox.set_expression('Happy');fox.play('Charging',5000);haptic.play('Happy')end}",0,&app_host::GLOBAL_ALLOCATOR,None).unwrap();
         custom.on_sensor(SensorEvent {
             at_ms: 100,
             source: EventSource::System,
@@ -603,7 +624,7 @@ mod tests {
         lua.enable_brain(
             crate::companion::brain::DEFAULT_SOURCE,
             0,
-            &lua_engine::GLOBAL_ALLOCATOR,
+            &app_host::GLOBAL_ALLOCATOR,
             None,
         )
         .unwrap();
@@ -631,6 +652,7 @@ mod tests {
         assert_eq!(native.expression(), lua.expression());
     }
 
+    #[cfg(feature = "lua-engine")]
     #[test]
     fn resident_runtime_is_warm_and_recovers_after_bad_boot_and_runtime_failure() {
         let control = FoxControl::new(Expression::Idle);
@@ -641,7 +663,7 @@ mod tests {
             .enable_brain(
                 "error('bad persisted source')",
                 0,
-                &lua_engine::GLOBAL_ALLOCATOR,
+                &app_host::GLOBAL_ALLOCATOR,
                 None
             )
             .is_err());

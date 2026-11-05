@@ -121,11 +121,14 @@ impl Session {
             return Err("photo upload requires a nonempty JPG/JPEG/PNG/BIN file".into());
         }
         if self.kind == UploadKind::Brain
-            && (rel != "source.lua"
+            && (rel != crate::companion::brain::store::UPLOAD_NAME
                 || size == 0
                 || size as usize > crate::companion::brain::SOURCE_MAX)
         {
-            return Err("brain upload requires source.lua of 1..65536 bytes".into());
+            return Err(format!(
+                "brain upload requires {} of 1..65536 bytes",
+                crate::companion::brain::store::UPLOAD_NAME
+            ));
         }
         if self.kind == UploadKind::Fonts
             && (rel != "fonts.bin" || size as usize != crate::services::resources::fonts::BYTES)

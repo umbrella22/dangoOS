@@ -1,4 +1,4 @@
-//! UI and Lua stay on one executor pinned to Core1. Hardware drivers and their
+//! UI and the selected app engine share one executor pinned to Core1. Hardware drivers and their
 //! interrupt bindings stay on Core0; commands and frame leases cross by channel.
 
 use core::alloc::Layout;
@@ -33,9 +33,9 @@ pub fn start(
             alloc::boxed::Box::leak(alloc::boxed::Box::new(esp_rtos::embassy::Executor::new()));
         executor.run(|spawner| {
             spawner.spawn(crate::shell::runtime::ui_task(plane).unwrap());
-            spawner.spawn(crate::apps::lua::task::lua_task().unwrap());
+            spawner.spawn(crate::apps::runtime::app_task().unwrap());
             log::info!(
-                "UI/Lua executor on {:?}, internal stack={} bytes; drivers/USB/radio on Core0",
+                "UI/app executor on {:?}, internal stack={} bytes; drivers/USB/radio on Core0",
                 Cpu::current(),
                 STACK_BYTES
             );

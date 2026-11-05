@@ -81,7 +81,7 @@ use {
 use {crate::shell::navigation::transition, crate::shell::navigation::transition::Direction};
 
 use {
-    crate::apps::device as apps, crate::apps::lua::task as lua,
+    crate::apps::device as apps, crate::apps::runtime as lua,
     crate::companion::skins::device as skins, crate::services::display::plane,
     crate::services::display::plane::Frame, crate::services::display::plane::PlaneJob,
     crate::services::display::plane::PlaneUi, crate::services::feedback::haptic,
@@ -168,20 +168,21 @@ pub async fn ui_task(mut plane: PlaneUi) {
     // first tap look ancient or future-dated.
     let boot_ms = now_us() / 1000;
     let mut runtime = Runtime::new(boot_ms, Rc::clone(&control));
-    // The bundled brain needs no filesystem. Start before draining any input
-    // so one-shot module edges and early battery/light state are retained while
-    // USB startup mounts storage in another task.
-    if let Err(error) = runtime.enable_brain(
-        crate::companion::brain::DEFAULT_SOURCE,
-        boot_ms,
-        &crate::apps::lua::task::PSRAM,
-        Some(crate::platform::runtime::resident_budget::clock_us),
-    ) {
-        warn!("brain: bundled startup failed, native fallback: {error}");
+    {
+        // The bundled brain needs no filesystem. Start before draining any input
+        // so one-shot module edges and early battery/light state are retained while
+        // USB startup mounts storage in another task.
+        if let Err(error) = runtime.enable_brain(
+            crate::companion::brain::DEFAULT_SOURCE,
+            boot_ms,
+            &crate::apps::runtime::PSRAM,
+            Some(crate::platform::runtime::resident_budget::clock_us),
+        ) {
+            warn!("brain: bundled startup failed, native fallback: {error}");
+        }
     }
     let mut brain_booted = false;
-    let mut lua_lvgl =
-        crate::apps::lua::native_ui::LuaLvglService::new(WIDTH as u16, HEIGHT as u16);
+    let mut lua_lvgl = crate::apps::native_ui::NativeUiService::new(WIDTH as u16, HEIGHT as u16);
     // Touch is held off through the entrance: a finger resting on the glass
     // during boot must not interrupt the drop.
     runtime.ignore_touch_until(boot_ms + MosaicoApp::touch_hold_off_ms());
@@ -397,7 +398,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
             crate::companion::brain::control::boot(
                 &mut runtime,
                 now_ms,
-                &crate::apps::lua::task::PSRAM,
+                &crate::apps::runtime::PSRAM,
                 Some(crate::platform::runtime::resident_budget::clock_us),
             )
             .await;
@@ -590,11 +591,13 @@ pub async fn ui_task(mut plane: PlaneUi) {
         let preferences = settings_sync.poll(&mut app, &mut ui, port.is_busy(), &mut frames, radio);
 
         if lua::take_lvgl_release() || !is_lua_page(app.page()) || buttons::shutdown_requested() {
-            lua_lvgl.release();
+            release_lua_native(&mut lua_lvgl);
         }
         if frames.slide == Slide::Idle {
-            if let Some(command) = lua::take_lvgl_command() {
-                lua::complete_lvgl(execute_lua_native(&mut lua_lvgl, command));
+            if lua_lvgl.has_pending() {
+                continue_lua_native(&mut lua_lvgl);
+            } else if let Some(command) = lua::take_lvgl_command() {
+                execute_lua_native(&mut lua_lvgl, command);
             }
         }
 
@@ -648,9 +651,13 @@ pub async fn ui_task(mut plane: PlaneUi) {
         // Input, behavior, ticking and rendering stay in the normal loop.
         let deadline = Instant::now() + UI_PERIOD;
 
-        let mut window = crate::apps::lua::native_ui::RpcWindow::until(deadline.as_micros());
-        let mut return_to_main = false;
-        if frames.slide == Slide::Idle && is_lua_page(app.page()) && !lua::screen_open() {
+        let mut window = crate::apps::native_ui::RpcWindow::until(deadline.as_micros());
+        let mut return_to_main = frames.slide == Slide::Idle && lua_lvgl.has_pending();
+        if !return_to_main
+            && frames.slide == Slide::Idle
+            && is_lua_page(app.page())
+            && !lua::screen_open()
+        {
             while window.available(Instant::now().as_micros()) {
                 match select(Timer::at(deadline), lua::wait_lvgl_ready()).await {
                     Either::First(()) => break,
@@ -665,14 +672,22 @@ pub async fn ui_task(mut plane: PlaneUi) {
                             break;
                         }
                         if let Some(command) = lua::take_lvgl_command() {
-                            lua::complete_lvgl(execute_lua_native(&mut lua_lvgl, command));
+                            execute_lua_native(&mut lua_lvgl, command);
                             window.completed();
+                            if lua_lvgl.has_pending() {
+                                return_to_main = true;
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
-        if !return_to_main {
+        if return_to_main {
+            // Resume through the main loop so stop, input, lifecycle and other
+            // Embassy tasks get a turn between bounded native slices.
+            embassy_futures::yield_now().await;
+        } else {
             Timer::at(deadline).await;
         }
     }
@@ -688,4 +703,4 @@ use crate::shell::lifecycle::is_lua_page;
 use app_requests::apply_apps_request;
 
 use frames::Slide;
-use native::execute_lua_native;
+use native::{continue_lua_native, execute_lua_native, release_lua_native};

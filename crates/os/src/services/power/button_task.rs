@@ -1,5 +1,6 @@
 //! GPIO7/61 low-active buttons and GPIO57 open-drain power latch.
 //! Owns all three pins; independent of I2C/slot probing and Lua lifetime.
+use app_host::OnboardButtons;
 use core::{
     cell::RefCell,
     sync::atomic::{AtomicBool, Ordering},
@@ -9,7 +10,6 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal}
 use embassy_time::{Instant, Timer};
 use esp_hal::gpio::{Input, Output};
 use log::{info, warn};
-use lua_engine::OnboardButtons;
 use {
     crate::companion::behavior::affect::EventKind, crate::companion::behavior::affect::EventSource,
     crate::companion::behavior::affect::SensorEvent,
@@ -23,7 +23,7 @@ static SNAPSHOT: Mutex<RefCell<OnboardButtons>> = Mutex::new(RefCell::new(Onboar
     ready: 0,
     pressed: [0; 2],
     sequence: 0,
-    edges: [lua_engine::ButtonEdge {
+    edges: [app_host::ButtonEdge {
         sequence: 0,
         at_ms: 0,
         key: 0,

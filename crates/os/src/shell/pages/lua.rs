@@ -32,7 +32,7 @@ pub fn lua_app(entry: Option<&AppEntry>) -> View<AppMsg> {
         .scrollable(false)
         .style(
             Style::neutral()
-                .bg(Color::rgb(0, 0, 0))
+                .background(Color::rgb(0, 0, 0))
                 .width(Size::Percent(100))
                 .height(Size::Percent(100)),
         )

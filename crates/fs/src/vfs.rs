@@ -84,15 +84,26 @@ impl Vfs {
     }
 
     pub fn mount_names(&self) -> impl Iterator<Item = &str> {
-        self.mounts.iter().map(|m| m.prefix.as_str()).chain(self.aliases.iter().map(|(name, _)| name.as_str()))
+        self.mounts
+            .iter()
+            .map(|m| m.prefix.as_str())
+            .chain(self.aliases.iter().map(|(name, _)| name.as_str()))
     }
 
     /// A second path to the same filesystem and descriptor namespace. The
     /// filesystem is owned once; cross-alias rename remains atomic.
     pub fn alias(&mut self, name: &str, target: &str) -> Result<(), Errno> {
-        if name.is_empty() || name.contains('/') { return Err(Errno::INVAL); }
-        if self.mount_names().any(|m| m == name) { return Err(Errno::EXIST); }
-        let index = self.mounts.iter().position(|m| m.prefix == target).ok_or(Errno::NOENT)?;
+        if name.is_empty() || name.contains('/') {
+            return Err(Errno::INVAL);
+        }
+        if self.mount_names().any(|m| m == name) {
+            return Err(Errno::EXIST);
+        }
+        let index = self
+            .mounts
+            .iter()
+            .position(|m| m.prefix == target)
+            .ok_or(Errno::NOENT)?;
         self.aliases.push((name.into(), index));
         Ok(())
     }
@@ -108,7 +119,12 @@ impl Vfs {
             .mounts
             .iter()
             .position(|m| m.prefix == *first)
-            .or_else(|| self.aliases.iter().find(|(name, _)| name == first).map(|(_, index)| *index))
+            .or_else(|| {
+                self.aliases
+                    .iter()
+                    .find(|(name, _)| name == first)
+                    .map(|(_, index)| *index)
+            })
             .ok_or(Errno::NOENT)?;
         let mut inner = String::from("/");
         inner.push_str(&rest.join("/"));

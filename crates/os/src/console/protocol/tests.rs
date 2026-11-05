@@ -60,6 +60,49 @@ fn replies(effects: &[Effect]) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "ts-engine")]
+#[test]
+fn ts_brain_commands_defer_to_ui_and_preserve_the_persisted_selection() {
+    use crate::companion::brain::store;
+    let mut v = vfs();
+    store::persist(&mut v, Some("old envelope")).unwrap();
+    let mut session = Session::new();
+    for command in ["brain-status", "brain-default", "brain-reload"] {
+        let effects = run(
+            &mut v,
+            &mut session,
+            format!("@mosaico {command}\n").as_bytes(),
+            1,
+        );
+        assert!(effects.iter().any(|e| matches!(e, Effect::Brain(_))));
+        assert_eq!(
+            store::selected(&mut v).unwrap().as_deref(),
+            Some("old envelope")
+        );
+    }
+    let mut stream = b"@mosaico brain-begin\n".to_vec();
+    let data = b"etb1:00";
+    stream.extend_from_slice(
+        format!(
+            "@mosaico file {} {} {:08x}\n",
+            store::UPLOAD_NAME,
+            data.len(),
+            crate::formats::crc32::crc32(data)
+        )
+        .as_bytes(),
+    );
+    stream.extend_from_slice(data);
+    stream.extend_from_slice(b"@mosaico brain-commit\n");
+    let effects = run(&mut v, &mut session, &stream, 1);
+    assert!(effects
+        .iter()
+        .any(|e| matches!(e,Effect::Brain(store::Action::Install(s))if s=="etb1:00")));
+    assert_eq!(
+        store::selected(&mut v).unwrap().as_deref(),
+        Some("old envelope")
+    );
+}
+
 #[test]
 fn pinned_fonts_stage_verify_and_publish_without_removing_rollback_resources() {
     use crate::services::resources::fonts;
@@ -416,6 +459,7 @@ fn photo_paths_kind_and_management_barrier_are_enforced() {
     assert!(r[0].contains("pending recovery"));
 }
 
+#[cfg(feature = "lua-engine")]
 #[test]
 fn brain_transfer_is_scoped_and_commit_is_deferred_before_next_command() {
     use {crate::companion::brain::store as brain_store, crate::companion::brain::store::Action};
@@ -456,6 +500,7 @@ fn brain_transfer_is_scoped_and_commit_is_deferred_before_next_command() {
     }
 }
 
+#[cfg(feature = "lua-engine")]
 #[test]
 fn bad_or_interrupted_brain_upload_cannot_touch_active_source() {
     use crate::companion::brain::store as brain_store;
@@ -521,7 +566,7 @@ fn push_commits_app_at_any_chunking() {
         assert!(v.stat(STAGING).is_err(), "staging is cleaned up");
         let reg = Registry::scan(&mut v, &mut IconCache::new(), &mut |_| {});
         let i = reg.find("hello").expect("listed");
-        assert!(reg.apps[i].runnable());
+        assert_eq!(reg.apps[i].runnable(), cfg!(feature = "lua-engine"));
         assert_eq!(reg.apps[i].title, "Hi");
     }
 }

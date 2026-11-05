@@ -25,12 +25,12 @@ pub(super) fn list(key: &'static str) -> View<AppMsg> {
                 .gap(8)
                 .align(Align::TopMid)
                 .offset(SCROLLBAR_GUTTER / 2, 92)
-                .pad_right(SCROLLBAR_GUTTER)
-                .pad_bottom(12),
+                .padding_right(SCROLLBAR_GUTTER)
+                .padding_bottom(12),
         )
         .part_style(
             Part::Scrollbar,
-            Style::default().width(Size::Px(4)).pad_right(4),
+            Style::default().width(Size::Px(4)).padding_right(4),
         )
 }
 pub(super) fn entry(
@@ -47,8 +47,8 @@ pub(super) fn entry(
             card()
                 .width(Size::Percent(100))
                 .height(Size::Px(64))
-                .pad_top(0)
-                .pad_bottom(0),
+                .padding_top(0)
+                .padding_bottom(0),
         )
         .child(
             text(fit_text(&label.into(), 208), font_24(), TEXT)
@@ -65,7 +65,7 @@ pub(super) fn entry(
 pub(super) fn note(key: &'static str, value: impl Into<String>) -> View<AppMsg> {
     text(value, font_20(), MUTED)
         .key(Key::Named(key))
-        .style(Style::default().width(Size::Percent(100)).pad(12))
+        .style(Style::default().width(Size::Percent(100)).padding(12))
 }
 pub(super) fn level_slider(
     key: &'static str,
@@ -104,11 +104,14 @@ pub(super) fn level_slider(
                         .width(Size::Px(344))
                         .height(Size::Px(10))
                         .offset(8, 0)
-                        .bg(CARD_HI)
+                        .background(CARD_HI)
                         .radius(5),
                 )
-                .part_style(Part::Indicator, Style::default().bg(ACCENT).radius(5))
-                .part_style(Part::Knob, Style::default().bg(TEXT).pad(8))
+                .part_style(
+                    Part::Indicator,
+                    Style::default().background(ACCENT).radius(5),
+                )
+                .part_style(Part::Knob, Style::default().background(TEXT).padding(8))
                 .on_value_changed(changed),
         )
 }
@@ -181,11 +184,11 @@ pub(super) fn frame(body: View<AppMsg>, settings_page: Page, info: Info) -> View
                     Style::neutral()
                         .width(Size::Px(52))
                         .height(Size::Px(52))
-                        .bg(BG)
+                        .background(BG)
                         .border(BG, 0)
                         .shadow_width(0)
                         .outline_width(0)
-                        .fg(TEXT)
+                        .text_color(TEXT)
                         .font(font_24())
                         .align(Align::TopLeft)
                         .offset(34, 23),

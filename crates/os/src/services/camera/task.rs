@@ -209,13 +209,9 @@ async fn preview(dvp: &Dvp, s: &mut Snapshot, recycle: &mut Option<Arc<Preview>>
 fn save_photo(dvp: &Dvp) -> Result<String, &'static str> {
     let preferences = PREFERENCES.load(Ordering::Acquire);
     let rgb = image::rgb888(dvp.pixels(), WIDTH, HEIGHT, preferences & 1 != 0)?;
-    let jpeg = lua_engine::jpeg::encode_rgb888(
-        WIDTH as u16,
-        HEIGHT as u16,
-        &rgb,
-        (preferences >> 1) as u8,
-    )
-    .map_err(|_| "photo-encode")?;
+    let jpeg =
+        app_host::jpeg::encode_rgb888(WIDTH as u16, HEIGHT as u16, &rgb, (preferences >> 1) as u8)
+            .map_err(|_| "photo-encode")?;
     ::fs::global::with(|vfs| {
         let root = "/data/appdata/photo/photos";
         vfs.create_dir_all(root)?;

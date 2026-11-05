@@ -29,6 +29,10 @@ impl LlffHeap {
         self.heap.allocate_first_fit(layout).ok()
     }
 
+    pub(crate) fn contains(&self, ptr: NonNull<u8>) -> bool {
+        self.heap.bottom() <= ptr.as_ptr() && ptr.as_ptr() < self.heap.top()
+    }
+
     pub(crate) unsafe fn try_deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) -> bool {
         // `top()` is one past the last byte of the heap, so the bound is exclusive.
         if self.heap.bottom() <= ptr.as_ptr() && self.heap.top() > ptr.as_ptr() {

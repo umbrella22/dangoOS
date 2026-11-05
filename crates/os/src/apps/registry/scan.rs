@@ -91,14 +91,33 @@ fn load_dir(
         Ok(meta) if meta.kind == Kind::File => {}
         _ => return Err(format!("entry {entry} missing")),
     }
-    let source = scan_prefix(vfs, &entry);
+    let selected = if cfg!(feature = "ts-engine") {
+        ".etb"
+    } else {
+        ".lua"
+    };
+    let source = if entry.ends_with(".lua") {
+        scan_prefix(vfs, &entry)
+    } else {
+        String::new()
+    };
     let entry_dir = entry.rsplit_once('/').map(|(d, _)| d).unwrap_or(dir);
-    let missing = missing_modules(&source, &mut |module| {
+    let mut missing = missing_modules(&source, &mut |module| {
         let rel = module.replace('.', "/");
         core::iter::once(entry_dir).chain(SHARED_LUA_DIRS).any(|d| {
             is_file(vfs, &format!("{d}/{rel}.lua")) || is_file(vfs, &format!("{d}/{rel}/init.lua"))
         })
     });
+    if !entry.ends_with(selected) {
+        missing.insert(
+            0,
+            if entry.ends_with(".lua") {
+                "engine:lua".into()
+            } else {
+                "engine:ts".into()
+            },
+        );
+    }
     let icon = m.icon.as_ref().and_then(|icon| {
         let path = format!("{dir}/{icon}");
         let bytes = vfs.read_file(&path).ok()?;

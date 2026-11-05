@@ -2,7 +2,8 @@
 
 从仓库应用源码创建新的 LittleFS system 镜像。工具在主机内存中格式化新文件系统，
 写入指定应用根目录下的全部应用；输出目录必须尚不存在。默认应用集由 `apps/`
-决定，当前为 snake、2048、dino、flappy、photo。
+决定，当前为 snake、2048、dino、flappy、photo，入口位于 `apps/<分类>/<id>/scripts/main.lua`。
+TS 应用由外部 EmbedTypescript 构建为 `.etb` 应用树。
 
 在仓库根目录执行：
 
@@ -18,6 +19,10 @@ cargo run -p app-pack --offline -- verify-bundle target/snake-bundle
 cargo run -p app-pack --offline -- bundles apps target/application-bundles
 cargo run -p app-pack --offline -- fonts target/ui-fonts
 cargo test -p app-pack --offline
+# TS 应用先生成字节码，输出目录必须尚不存在
+(cd ../EmbedTypescript && python3 scripts/build_examples.py target/apps)
+cargo run -p app-pack --offline -- bundles ../EmbedTypescript/target/apps target/application-bundles-ts
+cargo run -p app-pack --no-default-features --features ts-engine --offline -- system ../EmbedTypescript/target/apps target/system-ts --size 2031616
 ```
 
 `system` 输出 `system.bin`、`file-tree-report.json` 和 `application-docs/<id>/`。
@@ -60,3 +65,5 @@ python3 scripts/device/console.py fonts-push target/ui-fonts --port RUNTIME_PORT
 应用上传使用现有 Data 应用暂存/提交协议。字体上传在设备端核对完整 SHA-256 和四份
 MFNT 的表与像素边界，再按内容地址原子提交，重启时加载；不删除旧哈希资源。
 原生 Rust 代码由 Cargo 静态链接，应用包不承载可动态执行的原生二进制。
+
+`system` 会在所选引擎的注册表中验证镜像应用可运行。打包器默认选择 Lua；TS system 镜像使用 `--no-default-features --features ts-engine`。`check` 与独立 bundle 校验两种入口格式，不调用编译器。

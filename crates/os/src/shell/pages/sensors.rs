@@ -28,11 +28,11 @@ fn sensor_card(
         .scrollable(false)
         .style(
             Style::neutral()
-                .bg(CARD)
+                .background(CARD)
                 .radius(RADIUS)
-                .pad(10)
-                .pad_left(18)
-                .pad_right(18)
+                .padding(10)
+                .padding_left(18)
+                .padding_right(18)
                 .width(Size::Px(196))
                 .height(Size::Px(SENSOR_CARD_H))
                 .gap(2),
@@ -50,10 +50,13 @@ fn sensor_card(
                             .width(Size::Percent(100))
                             .height(Size::Px(8))
                             .offset(0, 8)
-                            .bg(CARD_HI)
+                            .background(CARD_HI)
                             .radius(4),
                     )
-                    .part_style(Part::Indicator, Style::default().bg(color).radius(4)),
+                    .part_style(
+                        Part::Indicator,
+                        Style::default().background(color).radius(4),
+                    ),
             );
         }
         None => {

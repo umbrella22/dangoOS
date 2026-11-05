@@ -33,7 +33,7 @@ def inventory(root):
 def application(root):
     root = Path(root)
     report = json.loads((root / "bundle.json").read_bytes())
-    require(report.get("schema") == 1 and report.get("kind") == "dango-lua-application",
+    require(report.get("schema") == 1 and report.get("kind") in ("dango-lua-application", "embedts-application"),
             "unsupported application bundle")
     identity = report.get("id")
     require(isinstance(identity, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,63}", identity), "invalid bundle id")
@@ -43,8 +43,10 @@ def application(root):
     require(manifest.get("schema_version") == 1 and manifest.get("id") == identity,
             "application identity mismatch")
     entry = manifest.get("entry")
-    require(isinstance(entry, str) and entry.endswith(".lua")
+    require(isinstance(entry, str) and entry.endswith((".lua", ".etb"))
             and report["files"].get(entry, {}).get("kind") == "file", "application entry missing")
+    expected_kind = "embedts-application" if entry.endswith(".etb") else "dango-lua-application"
+    require(report["kind"] == expected_kind, "application engine kind mismatch")
     return report
 
 

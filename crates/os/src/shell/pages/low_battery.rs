@@ -13,7 +13,7 @@ pub(crate) fn low_battery() -> View<AppMsg> {
         .scrollable(false)
         .style(
             Style::neutral()
-                .bg(BG)
+                .background(BG)
                 .width(Size::Percent(100))
                 .height(Size::Percent(100)),
         )
@@ -33,7 +33,7 @@ pub(crate) fn low_battery() -> View<AppMsg> {
                         Style::neutral()
                             .width(Size::Px(8))
                             .height(Size::Px(22))
-                            .bg(ACCENT)
+                            .background(ACCENT)
                             .radius(2)
                             .align(Align::LeftMid)
                             .offset(9, 0),
@@ -45,7 +45,7 @@ pub(crate) fn low_battery() -> View<AppMsg> {
                 Style::neutral()
                     .width(Size::Px(6))
                     .height(Size::Px(20))
-                    .bg(MUTED)
+                    .background(MUTED)
                     .radius(2)
                     .align(Align::Center)
                     .offset(52, -76),

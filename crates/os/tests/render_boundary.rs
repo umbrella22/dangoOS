@@ -1,8 +1,9 @@
+#![cfg(feature = "lua-engine")]
 //! Native refresh regression: pump LVGL after every UI RPC, as the device does.
 //! The unmodified Album builds a new view through multiple such requests.
 use lua_engine::ui::{UiCommand, UiReply};
 use lua_engine::{Host, Limits, Request, Step, Vm};
-use os::apps::lua::native_ui::LuaLvglService;
+use os::apps::native_ui::NativeUiService;
 use rs_lvgl::{sys as s, Display};
 use serde_json::{json, Value};
 use std::{
@@ -25,7 +26,7 @@ fn tick() {
         s::lv_timer_handler();
     }
 }
-fn execute(service: &mut LuaLvglService, op: &str, args: Value) -> Result<UiReply, String> {
+fn execute(service: &mut NativeUiService, op: &str, args: Value) -> Result<UiReply, String> {
     service.execute(UiCommand {
         op: op.into(),
         args: args.to_string(),
@@ -33,11 +34,11 @@ fn execute(service: &mut LuaLvglService, op: &str, args: Value) -> Result<UiRepl
         root: "/data/appdata/render-probe".into(),
     })
 }
-fn call(service: &mut LuaLvglService, op: &str, args: Value) -> Value {
+fn call(service: &mut NativeUiService, op: &str, args: Value) -> Value {
     serde_json::from_str::<Value>(&execute(service, op, args).unwrap().json).unwrap()["values"]
         .clone()
 }
-fn solid(service: &mut LuaLvglService, screen: u64, color: &str) {
+fn solid(service: &mut NativeUiService, screen: u64, color: &str) {
     call(
         service,
         "create",
@@ -81,7 +82,7 @@ fn render_boundary() {
         s::lv_indev_set_read_cb(p, Some(input));
         p
     };
-    let mut service = LuaLvglService::new(80, 80);
+    let mut service = NativeUiService::new(80, 80);
     call(&mut service, "init", json!([{}]));
     let screen = call(&mut service, "create", json!(["screen", 0, {}]))[0]
         .as_u64()
@@ -277,7 +278,7 @@ fn render_boundary() {
     )
     .unwrap();
     vm.load("sleep-boundary", source).unwrap();
-    let mut boundary = os::apps::lua::native_ui::RedrawBoundary::default();
+    let mut boundary = os::apps::native_ui::RedrawBoundary::default();
     let mut sleeps = 0;
     let mut held = None;
     loop {
@@ -338,7 +339,7 @@ fn render_boundary() {
     let mut windows = 0;
     while pending > 0 {
         let deadline = now_us + 5_000;
-        let mut window = os::apps::lua::native_ui::RpcWindow::until(deadline);
+        let mut window = os::apps::native_ui::RpcWindow::until(deadline);
         let mut served = 0;
         while pending > 0 && window.available(now_us) {
             assert_eq!(
@@ -362,7 +363,7 @@ fn render_boundary() {
     assert_eq!(INPUT_READS.load(Ordering::Relaxed), reads);
     // A slow single request can overrun the window; it cannot authorize a
     // second request after the fixed deadline, or reset that deadline.
-    let mut window = os::apps::lua::native_ui::RpcWindow::until(5_000);
+    let mut window = os::apps::native_ui::RpcWindow::until(5_000);
     assert!(window.available(4_999));
     window.completed();
     assert!(!window.available(6_000));

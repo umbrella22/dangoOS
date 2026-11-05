@@ -1,0 +1,19 @@
+[package]
+name = "app-host"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Engine-independent application contracts and native JPEG codecs"
+publish = false
+license = "MIT AND Apache-2.0"
+links = "dango_app_host"
+
+[features]
+serde = ["dep:serde"]
+graphics = []
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive"], optional = true }
+
+[build-dependencies]
+cc = "1"

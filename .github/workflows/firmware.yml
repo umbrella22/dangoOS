@@ -84,6 +84,7 @@ jobs:
           path: |
             ${{ runner.temp }}/checks.log
             target/riscv32imafc-unknown-none-elf/release/os-fw
+            target/engine-checks/
           if-no-files-found: warn
           retention-days: 14
 

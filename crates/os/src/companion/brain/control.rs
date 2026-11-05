@@ -35,7 +35,7 @@ async fn persist(source: Option<String>) -> Result<(), String> {
 pub async fn boot(
     runtime: &mut Runtime,
     now: u64,
-    allocator: &'static lua_engine::RawAllocator,
+    allocator: &'static app_host::RawAllocator,
     clock: Option<fn() -> u64>,
 ) {
     let selected = read_selected().await;
@@ -63,7 +63,7 @@ pub async fn boot(
     };
     match runtime.enable_brain(source, now, allocator, clock) {
         Ok(()) => info!(
-            "brain: resident Lua active crc={:08x}",
+            "brain: resident script active crc={:08x}",
             crc32(source.as_bytes())
         ),
         Err(e) => warn!("brain: native fallback: {}", brain_store::error_line(&e)),
@@ -99,7 +99,11 @@ fn status(runtime: &Runtime) -> String {
     format!(
         "active={} source={selected} bytes={} crc={:08x} error={}",
         if runtime.brain_active() {
-            "lua"
+            if cfg!(feature = "ts-engine") {
+                "ts"
+            } else {
+                "lua"
+            }
         } else {
             "native"
         },

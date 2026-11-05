@@ -214,7 +214,7 @@ mod tests {
 /// Lua hardware snapshot is separate from UI display units: raw BMI270 counts,
 /// compensated BMM150 microteslas, and BQ27220 electrical measurements.
 /// Producers fill this in their own task; consumers only copy it.
-pub use lua_engine::{ButtonEdge, HardwareSnapshot};
+pub use app_host::{ButtonEdge, HardwareSnapshot};
 
 /// Record the chosen board magnetometer's compensated sample and classifier
 /// edge together. The status byte is BMM150 register 0x4A, not its DRDY bit.

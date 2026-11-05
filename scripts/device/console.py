@@ -251,6 +251,10 @@ def read_brain(path):
         data = f.read(BRAIN_MAX + 1)
     if not 0 < len(data) <= BRAIN_MAX:
         raise SystemExit("brain script must contain 1..65536 bytes")
+    if str(path).endswith(".etb"):
+        data = b"etb1:" + data.hex().encode("ascii")
+        if len(data) > BRAIN_MAX:
+            raise SystemExit("brain bytecode envelope exceeds 64 KiB")
     try:
         data.decode("utf-8")
     except UnicodeDecodeError:
@@ -261,11 +265,12 @@ def read_brain(path):
 def push_brain(dev, data):
     dev.command("hello")
     dev.command("brain-begin")
+    filename = "source.etb.hex" if data.startswith(b"etb1:") else "source.lua"
     try:
-        dev.command(f"file source.lua {len(data)} {zlib.crc32(data):08x}")
+        dev.command(f"file {filename} {len(data)} {zlib.crc32(data):08x}")
         dev.ser.write(data)
         line = dev.reply(timeout=30.0)
-        if not line.startswith("@ok file source.lua"):
+        if not line.startswith(f"@ok file {filename}"):
             raise SystemExit(f"brain upload: {line}")
         # Firmware replies only after candidate init, first tick, durable write,
         # and the UI-owned VM swap. A syntax/timeout/write error keeps the old VM.

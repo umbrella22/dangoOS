@@ -50,13 +50,31 @@ fn collect(root: &Path, relative: &Path, files: &mut Tree) -> Result<()> {
 }
 impl Package {
     pub fn read(root: &Path) -> Result<Self> {
-        let id = root
+        let name = root
             .file_name()
             .and_then(|n| n.to_str())
-            .ok_or("missing application directory name")?
-            .to_owned();
+            .ok_or("missing application directory name")?;
         let mut files = Tree::new();
         collect(root, Path::new(""), &mut files)?;
+        let Some(Entry::File(manifest)) = files.get("launcher.json") else {
+            return Err("launcher.json missing".into());
+        };
+        let manifest: Value = serde_json::from_slice(manifest).map_err(|e| e.to_string())?;
+        let id = manifest
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or("id missing")?
+            .to_owned();
+        let variant = matches!(name, "lua" | "ts")
+            && root
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|n| n.to_str())
+                == Some(&id);
+        require(
+            name == id || variant,
+            "application id does not match the source directory",
+        )?;
         let mut documentation = Tree::new();
         for name in ["README.md", "LICENSE", "SOURCE.json"] {
             if let Some(entry) = files.remove(name) {
@@ -99,7 +117,7 @@ impl Package {
             let Some(Entry::File(bytes)) = self.files.get(&icon) else {
                 return Err(format!("icon missing: {icon}"));
             };
-            lua_engine::jpeg::decode(bytes).map_err(|e| format!("{} icon: {e:?}", self.id))?;
+            app_host::jpeg::decode(bytes).map_err(|e| format!("{} icon: {e:?}", self.id))?;
         }
         Ok(())
     }
@@ -241,7 +259,15 @@ pub fn discover(root: &Path) -> Result<Vec<Package>> {
                 app.file_type().map_err(|e| e.to_string())?.is_dir(),
                 "category must contain application directories",
             )?;
-            let package = Package::read(&app.path())?;
+            let path = app.path();
+            let source = if path.join("launcher.json").is_file() {
+                path
+            } else {
+                // Repository Lua sources live in a language subdirectory.
+                // External EmbedTS outputs already contain a compiled launcher.
+                path.join("lua")
+            };
+            let package = Package::read(&source)?;
             require(
                 ids.insert(package.id.clone()),
                 "duplicate application id across categories",

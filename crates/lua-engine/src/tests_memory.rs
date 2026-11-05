@@ -55,6 +55,7 @@ unsafe fn deallocate(pointer: *mut u8, supplied: Layout) {
 static TRACKED: RawAllocator = RawAllocator {
     alloc: allocate,
     dealloc: deallocate,
+    realloc: None,
 };
 const APP_LIMIT: usize = 4 * 1024 * 1024;
 

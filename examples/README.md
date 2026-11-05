@@ -20,3 +20,5 @@ python3 scripts/device/console.py brain-push examples/brains/happy.lua
 真实申请/归还探针。探针结果只覆盖当时的尺寸和对齐，会扰动空闲链表顺序，不作持续采样。
 接口与资源清理约定
 见 [Lua 应用开发](../docs/guides/lua-apps.md) 和 [硬件接口](../docs/guides/lua-hardware.md)。
+
+TS 源码示例在独立 [EmbedTypescript/examples](https://github.com/umbrella22/EmbedTypescript/tree/main/examples) 维护，构建为 `.etb` 后由 OS 安装。

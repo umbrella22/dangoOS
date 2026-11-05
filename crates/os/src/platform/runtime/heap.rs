@@ -1,5 +1,5 @@
 //! Capability-specific heap snapshots. Missing measurements remain explicit.
-use lua_engine::{caps, heap_fields, HeapInfo};
+use app_host::{caps, heap_fields, HeapInfo};
 
 #[derive(Clone, Copy)]
 struct Region {

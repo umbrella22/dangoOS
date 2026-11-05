@@ -128,6 +128,7 @@ mod tests {
         assert_eq!(clock.sample(50_000), 40_000);
     }
 
+    #[cfg(feature = "lua-engine")]
     #[test]
     fn resident_vm_excludes_preemption_but_still_exhausts_execution_time() {
         use alloc::boxed::Box;

@@ -36,7 +36,7 @@ impl IconCache {
         if self.entries.len() >= ICON_CACHE_MAX {
             return None;
         }
-        let img = lua_engine::jpeg::decode(jpeg).ok()?;
+        let img = app_host::jpeg::decode(jpeg).ok()?;
         let icon = scale_to_box(&img);
         self.entries.push((key, icon));
         Some(icon)
@@ -53,7 +53,7 @@ fn fnv1a(data: &[u8]) -> u64 {
 
 /// Nearest-neighbour scale: whole-number enlargement for small (pixel art)
 /// icons, shrink to fit for large ones.
-pub(super) fn scale_to_box(img: &lua_engine::jpeg::Rgb888) -> Icon {
+pub(super) fn scale_to_box(img: &app_host::jpeg::Rgb888) -> Icon {
     let (w, h) = (img.width as u32, img.height as u32);
     let side = w.max(h);
     let (nw, nh) = if side <= ICON_BOX as u32 {

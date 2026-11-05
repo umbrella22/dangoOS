@@ -1,5 +1,7 @@
 //! Device adapter for the host-tested updater; no flash work inside a VFS lock.
-use alloc::{boxed::Box, format, string::String};
+#[cfg(feature = "lua-engine")]
+use alloc::boxed::Box;
+use alloc::{format, string::String};
 use core::{
     ptr::addr_of_mut,
     sync::atomic::{AtomicBool, Ordering},
@@ -156,10 +158,13 @@ pub fn early_boot() {
         }
     }
 }
+#[cfg(feature = "lua-engine")]
 struct HealthHost;
+#[cfg(feature = "lua-engine")]
 impl lua_engine::Host for HealthHost {
     fn print(&mut self, _: &[u8]) {}
 }
+#[cfg(feature = "lua-engine")]
 fn exercise_vm() -> bool {
     let mut vm = match lua_engine::Vm::new(
         Box::new(HealthHost),
@@ -167,7 +172,7 @@ fn exercise_vm() -> bool {
             memory_bytes: 128 * 1024,
             ..Default::default()
         },
-        &crate::apps::lua::task::PSRAM,
+        &crate::apps::runtime::PSRAM,
         0x4f5441,
     ) {
         Ok(vm) => vm,
@@ -184,6 +189,10 @@ fn exercise_vm() -> bool {
         return false;
     }
     matches!(vm.resume(), lua_engine::Step::Done)
+}
+#[cfg(feature = "ts-engine")]
+fn exercise_vm() -> bool {
+    crate::apps::runtime::selftest()
 }
 pub fn health() -> String {
     let (system, data) = storage::mounted();
@@ -293,7 +302,7 @@ impl DeviceUpdater {
         }
         if self.owns_transfer && ACTIVE.swap(false, Ordering::AcqRel) {
             PAUSE_UI.store(false, Ordering::Release);
-            crate::apps::lua::task::release_management();
+            crate::apps::runtime::release_management();
             crate::services::feedback::haptic::set_enabled(self.old_haptic);
         }
         self.owns_transfer = false;
@@ -373,7 +382,7 @@ impl DeviceUpdater {
                     _ => return Err(Error::Busy),
                 }
                 match embassy_futures::select::select(
-                    crate::apps::lua::task::quiesce(),
+                    crate::apps::runtime::quiesce(),
                     Timer::after_secs(5),
                 )
                 .await

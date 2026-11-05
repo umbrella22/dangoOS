@@ -273,14 +273,14 @@ impl MosaicoApp {
 }
 
 impl App for MosaicoApp {
-    type Msg = AppMsg;
+    type Action = AppMsg;
 
-    fn update_with_render(&mut self, msg: AppMsg) -> RenderDecision {
+    fn update_with_render(&mut self, action: AppMsg) -> RenderDecision {
         // These only queue a service command. The camera snapshot is published
         // separately by the UI task, which marks the view dirty on change.
         // Slider messages must reconcile even when the model clamps their value.
-        let command_only = matches!(msg, AppMsg::CameraCapture | AppMsg::CameraRetry);
-        self.update(msg);
+        let command_only = matches!(action, AppMsg::CameraCapture | AppMsg::CameraRetry);
+        self.update(action);
         if command_only {
             RenderDecision::Skip
         } else {
@@ -288,11 +288,11 @@ impl App for MosaicoApp {
         }
     }
 
-    fn update(&mut self, msg: AppMsg) {
+    fn update(&mut self, action: AppMsg) {
         if self.screen.get() == Screen::LowBattery {
             return;
         }
-        match msg {
+        match action {
             AppMsg::SplashDone => {
                 if self.screen.get() == Screen::Splash {
                     self.enter_fox();
@@ -390,12 +390,12 @@ impl App for MosaicoApp {
                 self.hub.countdown.toggle(now);
             }
             AppMsg::TimerReset => self.hub.countdown.reset(),
-            msg => {
+            settings_action => {
                 if crate::shell::pages::settings::update::update(
                     &mut self.hub,
                     &mut self.settings_session,
                     &mut self.router,
-                    msg,
+                    settings_action,
                 ) {
                     self.go(Page::Home);
                 }

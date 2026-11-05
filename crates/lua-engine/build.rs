@@ -179,15 +179,9 @@ fn main() {
     let gen = out.join("mosaico_embedded.c");
     std::fs::write(&gen, c).unwrap();
     modules.file(gen);
-    // The ESP32-S31 ROM has its own TJpgDec, and the esp-hal ROM linker
-    // script defines `jd_prepare`/`jd_decomp` at its addresses. Its `JDEC`
-    // layout differs from ours, so rename our copy rather than call the ROM.
     modules
-        .define("jd_prepare", "mosaico_jd_prepare")
-        .define("jd_decomp", "mosaico_jd_decomp")
-        .include(root.join("vendor/tjpgd-r0.03"))
-        .file(root.join("vendor/tjpgd-r0.03/tjpgd.c"))
-        .file(root.join("csrc/mosaico_jpeg.c"));
+        .include(root.join("../app-host/vendor/tjpgd-r0.03"))
+        .file(root.join("csrc/mosaico_jpeg_tracked.c"));
     // Private LodePNG symbols prevent collisions with LVGL's optional decoder.
     let png = root.join("vendor/lodepng");
     let source = std::fs::read_to_string(png.join("lodepng.c")).unwrap();
@@ -210,10 +204,9 @@ fn main() {
         .define("LODEPNG_NO_COMPILE_DISK", None)
         .define("LODEPNG_NO_COMPILE_CPP", None)
         .include(&png)
-        .include(root.join("vendor/stb"))
+        .include(root.join("../app-host/vendor/stb"))
         .file(png.join("lodepng.c"))
         .file(root.join("csrc/mosaico_image.c"))
-        .file(root.join("csrc/mosaico_jpeg_encode.c"))
         .file(root.join("csrc/mosaico_lvgl.c"));
     modules.compile("mosaico_lua_modules");
 

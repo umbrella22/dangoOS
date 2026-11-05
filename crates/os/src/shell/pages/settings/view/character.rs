@@ -24,7 +24,7 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
             Style::default()
                 .height(Size::Px(56))
                 .border(if selected { ACCENT } else { CARD }, 2)
-                .bg(if selected { CARD_HI } else { CARD }),
+                .background(if selected { CARD_HI } else { CARD }),
         )
         .clickable(!info.busy && session.loading_skin.is_none() && info.storage_ready && !selected);
         if loading {

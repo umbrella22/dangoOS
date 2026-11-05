@@ -78,14 +78,15 @@ python3 install.py --port RUNTIME_PORT
 
 ## 源码与构建
 
-dangoOS 使用 Rust、LVGL 和 Lua。应用代码、界面与资源可以独立维护。
+dangoOS 使用 Rust、LVGL 和构建时选择的 Lua / TS 引擎。应用代码、界面与资源可以独立维护。
 
 | 目录                                             | 内容                           |
 | ------------------------------------------------ | ------------------------------ |
 | [crates/os](crates/os/)                          | 系统、驱动、团子交互与原生界面 |
 | [crates/lua-engine](crates/lua-engine/README.md) | Lua 运行时与硬件接口           |
+| [crates/app-host](crates/app-host/README.md) | 引擎共享的数据契约与图像编解码 |
 | [crates/fs](crates/fs/)                          | 文件系统与 NAND 存储           |
-| [apps](apps/README.md)                           | 五个内置 Lua 应用的源码        |
+| [apps](apps/README.md)                           | 五个内置应用的 Lua 源码        |
 | [dango-skin](dango-skin/)                        | 四套可分发团子的 BIN / JSON    |
 | [scripts/release](scripts/release/README.md)     | 固件打包、校验与发布工具       |
 
@@ -96,3 +97,9 @@ cargo fetch --locked
 ./scripts/check.sh
 python3 scripts/release/package.py build --out target/release-local --allow-dirty
 ```
+
+默认固件使用 Lua。`cargo fw-ts` 关闭默认 features 并接入外部 EmbedTS 引擎；每份固件只链接一个脚本引擎，同时选择或均未选择时构建失败。
+
+TypeScript 构建器、引擎、SDK 和应用源码维护于独立的 [EmbedTypescript](https://github.com/umbrella22/EmbedTypescript) 仓库，按 `builder/`、`engine/`、`sdk/`、`examples/` 组织。本仓库仅保留 Rust 宿主适配及 `artifacts/embedts/` 预编译输入，固件构建和测试不编译 TS。应用入口使用 **EmbedTS Bytecode（`.etb`）**，brain 持久化使用 `etb1:` 信封。接入与更新流程见 [EmbedTS 接入](crates/os/EMBEDTS.md)。
+
+引擎依赖在根 `Cargo.toml` 中固定到 GitHub 的完整 commit SHA，OS 与基准 runner 共用该版本，`Cargo.lock` 记录来源。构建本仓库无需相邻的 EmbedTypescript checkout；首次运行 `cargo fetch --locked` 后可离线检查。CI 直接使用锁定依赖，OS 中不安装 pnpm 或构建 TS 源码。

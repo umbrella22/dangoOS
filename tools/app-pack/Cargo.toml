@@ -5,9 +5,14 @@ edition.workspace = true
 authors.workspace = true
 publish = false
 
+[features]
+default = ["lua-engine"]
+lua-engine = ["os/lua-engine"]
+ts-engine = ["os/ts-engine"]
+
 [dependencies]
 fs = { path = "../../crates/fs" }
-os = { path = "../../crates/os" }
-lua-engine = { path = "../../crates/lua-engine" }
+os = { path = "../../crates/os", default-features = false }
+app-host = { path = "../../crates/app-host" }
 serde_json = "1"
 sha2 = "0.10"

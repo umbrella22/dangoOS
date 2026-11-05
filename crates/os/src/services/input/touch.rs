@@ -103,7 +103,7 @@ pub async fn input_task(mut gpio6: Input<'static>, mut touch: Cst9220) {
 
         let report = touch.poll().await;
         match report {
-            Ok(TouchState::Down { x, y }) => {
+            Ok(Some(TouchState::Down { x, y })) => {
                 let at_us = now_us();
                 crate::services::power::coordinator::wake();
                 pressed = true;
@@ -116,7 +116,7 @@ pub async fn input_task(mut gpio6: Input<'static>, mut touch: Cst9220) {
                     pressed: true,
                 });
             }
-            Ok(TouchState::Up) => {
+            Ok(Some(TouchState::Up)) => {
                 if pressed {
                     let at_us = now_us();
                     pressed = false;
@@ -128,6 +128,7 @@ pub async fn input_task(mut gpio6: Input<'static>, mut touch: Cst9220) {
                     });
                 }
             }
+            Ok(None) => {}
             Err(error) => {
                 // 限速错误日志，避免持续故障占满控制台队列。
                 if errors == 0 || errors.is_multiple_of(200) {

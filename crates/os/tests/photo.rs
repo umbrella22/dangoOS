@@ -1,7 +1,8 @@
+#![cfg(feature = "lua-engine")]
 //! Run the repository Photo app against real LVGL, native pointer input and
 //! actual image decoders. Host libc files are mirrored into LittleFS for D: BIN.
 use lua_engine::{Host, Limits, RawAllocator, Request, Step, Vm};
-use os::apps::lua::native_ui::LuaLvglService;
+use os::apps::native_ui::NativeUiService;
 use rs_lvgl::{sys, Display};
 use std::{
     alloc::Layout,
@@ -41,6 +42,7 @@ unsafe fn deallocate(p: *mut u8, layout: Layout) {
 static ALLOCATOR: RawAllocator = RawAllocator {
     alloc: allocate,
     dealloc: deallocate,
+    realloc: None,
 };
 unsafe extern "C" fn input(_i: *mut sys::lv_indev_t, data: *mut sys::lv_indev_data_t) {
     unsafe {
@@ -63,7 +65,7 @@ impl Host for Console {
 }
 struct Harness {
     vm: Option<Vm>,
-    service: LuaLvglService,
+    service: NativeUiService,
     sleep_until: u64,
     finished: bool,
 }
@@ -235,7 +237,7 @@ fn populate(root: &Path, fixtures: &Path) {
                 }
             }
             let rgb = os::services::camera::image::rgb888(&uyvy, 640, 480, false).unwrap();
-            lua_engine::jpeg::encode_rgb888(640, 480, &rgb, 85).unwrap()
+            app_host::jpeg::encode_rgb888(640, 480, &rgb, 85).unwrap()
         } else {
             fs::read(fixtures.join(source)).unwrap()
         };
@@ -313,7 +315,7 @@ fn photo_navigation_deletion_and_cleanup() {
     vm.load("unchanged-factory-album", &source).unwrap();
     let mut h = Harness {
         vm: Some(vm),
-        service: LuaLvglService::new(480, 480),
+        service: NativeUiService::new(480, 480),
         sleep_until: 0,
         finished: false,
     };

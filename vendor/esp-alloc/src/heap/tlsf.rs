@@ -91,6 +91,21 @@ impl TlsfHeap {
         self.heap.allocate(layout)
     }
 
+    pub(crate) fn contains(&self, ptr: NonNull<u8>) -> bool {
+        let address = ptr.addr().get();
+        self.pool_start <= address && address < self.pool_end
+    }
+
+    /// Resizing retains this pool and the original alignment. Failure leaves
+    /// the allocation untouched; TLSF attempts in-place resize before moving.
+    pub(crate) unsafe fn reallocate(
+        &mut self,
+        ptr: NonNull<u8>,
+        layout: Layout,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.heap.reallocate(ptr, layout) }
+    }
+
     pub(crate) unsafe fn try_deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) -> bool {
         let addr = ptr.addr().get();
         if self.pool_start <= addr && self.pool_end > addr {

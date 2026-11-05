@@ -21,7 +21,7 @@ fn chip(index: usize, minutes: u32, selected: bool, enabled: bool) -> View<AppMs
         .clickable(enabled)
         .style(
             Style::neutral()
-                .bg(if selected { ACCENT } else { CARD })
+                .background(if selected { ACCENT } else { CARD })
                 .radius(22)
                 .width(Size::Px(66))
                 .height(Size::Px(44))
@@ -46,7 +46,7 @@ fn pill_button(key: &'static str, label: &'static str, color: Color, msg: AppMsg
         .on_click(msg)
         .style(
             Style::neutral()
-                .bg(color)
+                .background(color)
                 .radius(28)
                 .width(Size::Px(156))
                 .height(Size::Px(56)),
@@ -98,7 +98,10 @@ pub fn timer(hub: &Hub) -> View<AppMsg> {
                     Part::Indicator,
                     Style::default().arc_color(ACCENT).arc_width(14),
                 )
-                .part_style(Part::Knob, Style::default().bg_opacity(0).pad(0)),
+                .part_style(
+                    Part::Knob,
+                    Style::default().background_opacity(0).padding(0),
+                ),
         )
         .child(
             rs_lvgl_ui::column([])
@@ -156,7 +159,7 @@ pub fn timer(hub: &Hub) -> View<AppMsg> {
         .scrollable(false)
         .style(
             Style::neutral()
-                .bg(BG)
+                .background(BG)
                 .width(Size::Percent(100))
                 .height(Size::Percent(100)),
         )
