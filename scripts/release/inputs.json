@@ -28,9 +28,9 @@
   },
   "tools": {
     "gcc": {
-      "version": "esp-15.3.0_20260914",
-      "url": "https://github.com/espressif/crosstool-NG/releases/download/esp-15.3.0_20260914/riscv32-esp-elf-15.3.0_20260914-x86_64-linux-gnu.tar.xz",
-      "sha256": "5f2b1037c16ace2442733a0d69e6b1cd212c9c3ecb4b0975d01f07143027eb8b"
+      "version": "esp-15.3.0_20261030",
+      "url": "https://github.com/espressif/crosstool-NG/releases/download/esp-15.3.0_20261030/riscv32-esp-elf-15.3.0_20261030-x86_64-linux-gnu.tar.xz",
+      "sha256": "e1d78116f5b09fb87ea63ea4c3fa57a3bda0695260bb613cff5f1563a4d6e650"
     },
     "espflash": {
       "version": "4.6.0",
