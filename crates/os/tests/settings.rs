@@ -146,7 +146,7 @@ fn round_thumb(pixels: &[u8], crop: sys::lv_area_t) -> Option<sys::lv_area_t> {
     };
     let (width, height) = (bounds.x2 - bounds.x1 + 1, bounds.y2 - bounds.y1 + 1);
     let first_row = points.iter().filter(|p| p.1 == bounds.y1).count() as i32;
-    (width >= 12 && (width - height).abs() <= 1 && first_row * 4 < width * 3).then_some(bounds)
+    (width >= 12 && (width - height).abs() <= 1 && first_row * 3 < width).then_some(bounds)
 }
 
 fn assert_native_thumbs(pixels: &Rc<RefCell<Vec<u8>>>, has_switch: bool) {
@@ -180,6 +180,28 @@ fn assert_native_thumbs(pixels: &Rc<RefCell<Vec<u8>>>, has_switch: bool) {
                 }
             }
             assert!(round_thumb(&clipped, crop).is_none());
+
+            // The upstream regression used an 8 px radius on a larger thumb.
+            // Its square bounds alone look valid; the flat top must reject it.
+            let mut rounded_square = data.clone();
+            let radius = 8;
+            for y in bounds.y1..=bounds.y2 {
+                for x in bounds.x1..=bounds.x2 {
+                    let dx = (bounds.x1 + radius - x)
+                        .max(x - (bounds.x2 - radius))
+                        .max(0);
+                    let dy = (bounds.y1 + radius - y)
+                        .max(y - (bounds.y2 - radius))
+                        .max(0);
+                    let at = ((y * 480 + x) * 3) as usize;
+                    rounded_square[at..at + 3].fill(if dx * dx + dy * dy <= radius * radius {
+                        255
+                    } else {
+                        0
+                    });
+                }
+            }
+            assert!(round_thumb(&rounded_square, crop).is_none());
         }
     }
 }
