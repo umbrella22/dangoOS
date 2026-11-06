@@ -6,7 +6,7 @@ use crate::shell::{
     pages::settings::model::{ssid_label, Password, Session},
     theme::tokens::*,
 };
-use rs_lvgl_ui::{Align, Key, Part, Size, State, Style, View};
+use rs_lvgl_ui::{Align, Key, NativePart, Size, State, Style, View};
 
 pub(super) fn view(session: &Session) -> View<AppMsg> {
     let name = session
@@ -19,12 +19,9 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
         "连接网络",
         text(fit_text(&name, 400), font_20(), MUTED)
             .key(Key::Named("ssid"))
-            .style(
-                Style::default()
-                    .width(Size::Px(400))
-                    .align(Align::TopMid)
-                    .offset(0, 78),
-            ),
+            .width(Size::Px(400))
+            .align(Align::TopCenter)
+            .offset(0, 78),
     )
     .child(
         rs_lvgl_ui::textarea(&session.password.0)
@@ -94,24 +91,21 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
     .child(
         rs_lvgl_ui::keyboard(701)
             .key(Key::Named("wifi-keyboard"))
-            .style(
-                Style::default()
-                    .width(Size::Px(400))
-                    .height(Size::Px(184))
-                    .background(BG)
-                    .align(Align::TopMid)
-                    .offset(0, 238),
-            )
-            .part_style(
-                Part::Items,
-                Style::neutral()
+            .width(Size::Px(400))
+            .height(Size::Px(184))
+            .background(BG)
+            .align(Align::TopCenter)
+            .offset(0, 238)
+            .native_part_style(
+                NativePart::Items,
+                Style::plain()
                     .background(CARD_HI)
                     .text_color(TEXT)
                     .font(font_20())
                     .radius(8),
             )
-            .part_state_style(
-                Part::Items,
+            .native_part_state_style(
+                NativePart::Items,
                 State::PRESSED,
                 Style::default().background(ACCENT),
             ),
@@ -119,6 +113,7 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
     .child(
         text(session.message.unwrap_or(""), font_20(), MUTED)
             .key(Key::Named("password-error"))
-            .style(Style::default().align(Align::TopMid).offset(0, 428)),
+            .align(Align::TopCenter)
+            .offset(0, 428),
     )
 }

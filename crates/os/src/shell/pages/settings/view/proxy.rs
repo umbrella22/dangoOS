@@ -6,18 +6,16 @@ use crate::shell::{
     pages::settings::model::Session,
     theme::tokens::*,
 };
-use rs_lvgl_ui::{Align, Key, Part, Size, State, Style, View};
+use rs_lvgl_ui::{Align, Key, NativePart, Size, State, Style, View};
 
 pub(super) fn view(session: &Session) -> View<AppMsg> {
     page(
         AppId::Settings.key(),
         "更新代理",
-        text("HTTP 无认证 · IPv4:端口", font_20(), MUTED).style(
-            Style::default()
-                .width(Size::Px(400))
-                .align(Align::TopMid)
-                .offset(0, 78),
-        ),
+        text("HTTP 无认证 · IPv4:端口", font_20(), MUTED)
+            .width(Size::Px(400))
+            .align(Align::TopCenter)
+            .offset(0, 78),
     )
     .child(
         rs_lvgl_ui::textarea(&session.proxy_address)
@@ -67,24 +65,21 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
     .child(
         rs_lvgl_ui::keyboard(702)
             .key(Key::Named("proxy-keyboard"))
-            .style(
-                Style::default()
-                    .width(Size::Px(400))
-                    .height(Size::Px(184))
-                    .background(BG)
-                    .align(Align::TopMid)
-                    .offset(0, 238),
-            )
-            .part_style(
-                Part::Items,
-                Style::neutral()
+            .width(Size::Px(400))
+            .height(Size::Px(184))
+            .background(BG)
+            .align(Align::TopCenter)
+            .offset(0, 238)
+            .native_part_style(
+                NativePart::Items,
+                Style::plain()
                     .background(CARD_HI)
                     .text_color(TEXT)
                     .font(font_20())
                     .radius(8),
             )
-            .part_state_style(
-                Part::Items,
+            .native_part_state_style(
+                NativePart::Items,
                 State::PRESSED,
                 Style::default().background(ACCENT),
             ),
@@ -98,11 +93,8 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
             MUTED,
         )
         .key(Key::Named("proxy-error"))
-        .style(
-            Style::default()
-                .width(Size::Px(400))
-                .align(Align::TopMid)
-                .offset(0, 428),
-        ),
+        .width(Size::Px(400))
+        .align(Align::TopCenter)
+        .offset(0, 428),
     )
 }

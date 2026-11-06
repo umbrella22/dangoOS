@@ -20,17 +20,14 @@ pub fn camera(s: crate::services::camera::Snapshot) -> View<AppMsg> {
     page(
         AppId::Camera.key(),
         "相机",
-        rs_lvgl_ui::obj()
+        rs_lvgl_ui::container()
             .key(Key::Named("viewfinder"))
             .scrollable(false)
-            .style(
-                Style::neutral()
-                    .background(CARD)
-                    .width(Size::Px(360))
-                    .height(Size::Px(270))
-                    .align(Align::TopMid)
-                    .offset(0, 96),
-            )
+            .background(CARD)
+            .width(Size::Px(360))
+            .height(Size::Px(270))
+            .align(Align::TopCenter)
+            .offset(0, 96)
             .child(
                 text(
                     if live {
@@ -43,26 +40,27 @@ pub fn camera(s: crate::services::camera::Snapshot) -> View<AppMsg> {
                     font_24(),
                     MUTED,
                 )
-                .style(Style::default().align(Align::Center)),
+                .align(Align::Center),
             ),
     )
     .child(
         text(status, font_20(), MUTED)
             .key(Key::Named("capture-status"))
-            .style(Style::default().align(Align::TopMid).offset(0, 68)),
+            .align(Align::TopCenter)
+            .offset(0, 68),
     )
     .child(
         rs_lvgl_ui::button(if live { "拍照" } else { "重试" })
             .key(Key::Named("shutter"))
             .style(
-                Style::neutral()
+                Style::plain()
                     .width(Size::Px(144))
                     .height(Size::Px(44))
                     .background(ACCENT)
                     .text_color(TEXT)
                     .font(font_24())
                     .radius(22)
-                    .align(Align::TopMid)
+                    .align(Align::TopCenter)
                     .offset(0, 372),
             )
             .on_click(if live {

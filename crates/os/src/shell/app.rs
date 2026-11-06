@@ -408,7 +408,7 @@ impl App for MosaicoApp {
             Screen::LowBattery => pages::low_battery::low_battery(),
             // The splash has no touch target: the wordmark and the drop must
             // play out on their own, so a finger on the glass changes nothing.
-            Screen::Splash => rs_lvgl_ui::obj()
+            Screen::Splash => rs_lvgl_ui::container()
                 .key(Key::Named("splash-root"))
                 .style(Style::screen(theme))
                 .child(
@@ -438,7 +438,7 @@ impl App for MosaicoApp {
 
 impl MosaicoApp {
     fn fox_view(&self, theme: &Theme) -> View<AppMsg> {
-        rs_lvgl_ui::obj()
+        rs_lvgl_ui::container()
             .key(Key::Named("fox-root"))
             .style(Style::screen(theme))
             .child(

@@ -2,6 +2,15 @@
 
 ## 未发布
 
+## v0.4.3 — 2026-11-06
+
+- 将 rs_lvgl、rs_lvgl_ui、rs_lvgl_sys 和 rs_lvgl_codegen 统一升级至 crates.io 的 0.6.0，原生 LVGL 继续使用 9.6。
+- Shell 使用 `container`、`progress_bar` 和完整的对齐、滚动命名；普通节点直接设置样式属性，保留可复用卡片样式和必要的原生控件样式重置。
+- 按新版独立设置主轴、项目及行对齐，保留现有页面位置；缩放使用 `Scale`，滑块和开关使用语义化 thumb / progress 样式，保留圆形滑钮及端点空间。
+- 原生 Arc、键盘和滚动条使用 `NativePart`；加载动画继续通过受控原生工厂创建，复用同一套 LVGL provider。
+
+沿用双 6 MiB A/B 与独立 NAND 布局，从 v0.4.0 至 v0.4.2 升级无需重新分区。安装、迁移和验证范围见 [v0.4.3 发布说明](scripts/release/notes/v0.4.3.md)。
+
 ## v0.4.2 — 2026-11-06
 
 - 将 rs_lvgl、rs_lvgl_ui、rs_lvgl_sys 和 rs_lvgl_codegen 统一升级至 crates.io 的 0.5.0，继续使用 LVGL 9.6。

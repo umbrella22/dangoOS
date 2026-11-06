@@ -2,7 +2,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rs_lvgl_ui::{symbol, Align, Color, FlexAlign, ImageSource, Key, Size, Style, View};
+use rs_lvgl_ui::{symbol, Align, Color, FlexAlign, ImageSource, ItemAlign, Key, Size, View};
 
 use crate::apps::registry::Registry;
 use crate::shell::messages::AppMsg;
@@ -79,7 +79,7 @@ fn tile(
     dim: bool,
     identity: Option<crate::apps::lifecycle::uninstall::Identity>,
 ) -> View<AppMsg> {
-    let square = rs_lvgl_ui::obj()
+    let square = rs_lvgl_ui::container()
         .key(Key::Named("icon"))
         .scrollable(false)
         // Plain objects are clickable by default; the tap must land on the
@@ -99,19 +99,12 @@ fn tile(
         ),
     };
     let square = square
-        .style(
-            Style::neutral()
-                .background(bg)
-                .radius(28)
-                .width(Size::Px(96))
-                .height(Size::Px(96))
-                .opacity(if dim { 110 } else { 255 }),
-        )
-        .child(
-            child
-                .key(Key::Named("glyph"))
-                .style(Style::default().align(Align::Center)),
-        );
+        .background(bg)
+        .radius(28)
+        .width(Size::Px(96))
+        .height(Size::Px(96))
+        .opacity(if dim { 110 } else { 255 })
+        .child(child.key(Key::Named("glyph")).align(Align::Center));
     rs_lvgl_ui::column([])
         .key(key)
         .scrollable(false)
@@ -126,13 +119,12 @@ fn tile(
             }
             _ => None,
         })
-        .style(
-            Style::neutral()
-                .width(Size::Px(120))
-                .height(Size::Content)
-                .gap(8)
-                .flex_align(FlexAlign::Start, FlexAlign::Center),
-        )
+        .width(Size::Px(120))
+        .height(Size::Content)
+        .gap(8)
+        .justify_content(FlexAlign::Start)
+        .align_items(ItemAlign::Center)
+        .align_content(FlexAlign::Center)
         .child(square)
         .child(
             text(fit_name(name), font_24(), if dim { WEAK } else { TEXT }).key(Key::Named("name")),
@@ -187,57 +179,53 @@ pub fn launcher(registry: &Registry) -> View<AppMsg> {
             rs_lvgl_ui::row([])
                 .key(Key::Id(r as u64))
                 .scrollable(false)
-                .style(
-                    Style::neutral()
-                        .width(Size::Content)
-                        .height(Size::Content)
-                        .gap(16),
-                )
+                .width(Size::Content)
+                .height(Size::Content)
+                .gap(16)
                 .children(tiles.by_ref().take(TILES_PER_ROW)),
         );
     }
     let grid = rs_lvgl_ui::column([]).key(Key::Named("tiles"));
     let grid = if row_count <= FIXED_ROWS {
-        grid.scrollable(false).style(
-            Style::neutral()
-                .width(Size::Content)
-                .height(Size::Content)
-                .gap(20)
-                .flex_align(FlexAlign::Start, FlexAlign::Center)
-                .align(Align::Center)
-                .offset(0, 0),
-        )
+        grid.scrollable(false)
+            .width(Size::Content)
+            .height(Size::Content)
+            .gap(20)
+            .justify_content(FlexAlign::Start)
+            .align_items(ItemAlign::Center)
+            .align_content(FlexAlign::Center)
+            .align(Align::Center)
+            .offset(0, 0)
     } else {
-        grid.scrollable(true).style(
-            Style::neutral()
-                .width(Size::Percent(100))
-                .height(Size::Px(GRID_H))
-                .gap(20)
-                .flex_align(FlexAlign::Start, FlexAlign::Center)
-                .align(Align::TopMid)
-                .offset(0, 84),
-        )
+        grid.scrollable(true)
+            .width(Size::Percent(100))
+            .height(Size::Px(GRID_H))
+            .gap(20)
+            .justify_content(FlexAlign::Start)
+            .align_items(ItemAlign::Center)
+            .align_content(FlexAlign::Center)
+            .align(Align::TopCenter)
+            .offset(0, 84)
     };
 
-    rs_lvgl_ui::obj()
+    rs_lvgl_ui::container()
         .key(Key::Named("launcher"))
         .scrollable(false)
-        .style(
-            Style::neutral()
-                .background(BG)
-                .width(Size::Percent(100))
-                .height(Size::Percent(100)),
-        )
+        .background(BG)
+        .width(Size::Percent(100))
+        .height(Size::Percent(100))
         .child(
             text("应用", font_30(), TITLE)
                 .key(Key::Named("title"))
-                .style(Style::default().align(Align::TopMid).offset(0, 30)),
+                .align(Align::TopCenter)
+                .offset(0, 30),
         )
         .child(grid.children(rows))
         .child(
             text("上滑回到狐狸 · 左缘右滑返回", font_20(), WEAK)
                 .key(Key::Named("hint"))
-                .style(Style::default().align(Align::BottomMid).offset(0, -44)),
+                .align(Align::BottomCenter)
+                .offset(0, -44),
         )
         .child(home_indicator())
 }
@@ -273,9 +261,9 @@ pub fn launcher_managed(
                     .align(Align::Center)
                     .gap(20),
             )
-            .child(text(prompt, font_24(), TEXT).style(Style::default().width(Size::Px(320))))
+            .child(text(prompt, font_24(), TEXT).width(Size::Px(320)))
             .child(
-                rs_lvgl_ui::obj()
+                rs_lvgl_ui::container()
                     .clickable(true)
                     .scrollable(false)
                     .style(card().width(Size::Px(300)).height(Size::Px(56)))
@@ -283,12 +271,12 @@ pub fn launcher_managed(
                     .on_click(AppMsg::ManageConfirm)
                     .child(
                         text("确认", font_24(), TEXT)
-                            .style(Style::default().align(Align::Center))
+                            .align(Align::Center)
                             .clickable(false),
                     ),
             )
             .child(
-                rs_lvgl_ui::obj()
+                rs_lvgl_ui::container()
                     .clickable(true)
                     .scrollable(false)
                     .style(card().width(Size::Px(300)).height(Size::Px(56)))
@@ -296,23 +284,20 @@ pub fn launcher_managed(
                     .on_click(AppMsg::ManageCancel)
                     .child(
                         text("取消", font_24(), TEXT)
-                            .style(Style::default().align(Align::Center))
+                            .align(Align::Center)
                             .clickable(false),
                     ),
             );
         root = root.child(
-            rs_lvgl_ui::obj()
+            rs_lvgl_ui::container()
                 .key(Key::Named("manage-overlay"))
                 .clickable(true)
                 .scrollable(false)
                 .on_click(AppMsg::ManageCancel)
-                .style(
-                    Style::neutral()
-                        .background(BG)
-                        .width(Size::Percent(100))
-                        .height(Size::Percent(100))
-                        .align(Align::Center),
-                )
+                .background(BG)
+                .width(Size::Percent(100))
+                .height(Size::Percent(100))
+                .align(Align::Center)
                 .child(dialog),
         );
     } else if busy || toast.is_some() {
@@ -327,7 +312,7 @@ pub fn launcher_managed(
                 TEXT,
             )
             .key(Key::Named("manage-toast"))
-            .style(card().align(Align::BottomMid).width(Size::Percent(100))),
+            .style(card().align(Align::BottomCenter).width(Size::Percent(100))),
         );
     }
     root

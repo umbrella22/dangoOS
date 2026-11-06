@@ -7,7 +7,10 @@ use crate::shell::{
     theme::tokens::*,
 };
 use alloc::{format, string::String};
-use rs_lvgl_ui::{Align, FlexAlign, Key, Part, ScrollDir, ScrollbarMode, Size, Style, View};
+use rs_lvgl_ui::{
+    Align, FlexAlign, ItemAlign, Key, NativePart, Scale, ScrollDirection, ScrollbarMode, Size,
+    Style, View,
+};
 
 pub(super) fn list(key: &'static str) -> View<AppMsg> {
     // Keep the 400 px controls at x=40; reserve a separate lane to their right
@@ -16,20 +19,17 @@ pub(super) fn list(key: &'static str) -> View<AppMsg> {
     rs_lvgl_ui::column([])
         .key(Key::Named(key))
         .scrollable(true)
-        .scroll_dir(ScrollDir::VER)
+        .scroll_direction(ScrollDirection::VERTICAL)
         .scrollbar_mode(ScrollbarMode::Auto)
-        .style(
-            Style::neutral()
-                .width(Size::Px(400 + SCROLLBAR_GUTTER))
-                .height(Size::Px(320))
-                .gap(8)
-                .align(Align::TopMid)
-                .offset(SCROLLBAR_GUTTER / 2, 92)
-                .padding_right(SCROLLBAR_GUTTER)
-                .padding_bottom(12),
-        )
-        .part_style(
-            Part::Scrollbar,
+        .width(Size::Px(400 + SCROLLBAR_GUTTER))
+        .height(Size::Px(320))
+        .gap(8)
+        .align(Align::TopCenter)
+        .offset(SCROLLBAR_GUTTER / 2, 92)
+        .padding_right(SCROLLBAR_GUTTER)
+        .padding_bottom(12)
+        .native_part_style(
+            NativePart::Scrollbar,
             Style::default().width(Size::Px(4)).padding_right(4),
         )
 }
@@ -39,7 +39,7 @@ pub(super) fn entry(
     value: impl Into<String>,
     message: AppMsg,
 ) -> View<AppMsg> {
-    rs_lvgl_ui::obj()
+    rs_lvgl_ui::container()
         .key(key)
         .scrollable(false)
         .clickable(true)
@@ -53,19 +53,21 @@ pub(super) fn entry(
         .child(
             text(fit_text(&label.into(), 208), font_24(), TEXT)
                 .key(Key::Named("label"))
-                .style(Style::default().width(Size::Px(208)).align(Align::LeftMid)),
+                .width(Size::Px(208))
+                .align(Align::CenterLeft),
         )
         .child(
             text(value, font_20(), MUTED)
                 .key(Key::Named("value"))
-                .style(Style::default().align(Align::RightMid)),
+                .align(Align::CenterRight),
         )
         .on_click(message)
 }
 pub(super) fn note(key: &'static str, value: impl Into<String>) -> View<AppMsg> {
     text(value, font_20(), MUTED)
         .key(Key::Named(key))
-        .style(Style::default().width(Size::Percent(100)).padding(12))
+        .width(Size::Percent(100))
+        .padding(12)
 }
 pub(super) fn level_slider(
     key: &'static str,
@@ -87,31 +89,24 @@ pub(super) fn level_slider(
             rs_lvgl_ui::row([])
                 .key(Key::Named("head"))
                 .scrollable(false)
-                .style(
-                    Style::neutral()
-                        .width(Size::Percent(100))
-                        .height(Size::Content)
-                        .flex_align(FlexAlign::SpaceBetween, FlexAlign::Center),
-                )
+                .width(Size::Percent(100))
+                .height(Size::Content)
+                .justify_content(FlexAlign::SpaceBetween)
+                .align_items(ItemAlign::Center)
+                .align_content(FlexAlign::Center)
                 .child(text(label, font_24(), TEXT))
                 .child(text(format!("{value}%"), font_24(), MUTED)),
         )
         .child(
             rs_lvgl_ui::slider(min, 100, i32::from(value))
                 .key(Key::Named("slider"))
-                .style(
-                    Style::default()
-                        .width(Size::Px(344))
-                        .height(Size::Px(10))
-                        .offset(8, 0)
-                        .background(CARD_HI)
-                        .radius(5),
-                )
-                .part_style(
-                    Part::Indicator,
-                    Style::default().background(ACCENT).radius(5),
-                )
-                .part_style(Part::Knob, Style::default().background(TEXT).padding(8))
+                .width(Size::Px(344))
+                .height(Size::Px(10))
+                .offset(8, 0)
+                .background(CARD_HI)
+                .radius(5)
+                .progress_style(Style::default().background(ACCENT).radius(5))
+                .thumb_style(Style::default().background(TEXT).padding(8))
                 .on_value_changed(changed),
         )
 }
@@ -121,8 +116,8 @@ pub(super) fn size(kib: u32) -> String {
 
 pub(super) fn loading_spinner(key: &'static str) -> View<AppMsg> {
     use rs_lvgl::sys;
-    // rs_lvgl_ui 0.2 applies arc styles only to Arc nodes. Configure the native
-    // spinner directly until its Spinner node supports those part properties.
+    // The UI's arc palette projection applies only to Arc nodes. Keep the
+    // spinner palette in this native factory, sharing the shell's provider.
     // SAFETY: the factory returns a direct child; LVGL owns its animation and
     // the reconciler deletes the object when the saving feedback is removed.
     unsafe {
@@ -148,7 +143,7 @@ pub(super) fn loading_spinner(key: &'static str) -> View<AppMsg> {
     }
     .key(Key::Named(key))
     .clickable(false)
-    .style(Style::neutral().width(Size::Px(20)).height(Size::Px(20)))
+    .style(Style::plain().width(Size::Px(20)).height(Size::Px(20)))
 }
 
 pub(super) fn checkmark(key: &'static str, color: rs_lvgl_ui::Color) -> View<AppMsg> {
@@ -157,20 +152,19 @@ pub(super) fn checkmark(key: &'static str, color: rs_lvgl_ui::Color) -> View<App
     let font = unsafe {
         rs_lvgl_ui::Font::from_raw(core::ptr::addr_of!(rs_lvgl::sys::lv_font_montserrat_48))
     };
-    rs_lvgl_ui::obj()
+    rs_lvgl_ui::container()
         .key(Key::Named(key))
         .scrollable(false)
         .clickable(false)
-        .style(Style::neutral().width(Size::Px(24)).height(Size::Px(24)))
+        .width(Size::Px(24))
+        .height(Size::Px(24))
         .child(
-            text(rs_lvgl_ui::symbol::OK, font, color).style(
-                Style::default()
-                    .align(Align::Center)
-                    .transform_scale_x(128)
-                    .transform_scale_y(128)
-                    .transform_pivot_x(24)
-                    .transform_pivot_y(24),
-            ),
+            text(rs_lvgl_ui::symbol::OK, font, color)
+                .align(Align::Center)
+                .transform_scale_x(Scale::percent(50))
+                .transform_scale_y(Scale::percent(50))
+                .transform_pivot_x(24)
+                .transform_pivot_y(24),
         )
 }
 
@@ -181,7 +175,7 @@ pub(super) fn frame(body: View<AppMsg>, settings_page: Page, info: Info) -> View
             rs_lvgl_ui::button_static("‹")
                 .key(Key::Named("settings-back"))
                 .style(
-                    Style::neutral()
+                    Style::plain()
                         .width(Size::Px(52))
                         .height(Size::Px(52))
                         .background(BG)
@@ -202,15 +196,14 @@ pub(super) fn frame(body: View<AppMsg>, settings_page: Page, info: Info) -> View
     let mut feedback = rs_lvgl_ui::row([])
         .key(Key::Named("save-feedback"))
         .scrollable(false)
-        .style(
-            Style::neutral()
-                .width(Size::Content)
-                .height(Size::Px(28))
-                .gap(8)
-                .flex_align(FlexAlign::Center, FlexAlign::Center)
-                .align(Align::TopMid)
-                .offset(0, 430),
-        );
+        .width(Size::Content)
+        .height(Size::Px(28))
+        .gap(8)
+        .justify_content(FlexAlign::Center)
+        .align_items(ItemAlign::Center)
+        .align_content(FlexAlign::Center)
+        .align(Align::TopCenter)
+        .offset(0, 430);
     if info.save_error {
         feedback = feedback.child(text_static("保存失败，请重新调整", font_20(), YELLOW));
     } else if info.saving {

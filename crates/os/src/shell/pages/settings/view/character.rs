@@ -6,7 +6,7 @@ use crate::shell::{
     pages::settings::model::Session,
     theme::tokens::*,
 };
-use rs_lvgl_ui::{Align, FlexAlign, Key, Size, Style, View};
+use rs_lvgl_ui::{Align, FlexAlign, ItemAlign, Key, Size, View};
 
 pub(super) fn view(session: &Session) -> View<AppMsg> {
     let info = session.info;
@@ -20,12 +20,9 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
             "",
             AppMsg::SelectSkin(choice.id.clone()),
         )
-        .style(
-            Style::default()
-                .height(Size::Px(56))
-                .border(if selected { ACCENT } else { CARD }, 2)
-                .background(if selected { CARD_HI } else { CARD }),
-        )
+        .height(Size::Px(56))
+        .border(if selected { ACCENT } else { CARD }, 2)
+        .background(if selected { CARD_HI } else { CARD })
         .clickable(!info.busy && session.loading_skin.is_none() && info.storage_ready && !selected);
         if loading {
             choice_view = choice_view.child(
@@ -33,21 +30,19 @@ pub(super) fn view(session: &Session) -> View<AppMsg> {
                     .key(Key::Named("skin-loading"))
                     .scrollable(false)
                     .clickable(false)
-                    .style(
-                        Style::neutral()
-                            .width(Size::Content)
-                            .height(Size::Px(24))
-                            .gap(8)
-                            .flex_align(FlexAlign::Center, FlexAlign::Center)
-                            .align(Align::RightMid),
-                    )
+                    .width(Size::Content)
+                    .height(Size::Px(24))
+                    .gap(8)
+                    .justify_content(FlexAlign::Center)
+                    .align_items(ItemAlign::Center)
+                    .align_content(FlexAlign::Center)
+                    .align(Align::CenterRight)
                     .child(loading_spinner("skin-spinner"))
                     .child(text("切换中", font_20(), TEXT)),
             );
         } else if selected {
-            choice_view = choice_view.child(
-                checkmark("skin-selected", ACCENT).style(Style::default().align(Align::RightMid)),
-            );
+            choice_view =
+                choice_view.child(checkmark("skin-selected", ACCENT).align(Align::CenterRight));
         }
         body = body.child(choice_view);
     }

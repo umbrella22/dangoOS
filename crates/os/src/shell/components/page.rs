@@ -1,7 +1,9 @@
 //! Native page frames, controls and font-aware text fitting.
 use alloc::string::String;
 
-use rs_lvgl_ui::{Align, Color, FlexAlign, Font, Key, Part, Size, State, Style, View};
+use rs_lvgl_ui::{
+    Align, Color, FlexAlign, Font, ItemAlign, Key, NativePart, Size, State, Style, View,
+};
 
 use crate::shell::messages::AppMsg;
 use {
@@ -28,28 +30,28 @@ pub(crate) fn font_icon() -> Font {
 }
 
 pub(crate) fn text(content: impl Into<String>, font: Font, color: Color) -> View<AppMsg> {
-    rs_lvgl_ui::label(content).style(Style::neutral().font(font).text_color(color))
+    rs_lvgl_ui::label(content).font(font).text_color(color)
 }
 
 pub(crate) fn text_static(content: &'static str, font: Font, color: Color) -> View<AppMsg> {
-    rs_lvgl_ui::label_static(content).style(Style::neutral().font(font).text_color(color))
+    rs_lvgl_ui::label_static(content)
+        .font(font)
+        .text_color(color)
 }
 
 /// A full-screen page: black field, centred title, home indicator.
 pub(crate) fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -> View<AppMsg> {
-    rs_lvgl_ui::obj()
+    rs_lvgl_ui::container()
         .key(Key::Named(key))
         .scrollable(false)
-        .style(
-            Style::neutral()
-                .background(BG)
-                .width(Size::Percent(100))
-                .height(Size::Percent(100)),
-        )
+        .background(BG)
+        .width(Size::Percent(100))
+        .height(Size::Percent(100))
         .child(
             text_static(title, font_30(), TITLE)
                 .key(Key::Named("title"))
-                .style(Style::default().align(Align::TopMid).offset(0, 30)),
+                .align(Align::TopCenter)
+                .offset(0, 30),
         )
         .child(body)
         .child(home_indicator())
@@ -57,19 +59,18 @@ pub(crate) fn page(key: &'static str, title: &'static str, body: View<AppMsg>) -
 
 /// The pill at the bottom edge: "swipe up from here".
 pub(crate) fn home_indicator() -> View<AppMsg> {
-    rs_lvgl_ui::obj().key(Key::Named("home-pill")).style(
-        Style::neutral()
-            .background(WEAK)
-            .radius(3)
-            .width(Size::Px(96))
-            .height(Size::Px(6))
-            .align(Align::BottomMid)
-            .offset(0, -16),
-    )
+    rs_lvgl_ui::container()
+        .key(Key::Named("home-pill"))
+        .background(WEAK)
+        .radius(3)
+        .width(Size::Px(96))
+        .height(Size::Px(6))
+        .align(Align::BottomCenter)
+        .offset(0, -16)
 }
 
 pub(crate) fn card() -> Style {
-    Style::neutral().background(CARD).radius(RADIUS).padding(20)
+    Style::plain().background(CARD).radius(RADIUS).padding(20)
 }
 
 /// A 68 px row: label on the left, `trailing` on the right.
@@ -83,7 +84,9 @@ pub(crate) fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>
                 .padding_bottom(0)
                 .width(Size::Percent(100))
                 .height(Size::Px(ROW_H))
-                .flex_align(FlexAlign::SpaceBetween, FlexAlign::Center),
+                .justify_content(FlexAlign::SpaceBetween)
+                .align_items(ItemAlign::Center)
+                .align_content(FlexAlign::Center),
         )
         .child(text_static(label, font_24(), TEXT).key(Key::Named("label")))
         .child(trailing)
@@ -92,18 +95,15 @@ pub(crate) fn row(key: &'static str, label: &'static str, trailing: View<AppMsg>
 pub(crate) fn switch(key: &'static str, on: bool, msg: fn(bool) -> AppMsg) -> View<AppMsg> {
     rs_lvgl_ui::switch(on)
         .key(Key::Named(key))
-        .style(
-            Style::default()
-                .width(Size::Px(64))
-                .height(Size::Px(34))
-                .background(CARD_HI),
-        )
-        .part_state_style(
-            Part::Indicator,
+        .width(Size::Px(64))
+        .height(Size::Px(34))
+        .background(CARD_HI)
+        .native_part_state_style(
+            NativePart::Indicator,
             State::CHECKED,
             Style::default().background(ACCENT),
         )
-        .part_style(Part::Knob, Style::default().background(TEXT))
+        .thumb_style(Style::default().background(TEXT))
         .on_toggle(msg)
 }
 

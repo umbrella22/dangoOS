@@ -89,7 +89,7 @@ OTA 输入必须是已经生成并验证的固件 BIN。下载模式恢复入口
 ## 可选 EmbedScope 调试
 
 `embedscope` 默认关闭。适配器使用 EmbedScope SDK，复用系统的
-LVGL 9.6 / rs_lvgl 0.5.0。应用的 `TreeSource` 在 UI 线程采集原生对象；
+LVGL 9.6 / rs_lvgl 0.6.0。应用的 `TreeSource` 在 UI 线程采集原生对象；
 `escope-lvgl` 使用默认 feature 集，原生 LVGL 统一由 `rs_lvgl_sys` 提供。
 
 ```sh
@@ -112,6 +112,25 @@ features 会合并，正式构建不要使用 `--all-features`。
 
 接入、端口选择与调试步骤见
 [EmbedScope 团子 OS 指南](https://umbrella22.github.io/EmbedScope_website/integration/dango.html)。
+
+## 原生界面 API
+
+Shell 使用发布的 rs_lvgl_ui 0.6.0：普通容器为 `container()`，进度条为
+`progress_bar()`，滚动使用 `ScrollDirection` 和 `scroll_direction`。
+普通节点直接链式设置尺寸、颜色和间距；`style()` 创建可复用补丁，
+`Style::plain()` 仅用于需要明确覆盖原生基础样式的场合。
+
+旧 `flex_align(main, cross)` 的位置由 `justify_content(main)`、
+`align_items(ItemAlign::...)` 和 `align_content(cross)` 三个独立属性保持。
+图标等比缩放同时设置两个轴的 `Scale::percent(...)`，并保留中心 pivot 和布局占位。
+滑块与开关使用 `thumb_style`，滑块与进度条使用 `progress_style`；
+只设置颜色和所需内边距，保留原生滑钮的圆形半径。同一部件及状态的字段放在同一补丁中，
+避免后一次部件样式替换先前的整块补丁。
+
+键盘、滚动条和 Arc 等原生部件继续使用 `NativePart`。
+保存反馈的 spinner 仍由原生工厂设置 Arc 调色板：当前声明式 Arc 颜色和宽度投影仅对
+Arc 节点生效。该工厂返回 UI 持有的直接子对象，由协调器统一释放。
+完整上游迁移说明见 [rs_lvgl_ui API 迁移](https://umbrella22.github.io/rs_lvgl_website/guide/ui-api-migration.html)。
 
 ## 控制台
 

@@ -2,7 +2,7 @@
 use alloc::format;
 use alloc::string::String;
 
-use rs_lvgl_ui::{Align, Color, GridTrack, Key, Part, ScrollDir, ScrollbarMode, Size, Style, View};
+use rs_lvgl_ui::{Align, Color, GridTrack, Key, ScrollDirection, ScrollbarMode, Size, Style, View};
 
 use crate::companion::behavior::affect::ModuleKind;
 use crate::shell::messages::AppMsg;
@@ -26,37 +26,28 @@ fn sensor_card(
     let mut card_node = rs_lvgl_ui::column([])
         .key(Key::Named(key))
         .scrollable(false)
-        .style(
-            Style::neutral()
-                .background(CARD)
-                .radius(RADIUS)
-                .padding(10)
-                .padding_left(18)
-                .padding_right(18)
-                .width(Size::Px(196))
-                .height(Size::Px(SENSOR_CARD_H))
-                .gap(2),
-        )
+        .background(CARD)
+        .radius(RADIUS)
+        .padding(10)
+        .padding_left(18)
+        .padding_right(18)
+        .width(Size::Px(196))
+        .height(Size::Px(SENSOR_CARD_H))
+        .gap(2)
         .child(text(title, font_20(), MUTED).key(Key::Named("title")));
     let [first, second] = lines;
     card_node = card_node.child(text(first, font_24(), TEXT).key(Key::Named("value")));
     match bar {
         Some((value, color)) => {
             card_node = card_node.child(
-                rs_lvgl_ui::bar(0, 100, value as i32)
+                rs_lvgl_ui::progress_bar(0, 100, value as i32)
                     .key(Key::Named("bar"))
-                    .style(
-                        Style::default()
-                            .width(Size::Percent(100))
-                            .height(Size::Px(8))
-                            .offset(0, 8)
-                            .background(CARD_HI)
-                            .radius(4),
-                    )
-                    .part_style(
-                        Part::Indicator,
-                        Style::default().background(color).radius(4),
-                    ),
+                    .width(Size::Percent(100))
+                    .height(Size::Px(8))
+                    .offset(0, 8)
+                    .background(CARD_HI)
+                    .radius(4)
+                    .progress_style(Style::default().background(color).radius(4)),
             );
         }
         None => {
@@ -181,7 +172,7 @@ pub fn sensors(hub: &Hub) -> View<AppMsg> {
             [String::from(presence), String::from(magnet)],
             None,
         )
-        .style(Style::default().width(Size::Px(COLUMN_W))),
+        .width(Size::Px(COLUMN_W)),
     ];
     let grid = rs_lvgl_ui::grid(
         [GridTrack::Px(196), GridTrack::Px(196)],
@@ -203,16 +194,13 @@ pub fn sensors(hub: &Hub) -> View<AppMsg> {
     )
     .key(Key::Named("grid"))
     .scrollable(true)
-    .scroll_dir(ScrollDir::VER)
+    .scroll_direction(ScrollDirection::VERTICAL)
     .scrollbar_mode(ScrollbarMode::Auto)
-    .style(
-        Style::neutral()
-            .width(Size::Px(COLUMN_W))
-            .height(Size::Px(340))
-            .gap(8)
-            .align(Align::TopMid)
-            .offset(0, SENSOR_Y),
-    );
+    .width(Size::Px(COLUMN_W))
+    .height(Size::Px(340))
+    .gap(8)
+    .align(Align::TopCenter)
+    .offset(0, SENSOR_Y);
 
     page(AppId::Sensors.key(), AppId::Sensors.title(), grid)
 }

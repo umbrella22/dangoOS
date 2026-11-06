@@ -26,6 +26,8 @@ unsafe extern "C" {
     static lv_keyboard_class: sys::lv_obj_class_t;
     static lv_spinner_class: sys::lv_obj_class_t;
     static lv_label_class: sys::lv_obj_class_t;
+    static lv_slider_class: sys::lv_obj_class_t;
+    static lv_switch_class: sys::lv_obj_class_t;
 }
 unsafe extern "C" fn input(_: *mut sys::lv_indev_t, data: *mut sys::lv_indev_data_t) {
     unsafe {
@@ -121,6 +123,64 @@ fn capture(name: &str, pixels: &Rc<RefCell<Vec<u8>>>) {
             std::fs::File::create(std::path::Path::new(&path).join(format!("{name}.ppm"))).unwrap();
         write!(file, "P6\n480 480\n255\n").unwrap();
         file.write_all(&pixels.borrow()).unwrap();
+    }
+}
+
+/// Measure the bright thumb separately from its dark/orange track. A clipped
+/// or stretched circle loses its square bounds or its narrow first scanline.
+fn round_thumb(pixels: &[u8], crop: sys::lv_area_t) -> Option<sys::lv_area_t> {
+    let mut points = Vec::new();
+    for y in crop.y1.max(0)..=crop.y2.min(479) {
+        for x in crop.x1.max(0)..=crop.x2.min(479) {
+            let at = ((y * 480 + x) * 3) as usize;
+            if pixels[at..at + 3].iter().all(|v| *v >= 240) {
+                points.push((x, y));
+            }
+        }
+    }
+    let bounds = sys::lv_area_t {
+        x1: points.iter().map(|p| p.0).min()?,
+        x2: points.iter().map(|p| p.0).max()?,
+        y1: points.iter().map(|p| p.1).min()?,
+        y2: points.iter().map(|p| p.1).max()?,
+    };
+    let (width, height) = (bounds.x2 - bounds.x1 + 1, bounds.y2 - bounds.y1 + 1);
+    let first_row = points.iter().filter(|p| p.1 == bounds.y1).count() as i32;
+    (width >= 12 && (width - height).abs() <= 1 && first_row * 4 < width * 3).then_some(bounds)
+}
+
+fn assert_native_thumbs(pixels: &Rc<RefCell<Vec<u8>>>, has_switch: bool) {
+    // SAFETY: these classes and their parents belong to the mounted settings
+    // tree on this test thread. Rendering completes before pixels are read.
+    unsafe {
+        sys::lv_obj_invalidate(sys::lv_screen_active());
+        sys::lv_refr_now(ptr::null_mut());
+        let classes = [&raw const lv_slider_class, &raw const lv_switch_class];
+        for class in classes.into_iter().take(if has_switch { 2 } else { 1 }) {
+            let control = find(sys::lv_screen_active(), class).expect("settings control");
+            let mut crop: sys::lv_area_t = core::mem::zeroed();
+            sys::lv_obj_get_coords(control, &mut crop);
+            crop.x1 -= 16;
+            crop.x2 += 16;
+            crop.y1 -= 16;
+            crop.y2 += 16;
+            let data = pixels.borrow();
+            let bounds = round_thumb(&data, crop).expect("complete circular native thumb");
+            let mut parent: sys::lv_area_t = core::mem::zeroed();
+            sys::lv_obj_get_coords(sys::lv_obj_get_parent(control), &mut parent);
+            assert!(bounds.x1 > parent.x1 && bounds.x2 < parent.x2);
+            assert!(bounds.y1 > parent.y1 && bounds.y2 < parent.y2);
+
+            // Negative control: removing the upper half must be detected.
+            let mut clipped = data.clone();
+            for y in bounds.y1..=(bounds.y1 + bounds.y2) / 2 {
+                for x in bounds.x1..=bounds.x2 {
+                    let at = ((y * 480 + x) * 3) as usize;
+                    clipped[at..at + 3].fill(0);
+                }
+            }
+            assert!(round_thumb(&clipped, crop).is_none());
+        }
     }
 }
 
@@ -701,6 +761,26 @@ fn categories_controls_and_wifi_password_use_native_events() {
     unsafe {
         assert!(label(sys::lv_screen_active(), "鸣潮 · 心月狐团子").is_some());
         assert!(label(sys::lv_screen_active(), "安装团子形象后可在这里切换").is_none());
+    }
+    // Exercise the real page components at both endpoints and a middle value.
+    // The native renderer, rather than a style-field comparison, proves the
+    // circular thumbs and the parent clipping boundary after the API migration.
+    for (page, values, name) in [
+        (settings::Page::Display, [10, 50, 100], "display"),
+        (settings::Page::Audio, [0, 50, 100], "audio"),
+    ] {
+        app.set_settings_page(page);
+        for value in values {
+            if page == settings::Page::Display {
+                app.hub_mut().settings.set_brightness(value);
+            } else {
+                app.hub_mut().settings.audio_volume = value as u8;
+            }
+            ui.update(&app).unwrap();
+            run(&mut ui, &mut app, 100);
+            capture(&format!("21-{name}-{value}"), &pixels);
+            assert_native_thumbs(&pixels, page == settings::Page::Audio);
+        }
     }
     ui.unmount();
     drop(ui);
