@@ -11,7 +11,9 @@
 //! * `create` takes the control's canvas pool (allocated once per control and
 //!   leaked, so its buffers are `'static`), creates a native canvas and
 //!   centres it.
-//! * `update` advances the [`FoxAnimator`] on every `Ui::tick` and renders on
+//! * `apply_props` accepts the unit properties without consuming animation time;
+//!   live state continues to come from the shared control.
+//! * `tick` advances the [`FoxAnimator`] on every `Ui::tick` and renders on
 //!   a 50 ms cadence, or on the next tick after an urgent change, into a pool
 //!   [`WriteLease`](crate::services::display::canvas_pool::WriteLease) and publishes it.
 //!   - LVGL path (host previews and tests): the widget takes the published
@@ -465,7 +467,11 @@ unsafe fn set_canvas_buffer(
 }
 
 impl CustomWidget for FoxWidget {
-    fn create(&mut self, parent: &mut Obj<'_>) -> Result<CustomObject, UiError> {
+    // The shared control carries live runtime state; reconciliation has no
+    // additional properties and must not advance the animation clock.
+    type Props = ();
+
+    fn create(&mut self, parent: &mut Obj<'_>, _: &()) -> Result<CustomObject, UiError> {
         if self.canvas.is_some() {
             return Err(UiError::InvalidProperty);
         }
@@ -478,7 +484,7 @@ impl CustomWidget for FoxWidget {
 
         // Take (or allocate) the pool before creating the native object so an
         // allocation failure cannot leak a canvas. Publish one black frame so
-        // the native canvas has valid pixels before the first update.
+        // the native canvas has valid pixels before the first tick.
         let pool = self.control.pool();
         let plane = self.control.plane_mode();
         let mut first = pool.acquire().ok_or(UiError::Allocation)?;
@@ -550,9 +556,6 @@ impl CustomWidget for FoxWidget {
         // SAFETY: `canvas` was just created as a direct child of `parent` and is live;
         // this is the only handle for it, it is returned from `create`, and
         // `delete` clears `self.canvas` before the reconciler frees it.
-        // `unused_unsafe`: `CustomObject::new` became `unsafe` after the
-        // pinned lv_binding_rust revision; this compiles against both.
-        #[allow(unused_unsafe)]
         let object = unsafe { CustomObject::new(parent, canvas) };
         match object {
             Ok(object) => {
@@ -564,7 +567,7 @@ impl CustomWidget for FoxWidget {
                 self.control
                     .creates
                     .set(self.control.creates.get().saturating_add(1));
-                // The first update renders the initial expression at once.
+                // The first tick renders the initial expression at once.
                 self.control.mark_urgent();
                 Ok(object)
             }
@@ -578,7 +581,11 @@ impl CustomWidget for FoxWidget {
         }
     }
 
-    fn update(&mut self, object: &mut CustomObject, elapsed_ms: u32) -> Result<(), UiError> {
+    fn apply_props(&mut self, _object: &mut CustomObject, _: &()) -> Result<(), UiError> {
+        Ok(())
+    }
+
+    fn tick(&mut self, object: &mut CustomObject, elapsed_ms: u32) -> Result<(), UiError> {
         let Some(pool) = self.pool else {
             return Err(UiError::InvalidProperty);
         };
@@ -693,7 +700,7 @@ mod tests {
             type Action = ();
             fn update(&mut self, (): ()) {}
             fn view(&self, _theme: &rs_lvgl_ui::Theme) -> rs_lvgl_ui::View<()> {
-                rs_lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)))
+                rs_lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)), ())
             }
         }
         let app = App {

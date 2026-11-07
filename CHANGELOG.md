@@ -2,6 +2,14 @@
 
 ## 未发布
 
+## v0.4.4 — 2026-11-07
+
+- 将 rs_lvgl、rs_lvgl_ui、rs_lvgl_sys 和 rs_lvgl_codegen 统一升级至 crates.io 的 0.7.0，继续使用同一套 LVGL 9.6 原生实现与现有控件 feature。
+- 团子和开机动画迁移到新版 `CustomWidget`：显式声明属性，使用 `custom(widget, props)`，动画时间只由 `tick()` 推进；页面重建保留已挂载实例及画布资源。
+- 移除自定义控件中针对旧版本的兼容注解，同步生命周期与资源失败测试，并增加重复协调不推进动画时间的原生回归。
+
+沿用双 6 MiB A/B 与独立 NAND 布局，从 v0.4.0 至 v0.4.3 升级无需重新分区。源码迁移、安装和验证范围见 [v0.4.4 发布说明](scripts/release/notes/v0.4.4.md)。
+
 ## v0.4.3 — 2026-11-06
 
 - 将 rs_lvgl、rs_lvgl_ui、rs_lvgl_sys 和 rs_lvgl_codegen 统一升级至 crates.io 的 0.6.0，原生 LVGL 继续使用 9.6。

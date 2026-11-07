@@ -79,7 +79,7 @@ checksum = "c583acf993cf4245c4acb0a2cc2ab1f9cc097de73411bb6d3647ff6af2b1013d"
 
 [[package]]
 name = "app-host"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "cc",
  "serde",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "app-pack"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "app-host",
  "fs",
@@ -1604,7 +1604,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fs"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "cc",
 ]
@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "lua-engine"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "app-host",
  "cc",
@@ -2146,7 +2146,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "os"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "app-host",
  "critical-section",
@@ -2549,9 +2549,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d216166b28103fd436e3cc7cb1cd89d69550e97f9e7c71db88ba3e8ed0876a25"
+checksum = "f86cf37026ed790b7d5d2b5c98444f1943ed1702afb4d6519de7b668a25276f6"
 dependencies = [
  "bitflags 2.13.2",
  "cstr_core",
@@ -2566,9 +2566,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl_codegen"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd9668f44e4ba49ce48dc13be9165921acd71b363687df3e665a46f621f95e74"
+checksum = "a89a9c7bbf07f6ea96c0406df110efcc81d3f5461028f383e9e6c2d8efc2ae1c"
 dependencies = [
  "Inflector",
  "lazy_static",
@@ -2580,9 +2580,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl_sys"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16b78d30f4ea1844d3ce9ccfb3b3ca027b546f937f487e373be14ec54b4f189a"
+checksum = "eccc709548609804d1b2d45ce053b4d592d951e096bf496f7571f9f66b69fcb6"
 dependencies = [
  "bindgen",
  "cc",
@@ -2591,9 +2591,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl_ui"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b100988c30a323d681d6c99fc5f6b57819195c41d9571187f0d9e3bfbabb3e4"
+checksum = "752f7f485356a4640caa4742fdb07cf1a47399eea372203265a56bd46ad3b2b5"
 dependencies = [
  "cstr_core",
  "cty",
@@ -2742,7 +2742,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "script-bench-runner"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "embedts-engine",
  "lua-engine",

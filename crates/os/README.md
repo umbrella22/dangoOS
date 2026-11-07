@@ -89,7 +89,7 @@ OTA 输入必须是已经生成并验证的固件 BIN。下载模式恢复入口
 ## 可选 EmbedScope 调试
 
 `embedscope` 默认关闭。适配器使用 EmbedScope SDK，复用系统的
-LVGL 9.6 / rs_lvgl 0.6.0。应用的 `TreeSource` 在 UI 线程采集原生对象；
+LVGL 9.6 / rs_lvgl 0.7.0。应用的 `TreeSource` 在 UI 线程采集原生对象；
 `escope-lvgl` 使用默认 feature 集，原生 LVGL 统一由 `rs_lvgl_sys` 提供。
 
 ```sh
@@ -115,7 +115,7 @@ features 会合并，正式构建不要使用 `--all-features`。
 
 ## 原生界面 API
 
-Shell 使用发布的 rs_lvgl_ui 0.6.0：普通容器为 `container()`，进度条为
+Shell 使用发布的 rs_lvgl_ui 0.7.0：普通容器为 `container()`，进度条为
 `progress_bar()`，滚动使用 `ScrollDirection` 和 `scroll_direction`。
 普通节点直接链式设置尺寸、颜色和间距；`style()` 创建可复用补丁，
 `Style::plain()` 仅用于需要明确覆盖原生基础样式的场合。
@@ -130,6 +130,14 @@ Shell 使用发布的 rs_lvgl_ui 0.6.0：普通容器为 `container()`，进度�
 键盘、滚动条和 Arc 等原生部件继续使用 `NativePart`。
 保存反馈的 spinner 仍由原生工厂设置 Arc 调色板：当前声明式 Arc 颜色和宽度投影仅对
 Arc 节点生效。该工厂返回 UI 持有的直接子对象，由协调器统一释放。
+
+团子与开机动画实现新版 `CustomWidget`，使用 `custom(widget, ())`。
+两者以共享 control 接收动态状态，`Props` 为单位类型；`apply_props()` 不推进时间，
+帧节奏与动画时间只在 `tick()` 中更新。相同类型及 key 的协调保留已挂载实例，
+控件与 backing buffer 存活到原生删除回调结束。创建失败路径自行释放尚未交给 UI 的对象。
+从旧实现迁移时，将 `update(object, elapsed_ms)` 改为 `tick(object, elapsed_ms)`，
+补齐 `Props`、带属性参数的 `create()` 与 `apply_props()`；项目不保留 0.6 兼容入口。
+
 完整上游迁移说明见 [rs_lvgl_ui API 迁移](https://umbrella22.github.io/rs_lvgl_website/guide/ui-api-migration.html)。
 
 ## 控制台

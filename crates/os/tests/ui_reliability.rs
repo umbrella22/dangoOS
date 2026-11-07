@@ -341,10 +341,12 @@ fn owned_font(source: *const sys::lv_font_t) -> FontResource {
 
 struct Fails;
 impl CustomWidget for Fails {
-    fn create(&mut self, _: &mut Obj<'_>) -> Result<CustomObject, UiError> {
+    type Props = ();
+
+    fn create(&mut self, _: &mut Obj<'_>, _: &()) -> Result<CustomObject, UiError> {
         Err(UiError::Allocation)
     }
-    fn update(&mut self, _: &mut CustomObject, _: u32) -> Result<(), UiError> {
+    fn apply_props(&mut self, _: &mut CustomObject, _: &()) -> Result<(), UiError> {
         Ok(())
     }
     fn delete(&mut self, _: &mut CustomObject) {
@@ -387,7 +389,7 @@ impl App for Resources {
             );
         }
         if self.fail {
-            view = view.child(rs_lvgl_ui::custom(Fails).key(Key::Named("injected-failure")));
+            view = view.child(rs_lvgl_ui::custom(Fails, ()).key(Key::Named("injected-failure")));
         }
         view
     }

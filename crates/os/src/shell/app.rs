@@ -412,7 +412,7 @@ impl App for MosaicoApp {
                 .key(Key::Named("splash-root"))
                 .style(Style::screen(theme))
                 .child(
-                    rs_lvgl_ui::custom(SplashWidget::new(Rc::clone(&self.splash)))
+                    rs_lvgl_ui::custom(SplashWidget::new(Rc::clone(&self.splash)), ())
                         .key(Key::Named("splash-widget")),
                 ),
             Screen::Fox => match self.page() {
@@ -442,7 +442,7 @@ impl MosaicoApp {
             .key(Key::Named("fox-root"))
             .style(Style::screen(theme))
             .child(
-                rs_lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)))
+                rs_lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)), ())
                     .key(Key::Named("fox-widget")),
             )
     }

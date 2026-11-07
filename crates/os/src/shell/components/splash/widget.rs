@@ -103,7 +103,10 @@ impl SplashWidget {
 }
 
 impl CustomWidget for SplashWidget {
-    fn create(&mut self, parent: &mut Obj<'_>) -> Result<CustomObject, UiError> {
+    // The timeline belongs to the mounted widget and advances only in tick.
+    type Props = ();
+
+    fn create(&mut self, parent: &mut Obj<'_>, _: &()) -> Result<CustomObject, UiError> {
         if self.created {
             return Err(UiError::InvalidProperty);
         }
@@ -140,9 +143,6 @@ impl CustomWidget for SplashWidget {
         // SAFETY: `canvas` was just created as a direct child of `parent` and is live;
         // this is the only handle for it, it is returned from `create`, and
         // the widget keeps no pointer to it.
-        // `unused_unsafe`: `CustomObject::new` became `unsafe` after the
-        // pinned lv_binding_rust revision; this compiles against both.
-        #[allow(unused_unsafe)]
         let object = unsafe { CustomObject::new(parent, canvas) };
         match object {
             Ok(object) => Ok(object),
@@ -157,7 +157,11 @@ impl CustomWidget for SplashWidget {
         }
     }
 
-    fn update(&mut self, object: &mut CustomObject, elapsed_ms: u32) -> Result<(), UiError> {
+    fn apply_props(&mut self, _object: &mut CustomObject, _: &()) -> Result<(), UiError> {
+        Ok(())
+    }
+
+    fn tick(&mut self, object: &mut CustomObject, elapsed_ms: u32) -> Result<(), UiError> {
         let Some(buffer) = self.buffer.as_mut() else {
             return Err(UiError::InvalidProperty);
         };

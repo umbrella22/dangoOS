@@ -4,6 +4,73 @@ use super::*;
 use crate::test_support;
 
 #[test]
+fn custom_widget_reconciliation_preserves_instances_and_animation_time() {
+    let _guard = test_support::lock();
+    unsafe { rs_lvgl::deinit() };
+    rs_lvgl::init();
+    let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
+
+    struct Animations {
+        control: Rc<FoxControl>,
+        splash: Rc<SplashControl>,
+        show_splash: bool,
+    }
+    impl App for Animations {
+        type Action = ();
+        fn update(&mut self, (): ()) {}
+        fn view(&self, _: &Theme) -> View<()> {
+            if self.show_splash {
+                rs_lvgl_ui::custom(SplashWidget::new(Rc::clone(&self.splash)), ())
+            } else {
+                rs_lvgl_ui::custom(FoxWidget::new(Rc::clone(&self.control)), ())
+            }
+        }
+    }
+
+    let mut app = Animations {
+        control: FoxControl::new(Expression::Idle),
+        splash: SplashControl::new(),
+        show_splash: true,
+    };
+    let mut ui = rs_lvgl_ui::Ui::new(&display, theme()).unwrap();
+    ui.mount(&app).unwrap();
+    for _ in 0..3 {
+        ui.update(&app).unwrap();
+    }
+    assert_eq!(app.splash.create_count(), 1);
+    assert_eq!(app.splash.elapsed_ms(), 0);
+    assert_eq!(app.splash.frames(), 0);
+    ui.tick(50).unwrap();
+    for _ in 0..3 {
+        ui.update(&app).unwrap();
+    }
+    assert_eq!(app.splash.create_count(), 1);
+    assert_eq!(app.splash.elapsed_ms(), 50);
+    assert_eq!(app.splash.frames(), 1);
+
+    app.show_splash = false;
+    ui.update(&app).unwrap();
+    assert_eq!(app.control.create_count(), 1);
+    assert_eq!(app.control.rendered_frames(), 0);
+    ui.tick(50).unwrap();
+    let frames = app.control.rendered_frames();
+    assert!(frames > 0);
+    for _ in 0..3 {
+        ui.update(&app).unwrap();
+    }
+    assert_eq!(app.control.create_count(), 1);
+    assert_eq!(app.control.rendered_frames(), frames);
+    ui.unmount();
+    assert_eq!(app.control.delete_count(), 1);
+    drop(ui);
+    // SAFETY: all UI-owned objects are gone before deleting the display.
+    unsafe {
+        display.delete();
+        rs_lvgl::deinit();
+    }
+}
+
+#[test]
 fn the_app_starts_on_the_configured_first_screen() {
     let _guard = test_support::lock();
 
