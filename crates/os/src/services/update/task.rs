@@ -1,4 +1,4 @@
-//! Download to NAND, close the network, then use the existing A/B installer.
+//! Download and close a NAND image, then hand installation to Recovery.
 use alloc::{format, string::String, vec::Vec};
 use core::{
     cell::{Cell, RefCell},
@@ -86,17 +86,18 @@ pub fn submit(command: Command) -> bool {
     }
     if let Command::SetProxy(proxy) = command {
         if busy()
-            || crate::services::update::ota::device::active()
-            || crate::services::update::ota::device::candidate()
+            || crate::services::update::boot::device::active()
+            || crate::services::update::boot::device::candidate()
         {
             return false;
         }
         crate::services::settings::device::configure_proxy(proxy);
         return true;
     }
-    if crate::services::radio::device::wifi::busy()
-        || crate::services::update::ota::device::active()
-        || crate::services::update::ota::device::candidate()
+    if crate::services::voice::device::busy()
+        || crate::services::radio::device::wifi::busy()
+        || crate::services::update::boot::device::active()
+        || crate::services::update::boot::device::candidate()
         || crate::apps::device::is_managing()
         || BUSY.swap(true, Ordering::AcqRel)
     {
@@ -167,7 +168,7 @@ async fn download(
 ) -> Result<(), &'static str> {
     let file = open(::fs::OpenFlags::WRITE).await?;
     let mut sha = Sha256::new();
-    let mut image = crate::services::update::ota::image::ImageVerifier::new(release.bytes);
+    let mut image = boot_contract::image::ImageVerifier::new(release.bytes);
     state.phase = Phase::Downloading;
     state.received = 0;
     state.total = release.bytes;
@@ -209,84 +210,21 @@ async fn download(
         return Err("固件校验失败，请重新下载");
     }
     image.finish().map_err(|_| "固件镜像格式错误")?;
-    if !image.ab_layout() || image.version() != Some(release.version.as_str()) {
+    if !image.single_main() || image.version() != Some(release.version.as_str()) {
         return Err("固件版本或分区布局不匹配");
     }
     Ok(())
 }
 async fn install(release: &Release, state: &mut Snapshot) -> Result<(), &'static str> {
     state.phase = Phase::Installing;
-    state.received = 0;
     publish(state);
-    if !crate::services::camera::task::quiesce().await
-        || !crate::services::radio::device::quiesce().await
-    {
-        return Err("无法暂停相机或无线连接");
-    }
-    if !crate::services::power::coordinator::ensure_awake().await {
-        return Err("显示尚未就绪");
-    }
-    let file = open(::fs::OpenFlags::READ).await?;
-    let mut updater = crate::services::update::ota::device::DeviceUpdater::new();
-    let result = async {
-        updater
-            .execute(crate::services::update::ota::Command::Begin {
-                size: release.bytes,
-                sha: release.sha256,
-            })
-            .await
-            .map_err(|_| "无法开始安装")?;
-        let mut offset = 0;
-        let mut last_percent = 0;
-        while offset < release.bytes {
-            let mut bytes = alloc::vec![0;4096.min((release.bytes-offset) as usize)];
-            let owned = file.clone();
-            let (next, result) = crate::platform::runtime::executors::services::run(move || {
-                let result = ::fs::global::with(|vfs| vfs.read(owned.fd(), &mut bytes));
-                (bytes, result)
-            })
-            .await;
-            let bytes = next;
-            let n = result.map_err(|_| "更新文件读取失败")?;
-            if n != bytes.len() {
-                return Err("更新文件不完整");
-            }
-            let crc = crate::formats::crc32::crc32(&bytes);
-            updater
-                .execute(crate::services::update::ota::Command::Chunk { offset, bytes, crc })
-                .await
-                .map_err(|_| "备用固件写入或回读失败")?;
-            offset += n as u32;
-            state.received = offset;
-            let percent = u64::from(offset) * 100 / u64::from(state.total);
-            if percent != last_percent {
-                last_percent = percent;
-                publish(state);
-            }
-        }
-        close(file).await?;
-        let _ = crate::platform::runtime::executors::services::run(|| {
-            ::fs::global::with(|vfs| vfs.unlink(STAGE))
-        })
-        .await;
-        updater
-            .execute(crate::services::update::ota::Command::End)
-            .await
-            .map_err(|_| "固件回读校验失败")?;
-        Ok::<(), &'static str>(())
-    }
-    .await;
-    if result.is_err() {
-        updater.abort();
-    }
-    result?;
+    crate::services::update::boot::device::stage(release.bytes, release.sha256).await?;
+    // The closed staging file remains intact until Recovery has completed it.
+    // After the durable request there is no cancellation branch that unlinks it.
     state.phase = Phase::Restarting;
     publish(state);
-    log::info!("update: candidate installed, restarting");
+    log::info!("update: closed image handed to Recovery");
     Timer::after_millis(800).await;
-    if crate::services::power::button_task::shutdown_requested() {
-        return Err("关机进行中");
-    }
     esp_hal::system::software_reset();
 }
 
@@ -309,8 +247,8 @@ pub async fn task(stack: embassy_net::Stack<'static>) {
                     || crate::services::radio::device::wifi::state()
                         != crate::services::radio::WifiState::Connected
                     || crate::services::radio::device::wifi::busy()
-                    || crate::services::update::ota::device::active()
-                    || crate::services::update::ota::device::candidate()
+                    || crate::services::update::boot::device::active()
+                    || crate::services::update::boot::device::candidate()
                     || crate::apps::device::is_managing()
                     || last_auto.is_some_and(|last| now.saturating_sub(last) < AUTO_INTERVAL)
                     || BUSY.swap(true, Ordering::AcqRel)

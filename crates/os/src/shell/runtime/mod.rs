@@ -155,6 +155,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
     let mut app = MosaicoApp::new(Rc::clone(&control), Rc::clone(&splash));
     // Decoded launcher icons live as long as the firmware; rescans reuse them.
     // Built-ins until the file systems are mounted (`main::mount_storage`).
+    let mut voice_sync = voice::Sync::default();
     let mut scan_pending = None::<apps::Request>;
     let mut scanned = false;
     let mut pending_management = None;
@@ -207,6 +208,13 @@ pub async fn ui_task(mut plane: PlaneUi) {
     let mut gestures = EdgeGestures::new();
     let mut last_page = app.page();
     let mut settings_sync = settings::Sync::new(app.hub().settings);
+    let mut startup = match startup::Startup::new() {
+        Ok(startup) => Some(startup),
+        Err(error) => {
+            warn!("startup: {error}; using built-in loading image");
+            None
+        }
+    };
     let mut last_sensors_refresh = 0u64;
     let mut sensors_refresh_pending = false;
     let mut last_timer_second = u32::MAX;
@@ -231,7 +239,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
         diagnostics.poll(
             &ui,
             app.page(),
-            buttons::low_battery_requested() || crate::services::update::ota::device::pauses_ui(),
+            buttons::low_battery_requested() || crate::services::update::boot::device::pauses_ui(),
         );
         // Native controller/host lifecycle calls can preempt this thread for
         // longer than a resident Lua callback's wall deadline. Acknowledge only
@@ -315,7 +323,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
         }
 
         // Reserve protection outranks OTA/candidate windows and every app.
-        // The factory bootloader splash has already completed before main().
+        // The bootloader's static splash precedes application UI startup.
         if buttons::low_battery_requested() {
             lua::stop();
             lua_lvgl.release();
@@ -346,7 +354,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
             continue;
         }
 
-        if crate::services::update::ota::device::pauses_ui() {
+        if crate::services::update::boot::device::pauses_ui() {
             crate::services::settings::device::feedback_painted(
                 crate::services::settings::device::preferences().saving_revision,
             );
@@ -387,14 +395,62 @@ pub async fn ui_task(mut plane: PlaneUi) {
             Timer::after_millis(5).await;
             continue;
         }
-        crate::services::update::ota::device::selftest(
+        if startup.is_some() {
+            if let Some((id, choices)) = skins::activate_prepared(&control) {
+                settings_sync.skin_activated(&mut app, id, choices);
+                ui.mark_dirty();
+            }
+            if !control.loading() || buttons::shutdown_requested() {
+                startup = None;
+                control.start_entrance();
+                runtime.ignore_touch_until(now_ms + entrance::TOTAL_MS);
+                frames.clear_on_fox = true;
+                info!("startup: character handoff app_ms={now_ms}");
+            } else {
+                // Keep lasting sensor edges and the power reserve responsive.
+                // Motion affects the character after its loading screen exits.
+                for _ in 0..SENSOR_DRAIN_MAX {
+                    let Ok(event) = SENSOR_EVENTS.try_receive() else {
+                        break;
+                    };
+                    app.hub_mut().snapshot.observe(&event);
+                    if reaches_fox_off_home(&event.kind) {
+                        runtime.on_sensor(event);
+                    }
+                }
+                while INPUT.try_receive().is_ok() {}
+                let radio = crate::services::radio::Snapshot {
+                    wifi: crate::services::radio::device::wifi::state(),
+                    wifi_link: crate::services::radio::device::wifi::link(),
+                    bluetooth: crate::services::radio::device::classic::state(),
+                    ip: crate::services::radio::device::wifi::ip(),
+                };
+                settings_sync.poll(&mut app, &mut ui, port.is_busy(), &mut frames, radio);
+                if let Err(error) = startup
+                    .as_mut()
+                    .unwrap()
+                    .render(now_ms, &mut port, &mut plane)
+                {
+                    warn!("startup: {error}; using built-in loading image");
+                    startup = None;
+                    frames.clear_on_fox = true;
+                }
+                if last_heartbeat.elapsed() >= HEARTBEAT_PERIOD {
+                    last_heartbeat = Instant::now();
+                    HEARTBEATS.fetch_add(1, Ordering::Release);
+                }
+                Timer::after(UI_PERIOD).await;
+                continue;
+            }
+        }
+        crate::services::update::boot::device::selftest(
             brain_booted && !control.loading() && scanned && scan_pending.is_none(),
         );
         // Storage mounts after USB startup; do not mistake this transient
         // pre-mount state for a damaged persisted brain. Resolve selection once
         // after the mount attempt completes. No custom source keeps the same
         // default VM, including every input it consumed before mounting.
-        if !brain_booted && crate::platform::storage::nor::ready() {
+        if !brain_booted && crate::platform::storage::nor::ready() && !control.entrance_active() {
             crate::companion::brain::control::boot(
                 &mut runtime,
                 now_ms,
@@ -589,6 +645,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
             last_page = app.page();
         }
         let preferences = settings_sync.poll(&mut app, &mut ui, port.is_busy(), &mut frames, radio);
+        voice_sync.poll(&mut app, &mut ui, now_ms);
 
         if lua::take_lvgl_release() || !is_lua_page(app.page()) || buttons::shutdown_requested() {
             release_lua_native(&mut lua_lvgl);
@@ -621,8 +678,14 @@ pub async fn ui_task(mut plane: PlaneUi) {
                     app.go(Page::Launcher);
                     ui.mark_dirty();
                 }
-                crate::companion::behavior::affect::SystemCommand::StartListening
-                | crate::companion::behavior::affect::SystemCommand::StopActivity => {}
+                crate::companion::behavior::affect::SystemCommand::StartListening => {
+                    app.go(Page::App(AppId::Voice));
+                    app.update(AppMsg::VoiceToggle);
+                    ui.mark_dirty();
+                }
+                crate::companion::behavior::affect::SystemCommand::StopActivity => {
+                    crate::services::voice::device::cancel();
+                }
             }
         }
 
@@ -666,7 +729,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
                         // The outer loop owns teardown and page transitions.
                         if lua::lvgl_cleanup_pending()
                             || buttons::shutdown_requested()
-                            || crate::services::update::ota::device::active()
+                            || crate::services::update::boot::device::active()
                         {
                             return_to_main = true;
                             break;
@@ -699,6 +762,8 @@ pub(crate) mod frames;
 mod input;
 mod native;
 mod settings;
+mod startup;
+mod voice;
 use crate::shell::lifecycle::is_lua_page;
 use app_requests::apply_apps_request;
 

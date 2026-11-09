@@ -13,11 +13,7 @@ impl Session {
         let mut words = cmd.split_ascii_whitespace();
         let verb = words.next().unwrap_or("");
         let args: Vec<&str> = words.collect();
-        if verb.starts_with("ota-") {
-            self.ota_command(verb, &args, out);
-            return;
-        }
-        if self.ota_active
+        if self.update_active
             && !matches!(
                 verb,
                 "hello"
@@ -26,10 +22,11 @@ impl Session {
                     | "wifi-saved"
                     | "bt-status"
                     | "update-status"
+                    | "boot-status"
                     | "update-cancel"
             )
         {
-            out(Effect::Reply("@err OTA busy".into()));
+            out(Effect::Reply("@err update busy".into()));
             return;
         }
         if self.management_busy
@@ -49,7 +46,92 @@ impl Session {
             return;
         }
         let result = match (verb, args.as_slice()) {
+            ("boot-status", []) => {
+                out(Effect::BootStatus);
+                return;
+            }
+            ("recovery", []) => {
+                out(Effect::Recovery);
+                return;
+            }
             ("hello", []) => Ok(format!("hello mosaico-push {VERSION}")),
+            (verb, args) if verb.starts_with("agent-") => {
+                match crate::services::voice::desktop::Command::parse(verb, args) {
+                    Ok(command) => out(Effect::Voice(crate::services::voice::Command::Desktop(
+                        command,
+                    ))),
+                    Err(error) => out(Effect::Reply(format!("@err {error}"))),
+                }
+                return;
+            }
+            ("voice-ask", [text]) => {
+                if self.staging.is_some() || self.management_busy {
+                    out(Effect::Reply(
+                        "@err voice transfer or management busy".into(),
+                    ));
+                } else {
+                    match crate::services::voice::Command::ask(text) {
+                        Ok(command) => out(Effect::Voice(command)),
+                        Err(error) => out(Effect::Reply(format!("@err {error}"))),
+                    }
+                }
+                return;
+            }
+            (verb @ ("voice-read" | "voice-page"), [offset]) => {
+                match offset.parse() {
+                    Ok(offset) => out(Effect::Voice(if verb == "voice-read" {
+                        crate::services::voice::Command::Read(offset)
+                    } else {
+                        crate::services::voice::Command::Page(offset)
+                    })),
+                    Err(_) => out(Effect::Reply("@err invalid voice reply offset".into())),
+                }
+                return;
+            }
+            (verb @ ("voice-toggle" | "voice-cancel" | "voice-status" | "voice-reload"), []) => {
+                if verb == "voice-toggle" && (self.staging.is_some() || self.management_busy) {
+                    out(Effect::Reply(
+                        "@err voice transfer or management busy".into(),
+                    ));
+                } else {
+                    out(Effect::Voice(
+                        crate::services::voice::Command::parse(verb).unwrap(),
+                    ));
+                }
+                return;
+            }
+            ("voice-config-begin", []) => self
+                .begin(vfs, "voice", UploadKind::VoiceConfig)
+                .map(|_| "voice-config-begin".into()),
+            ("voice-config-commit", [])
+                if self.kind == UploadKind::VoiceConfig
+                    && self.completed_file.as_deref() == Some("config.json") =>
+            {
+                crate::services::voice::config::commit(vfs)
+                    .map(|()| {
+                        self.staging = None;
+                        self.completed_file = None;
+                        let _ = vfs.remove_tree(self.staging_root());
+                        "voice-config-commit next-turn=1".into()
+                    })
+                    .map_err(String::from)
+            }
+            ("voice-font-begin", []) => self
+                .begin(vfs, "font", UploadKind::VoiceFont)
+                .map(|_| "voice-font-begin".into()),
+            ("voice-font-commit", [])
+                if self.kind == UploadKind::VoiceFont
+                    && self.completed_file.as_deref() == Some("font.bin") =>
+            {
+                crate::services::resources::voice_font::commit(vfs)
+                    .map(|()| {
+                        self.staging = None;
+                        self.completed_file = None;
+                        let _ = vfs.remove_tree(self.staging_root());
+                        "voice-font-commit restart-if-loaded=1".into()
+                    })
+                    .map_err(String::from)
+            }
 
             (
                 verb @ ("update-status" | "update-check" | "update-install" | "update-cancel"),

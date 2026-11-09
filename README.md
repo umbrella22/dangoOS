@@ -52,12 +52,12 @@
 
 支持 **ESP-Mosaico V1.2 / ESP32-S31**，配备 480 × 480 AMOLED 触摸屏、16 MiB NOR 与 128 MiB NAND。左槽相机等功能需要对应扩展模块。
 
-从 [Releases](https://github.com/umbrella22/dangoOS/releases) 下载并解压适合的 ZIP，先核对发布页的 `SHA256SUMS`。
+当前源码生成 `S31ONE03` 布局的安装包。已有 [Releases](https://github.com/umbrella22/dangoOS/releases) 的布局以各自 manifest 为准；使用包前核对 `SHA256SUMS` 和布局。
 
 | 安装包       | 用途                                                                                 |
 | ------------ | ------------------------------------------------------------------------------------ |
 | `*-full.zip` | 首次安装、恢复或更新系统资源。包含完整系统镜像、四套 NAND 团子、应用与字体包和安装工具。 |
-| `*-ota.zip`  | 已采用当前 A/B 布局的设备日常升级。包含固件、四套 NAND 团子、应用与字体包和 USB 更新工具。 |
+| `*-main.zip` | 采用 `S31ONE03` 的设备通过独立 Recovery 更新主应用。包含独立资源和 USB 工具。 |
 
 首次安装：按住 BOOT，短按 RESET，再松开 BOOT，进入下载模式。在解压目录执行：
 
@@ -95,7 +95,11 @@ dangoOS 使用 Rust、LVGL 和构建时选择的 Lua / TS 引擎。应用代码�
 ```sh
 cargo fetch --locked
 ./scripts/check.sh
-python3 scripts/release/package.py build --out target/release-local --allow-dirty
+cargo recovery --locked --offline
+python3 scripts/release/build_bootloader.py --idf /path/to/pinned/esp-idf \
+  --tools /path/to/idf-tools --build target/bootloader
+python3 scripts/release/package.py build --out target/release-local \
+  --bootloader target/bootloader/bootloader/bootloader.bin --allow-dirty
 ```
 
 默认固件使用 Lua。`cargo fw-ts` 关闭默认 features 并接入外部 EmbedTS 引擎；每份固件只链接一个脚本引擎，同时选择或均未选择时构建失败。

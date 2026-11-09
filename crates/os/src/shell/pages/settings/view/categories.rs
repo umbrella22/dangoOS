@@ -65,10 +65,12 @@ pub(super) fn view(hub: &Hub, session: &Session) -> View<AppMsg> {
         .child(entry(
             Key::Named("storage"),
             "存储",
-            if info.storage_ready {
+            if info.space_loaded {
                 size(info.data_free_kib)
+            } else if info.storage_ready {
+                "›".into()
             } else {
-                "读取中".into()
+                "未就绪".into()
             },
             AppMsg::SettingsPage(Page::Storage),
         ))

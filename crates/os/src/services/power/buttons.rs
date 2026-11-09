@@ -5,6 +5,8 @@ pub const DEBOUNCE_MS: u64 = 20;
 pub const CLICK_GAP_MS: u64 = 180;
 pub const LONG_MS: u64 = 1500;
 pub const SLEEP_VISIBLE_MS: u64 = 1500;
+/// Manual power-off cannot wait forever for a failed display, LED or service.
+pub const SHUTDOWN_DEADLINE_MS: u64 = 5000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gesture {
@@ -100,7 +102,7 @@ impl Button {
 pub enum Shutdown {
     Idle,
     WaitingForSleep { requested_at: u64 },
-    ShowingSleep { since: u64 },
+    ShowingSleep { requested_at: u64, since: u64 },
     Cut,
 }
 impl Shutdown {
@@ -115,25 +117,35 @@ impl Shutdown {
     pub fn requested(&self) -> bool {
         *self != Self::Idle
     }
-    /// Plane completion receipt: stale, unrelated or failed uploads never arm
-    /// the cut timer. Repeated successful frames do not restart that timer.
+    /// Plane completion receipt: unrelated or failed uploads never start the
+    /// normal Sleep display interval. Repeated frames cannot extend either
+    /// that interval or the deadline measured from the original request.
     pub fn uploaded(&mut self, now: u64, sleep_frame: bool, completed: bool) {
-        if sleep_frame && completed && matches!(self, Self::WaitingForSleep { .. }) {
-            *self = Self::ShowingSleep { since: now };
+        if sleep_frame && completed {
+            if let Self::WaitingForSleep { requested_at } = *self {
+                *self = Self::ShowingSleep {
+                    requested_at,
+                    since: now,
+                };
+            }
         }
     }
-    /// Exactly one low assertion, at least 1500 ms after the first actual upload.
-    /// No frame or terminal black-TX acknowledgement means no cut, even if
-    /// either output stalls forever.
-    pub fn poll(&mut self, now: u64, lights_cleared: bool) -> bool {
-        if !lights_cleared {
-            return false;
-        }
-        if let Self::ShowingSleep { since } = *self {
-            if now.saturating_sub(since) >= SLEEP_VISIBLE_MS {
-                *self = Self::Cut;
-                return true;
+    pub fn expired(&self, now: u64) -> bool {
+        match *self {
+            Self::WaitingForSleep { requested_at } | Self::ShowingSleep { requested_at, .. } => {
+                now.saturating_sub(requested_at) >= SHUTDOWN_DEADLINE_MS
             }
+            Self::Idle | Self::Cut => false,
+        }
+    }
+    /// Cut once after a presented Sleep interval and graceful teardown, or at
+    /// the original request's deadline if any participant failed to complete.
+    pub fn poll(&mut self, now: u64, lights_cleared: bool, services_quiet: bool) -> bool {
+        let shown = matches!(*self, Self::ShowingSleep { since, .. }
+            if now.saturating_sub(since) >= SLEEP_VISIBLE_MS);
+        if self.expired(now) || (shown && lights_cleared && services_quiet) {
+            *self = Self::Cut;
+            return true;
         }
         false
     }
@@ -209,18 +221,45 @@ mod tests {
     fn shutdown_waits_for_successful_sleep_upload_and_cuts_once() {
         let mut s = Shutdown::Idle;
         s.uploaded(1, true, true);
-        assert!(!s.poll(9000, true));
+        assert!(!s.poll(9000, true, true));
         assert!(s.request(10000));
         assert!(!s.request(11000));
-        assert!(!s.poll(999999, true)); // no display receipt
-        s.uploaded(999999, true, false);
-        s.uploaded(999999, false, true);
-        assert!(!s.poll(999999, true));
-        s.uploaded(1_000_000, true, true);
-        s.uploaded(1_000_100, true, true);
-        assert!(!s.poll(1_001_499, true));
-        assert!(s.poll(1_001_500, true));
-        assert!(!s.poll(2_000_000, true));
-        assert!(!s.request(3_000_000));
+        assert!(!s.poll(11000, true, true)); // no display receipt
+        s.uploaded(11000, true, false);
+        s.uploaded(11000, false, true);
+        assert!(!s.poll(11000, true, true));
+        s.uploaded(12000, true, true);
+        s.uploaded(12100, true, true);
+        assert!(!s.poll(13499, true, true));
+        assert!(s.poll(13500, true, true));
+        assert!(!s.poll(20000, true, true));
+        assert!(!s.request(30000));
+    }
+    #[test]
+    fn failed_light_or_service_teardown_cannot_block_manual_power_off() {
+        for (lights, services) in [(false, true), (true, false), (false, false)] {
+            let mut s = Shutdown::Idle;
+            assert!(s.request(10000));
+            s.uploaded(10100, true, true);
+            assert!(!s.poll(11600, lights, services));
+            assert!(!s.poll(14999, lights, services));
+            assert!(s.poll(15000, lights, services));
+            assert!(!s.poll(15001, lights, services));
+        }
+    }
+    #[test]
+    fn absent_or_late_sleep_frame_and_repeated_requests_cannot_extend_deadline() {
+        for late_frame in [false, true] {
+            let mut s = Shutdown::Idle;
+            assert!(s.request(10000));
+            assert!(!s.request(14000));
+            assert!(!s.poll(14999, true, true));
+            if late_frame {
+                s.uploaded(14999, true, true);
+            }
+            assert!(s.expired(15000));
+            assert!(s.poll(15000, true, true));
+            assert!(!s.poll(15001, true, true));
+        }
     }
 }

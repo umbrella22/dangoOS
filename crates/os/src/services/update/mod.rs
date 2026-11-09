@@ -4,12 +4,13 @@ use alloc::{
     string::{String, ToString},
 };
 
-pub mod http;
+pub use crate::formats::http;
+pub use crate::formats::http::{HttpProxy, Url};
 pub mod staging;
 
 pub const MANIFEST_URL: &str =
     "https://github.com/umbrella22/dangoOS/releases/latest/download/manifest.json";
-pub const LAYOUT: &str = "MOSAICO_S31_AB_LAYOUT_V2_6M_NAND";
+pub const LAYOUT: &str = "S31ONE03";
 pub const MANIFEST_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,38 +21,6 @@ pub enum Command {
     Status,
     InstallUrl(Url),
     SetProxy(Option<HttpProxy>),
-}
-
-/// Manual HTTP CONNECT endpoint. The settings form accepts IPv4 and a port;
-/// destination host names remain inside CONNECT for proxy-side DNS.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HttpProxy {
-    pub ip: [u8; 4],
-    pub port: u16,
-}
-impl HttpProxy {
-    pub fn parse(text: &str) -> Result<Self, &'static str> {
-        let endpoint = text
-            .parse::<core::net::SocketAddrV4>()
-            .map_err(|_| "代理地址格式应为 IPv4:端口")?;
-        if endpoint.ip().is_unspecified()
-            || endpoint.ip().is_multicast()
-            || endpoint.ip().is_broadcast()
-            || endpoint.port() == 0
-        {
-            return Err("请输入可访问的代理 IPv4 和端口");
-        }
-        Ok(Self {
-            ip: endpoint.ip().octets(),
-            port: endpoint.port(),
-        })
-    }
-    pub fn address(self) -> String {
-        format!(
-            "{}.{}.{}.{}:{}",
-            self.ip[0], self.ip[1], self.ip[2], self.ip[3], self.port
-        )
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -78,76 +47,6 @@ impl Version {
     }
 }
 
-/// HTTPS location. Path/query bytes are preserved for signed asset redirects.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Url {
-    pub host: String,
-    pub port: u16,
-    pub path: String,
-}
-impl Url {
-    pub fn parse(text: &str) -> Result<Self, &'static str> {
-        let value = text
-            .strip_prefix("https://")
-            .ok_or("update requires HTTPS")?;
-        if value.bytes().any(|b| b <= 32 || b >= 127) || value.contains(['#', '\\']) {
-            return Err("update URL");
-        }
-        let end = value.find(['/', '?']).unwrap_or(value.len());
-        let authority = &value[..end];
-        if authority.contains('@') {
-            return Err("update credentials in URL");
-        }
-        let (host, port) = match authority.split_once(':') {
-            Some((host, port)) => (host, port.parse::<u16>().map_err(|_| "update port")?),
-            None => (authority, 443),
-        };
-        if host.is_empty()
-            || host.len() > 253
-            || port == 0
-            || !host
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
-        {
-            return Err("update host");
-        }
-        let path = match &value[end..] {
-            "" => "/".into(),
-            query if query.starts_with('?') => format!("/{query}"),
-            path => path.into(),
-        };
-        Ok(Self {
-            host: host.into(),
-            port,
-            path,
-        })
-    }
-    pub fn authority(&self) -> String {
-        if self.port == 443 {
-            self.host.clone()
-        } else {
-            format!("{}:{}", self.host, self.port)
-        }
-    }
-    pub fn redirect(&self, location: &str) -> Result<Self, &'static str> {
-        if location.starts_with('/') && !location.starts_with("//") {
-            Self::parse(&format!("https://{}{location}", self.authority()))
-        } else {
-            Self::parse(location)
-        }
-    }
-    pub fn sibling(&self, file: &str) -> Result<Self, &'static str> {
-        let directory = self
-            .path
-            .split('?')
-            .next()
-            .unwrap_or("/")
-            .rsplit_once('/')
-            .map_or("", |p| p.0);
-        Self::parse(&format!("https://{}{directory}/{file}", self.authority()))
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Release {
     pub version: String,
@@ -162,7 +61,7 @@ impl Release {
         }
         let value: serde_json::Value =
             serde_json::from_slice(bytes).map_err(|_| "manifest JSON")?;
-        if value["schema"].as_u64() != Some(1)
+        if value["schema"].as_u64() != Some(2)
             || value["project"] != "dangoOS"
             || value["chip"] != "esp32s31"
             || value["application"]["project"] != "mosaico-s31"
@@ -177,14 +76,14 @@ impl Release {
         if value["tag"] != format!("v{version}") || value["application"]["version"] != version {
             return Err("release version mismatch");
         }
-        let ota = &value["images"]["ota"];
-        let filename = format!("dangoOS-v{version}-esp32s31-ota.bin");
+        let ota = &value["images"]["main"];
+        let filename = format!("dangoOS-v{version}-esp32s31-main.bin");
         if ota["file"] != filename {
             return Err("release image name");
         }
         let length = ota["bytes"]
             .as_u64()
-            .filter(|n| (288..=u64::from(crate::services::update::ota::SLOT_SIZE)).contains(n))
+            .filter(|n| (288..=u64::from(boot_contract::MAIN_BYTES)).contains(n))
             .ok_or("release image size")? as u32;
         let hash = ota["sha256"].as_str().ok_or("release SHA256")?;
         if hash.len() != 64 {
@@ -278,9 +177,9 @@ pub struct Snapshot {
 mod tests {
     use super::*;
     fn metadata() -> serde_json::Value {
-        serde_json::json!({"schema":1,"project":"dangoOS","chip":"esp32s31","layout":LAYOUT,
+        serde_json::json!({"schema":2,"project":"dangoOS","chip":"esp32s31","layout":LAYOUT,
           "version":"0.10.0","tag":"v0.10.0","application":{"project":"mosaico-s31","version":"0.10.0","bytes":4096,"sha256":"ab".repeat(32)},
-          "images":{"ota":{"file":"dangoOS-v0.10.0-esp32s31-ota.bin","bytes":4096,"sha256":"ab".repeat(32)}}})
+          "images":{"main":{"file":"dangoOS-v0.10.0-esp32s31-main.bin","bytes":4096,"sha256":"ab".repeat(32)}}})
     }
     #[test]
     fn release_binds_hardware_layout_size_hash_and_stable_version() {
@@ -293,7 +192,7 @@ mod tests {
         assert!(release
             .image
             .path
-            .ends_with("/v0.10.0/dangoOS-v0.10.0-esp32s31-ota.bin"));
+            .ends_with("/v0.10.0/dangoOS-v0.10.0-esp32s31-main.bin"));
         for (field, bad) in [
             ("layout", "MOSAICO_S31_AB_LAYOUT_V1"),
             ("chip", "esp32s3"),
@@ -303,7 +202,7 @@ mod tests {
             copy[field] = bad.into();
             assert!(Release::parse(&serde_json::to_vec(&copy).unwrap(), &url).is_err());
         }
-        value["images"]["ota"]["bytes"] = (crate::services::update::ota::SLOT_SIZE + 1).into();
+        value["images"]["main"]["bytes"] = (boot_contract::MAIN_BYTES + 1).into();
         assert!(Release::parse(&serde_json::to_vec(&value).unwrap(), &url).is_err());
     }
     #[test]
@@ -327,7 +226,7 @@ mod tests {
     }
 }
 
-pub mod ota;
+pub mod boot;
 
 #[cfg(target_os = "none")]
 pub(crate) mod task;

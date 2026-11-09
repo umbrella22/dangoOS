@@ -31,19 +31,19 @@ def validate_bundle(root):
         require(hashlib.sha256((root / name).read_bytes()).hexdigest() == digest,
                 f"checksum mismatch: {name}")
         listed[name] = digest
-    require({"manifest.json", "install.py", "tools/console.py", "tools/ota_image.py"} <= set(listed),
+    require({"manifest.json", "install.py", "tools/console.py", "tools/main_image.py", "tools/recovery.py"} <= set(listed),
             "installation bundle is incomplete")
     manifest = json.loads((root / "manifest.json").read_bytes())
-    require(manifest.get("project") == "dangoOS" and manifest.get("schema") == 1,
+    require(manifest.get("project") == "dangoOS" and manifest.get("schema") == 2,
             "unsupported release manifest")
     require(manifest.get("chip") == "esp32s31" and manifest.get("flash_bytes") == 16 * 1024 * 1024
-            and manifest.get("layout") == "MOSAICO_S31_AB_LAYOUT_V2_6M_NAND",
+            and manifest.get("layout") == "S31ONE03",
             "unsupported device or storage layout")
     tag = manifest.get("tag", "")
     require(re.fullmatch(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", tag)
             and tag == "v" + manifest.get("version", ""), "invalid release version")
     available = 0
-    for mode in ("ota", "full"):
+    for mode in ("main", "full"):
         item = manifest["images"][mode]
         require(item["file"] == f"dangoOS-{tag}-esp32s31-{mode}.bin", "unexpected image filename")
         if item["file"] in listed:

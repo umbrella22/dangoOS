@@ -1,0 +1,10 @@
+# S31ONE03; main capacity freezes only after final Recovery resource validation.
+# Name,Type,SubType,Offset,Size,Flags
+boot_state,data,0x40,0x9000,0x2000,
+phy_init,data,phy,0xb000,0x1000,
+sysmeta,data,nvs,0xc000,0x14000,
+recovery_app,app,factory,0x20000,0x1c0000,
+coredump,data,coredump,0x1e0000,0x20000,
+nvs,data,nvs,0x200000,0x6000,
+main_app,app,ota_0,0x210000,0xc00000,
+system,data,0x83,0xe10000,0x1f0000,

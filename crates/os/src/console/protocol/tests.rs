@@ -29,6 +29,53 @@ const MANIFEST_TEXT: &str =
     r#"{"schema_version":1,"id":"hello","entry":"scripts/main.lua","display_name":"Hi"}"#;
 const MAIN: &[u8] = b"local x = 1\nreturn x\n";
 
+#[test]
+fn voice_configuration_crc_validation_and_atomic_commit_preserve_previous_credentials() {
+    let mut v = vfs();
+    let mut session = Session::new();
+    v.create_dir_all("/data/settings").unwrap();
+    v.write_file(crate::services::voice::config::PATH, b"previous config")
+        .unwrap();
+    let config=br#"{"schema":1,"asr":{"url":"wss://asr.example/v1/realtime?intent=transcription","api_key":"private-asr","model":"transcribe"},"chat":{"url":"https://chat.example/v1/responses","api_key":"private-chat","model":"chat"}}"#;
+    let mut stream = b"@mosaico voice-config-begin\n".to_vec();
+    stream.extend(file_cmd("config.json", config));
+    stream.extend_from_slice(b"@mosaico voice-config-commit\n@mosaico voice-status\n");
+    let effects = run(&mut v, &mut session, &stream, 1);
+    assert_eq!(
+        v.read_file(crate::services::voice::config::PATH).unwrap(),
+        config
+    );
+    assert!(effects.contains(&Effect::Voice(crate::services::voice::Command::Status)));
+    for reply in replies(&effects) {
+        assert!(!reply.contains("private-asr") && !reply.contains("private-chat"));
+    }
+    // Invalid JSON with valid CRC must not replace the previous configuration.
+    let mut stream = b"@mosaico voice-config-begin\n".to_vec();
+    stream.extend(file_cmd("config.json", b"bad JSON private-new"));
+    stream.extend_from_slice(b"@mosaico voice-config-commit\n");
+    let effects = run(&mut v, &mut session, &stream, 7);
+    assert!(replies(&effects).last().unwrap().starts_with("@err"));
+    assert_eq!(
+        v.read_file(crate::services::voice::config::PATH).unwrap(),
+        config
+    );
+    assert!(!replies(&effects).iter().any(|s| s.contains("private-new")));
+    // A corrupted transport body never becomes a completed install candidate.
+    let stream = format!(
+        "@mosaico voice-config-begin\n@mosaico file config.json {} 00000000\n",
+        config.len()
+    );
+    run(&mut v, &mut session, stream.as_bytes(), 13);
+    run(&mut v, &mut session, config, 13);
+    let result = run(&mut v, &mut session, b"@mosaico voice-config-commit\n", 1);
+    assert!(replies(&result)[0].starts_with("@err"));
+    assert_eq!(
+        v.read_file(crate::services::voice::config::PATH).unwrap(),
+        config
+    );
+    assert_eq!(v.open_files(), 0);
+}
+
 fn push_stream(run: bool) -> Vec<u8> {
     let mut s = b"noise from a terminal\n@mosaico hello\r\n@mosaico begin hello\n".to_vec();
     s.extend(file_cmd("launcher.json", MANIFEST_TEXT.as_bytes()));
@@ -48,6 +95,37 @@ fn run(v: &mut Vfs, sess: &mut Session, data: &[u8], chunk: usize) -> Vec<Effect
         sess.feed(v, c, &mut |e| effects.push(e));
     }
     effects
+}
+
+#[test]
+fn voice_text_commands_preserve_fragmented_input_and_stop_before_pipelined_tail() {
+    use crate::formats::hex::encode;
+    use crate::services::voice::Command;
+    let text = "  团子🦊\n团子  ";
+    let first = format!("@mosaico voice-ask {}\n", encode(text.as_bytes()));
+    let tail = b"@mosaico voice-read 48\n";
+    for split in 0..first.len() {
+        let mut v = vfs();
+        let mut session = Session::new();
+        let mut effects = Vec::new();
+        assert_eq!(
+            session
+                .feed_until_deferred(&mut v, &first.as_bytes()[..split], &mut |e| effects.push(e)),
+            split
+        );
+        assert!(effects.is_empty());
+        let mut rest = first.as_bytes()[split..].to_vec();
+        rest.extend_from_slice(tail);
+        let consumed = session.feed_until_deferred(&mut v, &rest, &mut |e| effects.push(e));
+        assert_eq!(consumed, first.len() - split);
+        assert_eq!(effects, [Effect::Voice(Command::Ask(text.into()))]);
+        effects.clear();
+        assert_eq!(
+            session.feed_until_deferred(&mut v, &rest[consumed..], &mut |e| effects.push(e)),
+            tail.len()
+        );
+        assert_eq!(effects, [Effect::Voice(Command::Read(48))]);
+    }
 }
 
 fn replies(effects: &[Effect]) -> Vec<String> {
@@ -286,7 +364,7 @@ fn malformed_or_busy_hardware_commands_never_reach_devices() {
         ] {
             let mut session = Session::new();
             match busy {
-                0 => session.set_ota_active(true),
+                0 => session.set_update_active(true),
                 1 => session.set_management_busy(true),
                 _ => session.staging = Some("app".into()),
             }
@@ -303,10 +381,10 @@ fn malformed_or_busy_hardware_commands_never_reach_devices() {
 }
 
 #[test]
-fn ota_allows_passive_power_status_without_unlocking_mutations() {
+fn update_allows_passive_power_status_without_unlocking_mutations() {
     let mut v = Vfs::new();
     let mut session = Session::new();
-    session.set_ota_active(true);
+    session.set_update_active(true);
     let e = run(
             &mut v,
             &mut session,
@@ -317,13 +395,13 @@ fn ota_allows_passive_power_status_without_unlocking_mutations() {
         e,
         [
             Effect::Power(crate::services::power::standby::Command::Status),
-            Effect::Reply("@err OTA busy".into()),
+            Effect::Reply("@err update busy".into()),
             Effect::Radio(crate::services::radio::Command::WifiStatus),
             Effect::Radio(crate::services::radio::Command::BtStatus),
-            Effect::Reply("@err OTA busy".into()),
+            Effect::Reply("@err update busy".into()),
         ]
     );
-    assert!(session.ota_active);
+    assert!(session.update_active);
 }
 
 #[test]
@@ -725,8 +803,8 @@ fn long_lines_reset_and_controls() {
     );
     let e = run(&mut v, &mut sess, &s, 100);
     assert_eq!(replies(&e), ["@err line too long; reconnect required"]);
-    assert_eq!(e.len(), 2);
-    assert!(e.contains(&Effect::OtaCancel));
+    assert_eq!(e.len(), 1);
+    assert!(sess.framing_lost);
     assert!(v.stat("/data/apps/.incoming/x").is_err());
     assert!(run(
         &mut v,

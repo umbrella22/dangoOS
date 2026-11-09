@@ -21,29 +21,8 @@ impl Session {
     ) -> usize {
         let original_len = data.len();
         while !data.is_empty() {
-            if self.ota_poisoned {
+            if self.framing_lost {
                 return original_len;
-            }
-            if let Some(body) = self.ota_body.as_mut() {
-                let n = (body.len - body.bytes.len()).min(data.len());
-                body.bytes.extend_from_slice(&data[..n]);
-                data = &data[n..];
-                if body.bytes.len() == body.len {
-                    let body = self.ota_body.take().unwrap();
-                    if body.invalid {
-                        out(Effect::Reply(
-                            "@err ota-chunk invalid header; body discarded".into(),
-                        ));
-                    } else {
-                        out(Effect::Ota(crate::services::update::ota::Command::Chunk {
-                            offset: body.offset,
-                            bytes: body.bytes,
-                            crc: body.crc,
-                        }));
-                    }
-                    return original_len - data.len();
-                }
-                continue;
             }
             if self.upload.is_some() {
                 data = self.feed_upload(vfs, data, out);
@@ -58,9 +37,8 @@ impl Session {
                     if overflow || core::str::from_utf8(&line).is_err() {
                         // The discarded prefix may have been a binary-body header.
                         // Its length is unknowable; only reconnect can restore framing.
-                        self.ota_active = false;
-                        self.ota_poisoned = true;
-                        out(Effect::OtaCancel);
+                        self.update_active = false;
+                        self.framing_lost = true;
                         out(Effect::Reply(if overflow {
                             "@err line too long; reconnect required".into()
                         } else {
@@ -76,12 +54,13 @@ impl Session {
                                     effect,
                                     Effect::Manage(_)
                                         | Effect::Brain(_)
-                                        | Effect::Ota(_)
-                                        | Effect::OtaCancel
+                                        | Effect::BootStatus
+                                        | Effect::Recovery
                                         | Effect::NandInfo
                                         | Effect::NandStatus
                                         | Effect::NandFormat
                                         | Effect::Audio(_)
+                                        | Effect::Voice(_)
                                         | Effect::Radio(_)
                                         | Effect::Update(_)
                                         | Effect::Camera(_)

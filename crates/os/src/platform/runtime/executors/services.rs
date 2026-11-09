@@ -48,7 +48,10 @@ async fn jobs() {
         {
             embassy_futures::select::Either::First(job) => {
                 let _performance = crate::platform::runtime::frequency::device::performance();
-                job()
+                job();
+                // A producer may enqueue its next block as soon as this job
+                // signals its result. Poll USB/control tasks between blocks.
+                embassy_futures::yield_now().await;
             }
             embassy_futures::select::Either::Second(()) => (),
         }

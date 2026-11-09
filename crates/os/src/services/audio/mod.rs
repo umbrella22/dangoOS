@@ -293,4 +293,6 @@ mod tests {
 }
 
 #[cfg(target_os = "none")]
+pub(crate) mod capture;
+#[cfg(target_os = "none")]
 pub(crate) mod task;

@@ -28,7 +28,6 @@
 
 mod commands;
 mod framing;
-mod ota;
 #[cfg(test)]
 mod tests;
 mod upload;
@@ -55,7 +54,6 @@ const DEPTH_MAX: usize = 6;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
     /// Cancel a transfer silently while its malformed binary body is drained.
-    OtaCancel,
     /// One reply line, without the line ending.
     Reply(String),
     /// Rescan the apps, then open `run` if given.
@@ -71,7 +69,8 @@ pub enum Effect {
     SkinsChanged,
     /// The UI task validates/commits the resident brain and returns the reply.
     Brain(crate::companion::brain::store::Action),
-    Ota(crate::services::update::ota::Command),
+    BootStatus,
+    Recovery,
     /// Read-only device discovery, executed after releasing the VFS lock.
     NandInfo,
 
@@ -83,6 +82,7 @@ pub enum Effect {
     Update(crate::services::update::Command),
     Camera(crate::services::camera::Command),
     Power(crate::services::power::standby::Command),
+    Voice(crate::services::voice::Command),
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -93,6 +93,8 @@ enum UploadKind {
     Brain,
     Photo,
     Fonts,
+    VoiceConfig,
+    VoiceFont,
 }
 
 struct Upload {
@@ -105,20 +107,11 @@ struct Upload {
     failed: Option<Errno>,
 }
 
-struct OtaBody {
-    offset: u32,
-    len: usize,
-    crc: u32,
-    bytes: Vec<u8>,
-    invalid: bool,
-}
-
 /// One connection's protocol state.
 #[derive(Default)]
 pub struct Session {
-    ota_body: Option<OtaBody>,
-    ota_active: bool,
-    ota_poisoned: bool,
+    update_active: bool,
+    framing_lost: bool,
     line: Vec<u8>,
     overflow: bool,
     management_busy: bool,
@@ -131,8 +124,8 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn set_ota_active(&mut self, active: bool) {
-        self.ota_active = active;
+    pub fn set_update_active(&mut self, active: bool) {
+        self.update_active = active;
     }
 
     pub fn set_management_busy(&mut self, busy: bool) {
@@ -145,9 +138,8 @@ impl Session {
 
     /// The host went away: drop a half-written file and the staging area.
     pub fn reset(&mut self, vfs: &mut Vfs) {
-        self.ota_body = None;
-        self.ota_active = false;
-        self.ota_poisoned = false;
+        self.update_active = false;
+        self.framing_lost = false;
         self.completed_file = None;
         if let Some(up) = self.upload.take() {
             let _ = vfs.close(up.fd);

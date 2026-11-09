@@ -73,10 +73,19 @@ static BLACK: [u16; WIDTH * CLEAR_ROWS as usize] = [0; WIDTH * CLEAR_ROWS as usi
 
 /// Panel brightness target in percent (Settings).
 static BRIGHTNESS_TARGET: AtomicU8 = AtomicU8::new(100);
+static BRIGHTNESS_APPLIED: AtomicU8 = AtomicU8::new(0);
+static BRIGHTNESS_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+pub fn brightness() -> Option<u8> {
+    match BRIGHTNESS_APPLIED.load(Ordering::Acquire) {
+        0 => None,
+        value => Some(value),
+    }
+}
 
-/// Set the panel brightness, in percent. Applied after the next upload.
+/// Set panel brightness between transfers. Startup/resume waits for its first frame.
 pub fn set_brightness(percent: u8) {
     BRIGHTNESS_TARGET.store(percent.clamp(1, 100), Ordering::Relaxed);
+    BRIGHTNESS_CHANGED.signal(());
 }
 
 /// The pixels a job uploads.
@@ -248,13 +257,20 @@ async fn run_plane(
         let next = select(
             POWER_REQUEST.wait(),
             select(
-                crate::embedscope::FinalCapture::request(),
-                display.next_job(),
+                BRIGHTNESS_CHANGED.wait(),
+                select(
+                    crate::embedscope::FinalCapture::request(),
+                    display.next_job(),
+                ),
             ),
         )
         .await;
         #[cfg(not(feature = "embedscope"))]
-        let next = select(POWER_REQUEST.wait(), display.next_job()).await;
+        let next = select(
+            POWER_REQUEST.wait(),
+            select(BRIGHTNESS_CHANGED.wait(), display.next_job()),
+        )
+        .await;
         let mut job = match next {
             Either::First(sleep) => {
                 // Return every queued canvas lease before acknowledging standby.
@@ -280,15 +296,21 @@ async fn run_plane(
                 POWER_DONE.signal(result.is_ok());
                 continue;
             }
+            Either::Second(Either::First(())) => {
+                if !sleeping && !full_after_wake && FIRST_FRAME.load(Ordering::Acquire) {
+                    apply_brightness(&mut panel, &mut applied_brightness, restored_cycle).await;
+                }
+                continue;
+            }
             #[cfg(not(feature = "embedscope"))]
-            Either::Second(job) => job,
+            Either::Second(Either::Second(job)) => job,
             #[cfg(feature = "embedscope")]
-            Either::Second(Either::First(request)) => {
+            Either::Second(Either::Second(Either::First(request))) => {
                 final_capture.serve(request);
                 continue;
             }
             #[cfg(feature = "embedscope")]
-            Either::Second(Either::Second(job)) => job,
+            Either::Second(Either::Second(Either::Second(job))) => job,
         };
         if sleeping {
             continue;
@@ -500,24 +522,36 @@ async fn run_plane(
             FIRST_FRAME.store(true, Ordering::Release);
         }
 
-        let target = BRIGHTNESS_TARGET.load(Ordering::Relaxed);
-        if completed && applied_brightness != Some(target) {
-            match panel.set_brightness_async(target).await {
-                Ok(()) => {
-                    applied_brightness = Some(target);
-                    crate::services::power::coordinator::brightness_done(restored_cycle);
-                    if !BRIGHTNESS_RESTORED.swap(true, Ordering::Relaxed) {
-                        info!("plane: brightness restored after the first canvas");
-                    } else {
-                        info!("plane: brightness {target}%");
-                    }
-                }
-                Err(error) => warn!("plane: brightness {target}% failed: {error:?}"),
-            }
+        if completed {
+            apply_brightness(&mut panel, &mut applied_brightness, restored_cycle).await;
         }
 
         // Return the slot to the renderer after the completed transfer.
         drop(job);
+    }
+}
+
+async fn apply_brightness(
+    panel: &mut Display<esp_hal::Async>,
+    applied: &mut Option<u8>,
+    cycle: u32,
+) {
+    let target = BRIGHTNESS_TARGET.load(Ordering::Relaxed);
+    if *applied == Some(target) {
+        return;
+    }
+    match panel.set_brightness_async(target).await {
+        Ok(()) => {
+            *applied = Some(target);
+            BRIGHTNESS_APPLIED.store(target, Ordering::Release);
+            crate::services::power::coordinator::brightness_done(cycle);
+            if !BRIGHTNESS_RESTORED.swap(true, Ordering::Relaxed) {
+                info!("plane: brightness restored after the first canvas");
+            } else {
+                info!("plane: brightness {target}%");
+            }
+        }
+        Err(error) => warn!("plane: brightness {target}% failed: {error:?}"),
     }
 }
 

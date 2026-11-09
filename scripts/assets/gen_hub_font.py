@@ -39,6 +39,17 @@ CRATE = ROOT / "crates" / "os"
 OUT = CRATE / "src" / "assets"
 # Include task-produced status messages as well as declarative page copy.
 SOURCES = [CRATE / "src"]
+# These messages are displayed only after the mandatory full voice font has
+# loaded. Keep its glyphs in that resource, rather than duplicating them in
+# the normal UI and the firmware's complete 20px recovery font. Configuration,
+# font-loading errors and the voice page's fixed copy remain ordinary UI text.
+VOICE_FONT_SOURCES = {
+    CRATE / "src" / "services" / "voice" / name
+    for name in (
+        "network.rs", "protocol.rs", "protocol/responses.rs", "storage.rs",
+        "websocket.rs", "sse.rs", "capture.rs", "desktop/device.rs",
+    )
+}
 EXTRA_UI = "‹›鸣潮心月狐团子玄灵月蚀常态智谱"
 
 ASCII = "".join(chr(c) for c in range(0x20, 0x7F))
@@ -70,6 +81,8 @@ def scanned_characters() -> str:
     for source in SOURCES:
         files = sorted(source.rglob("*.rs")) if source.is_dir() else [source]
         for path in files:
+            if path in VOICE_FONT_SOURCES:
+                continue
             text = path.read_text(encoding="utf-8")
             for match in literal.finditer(text):
                 found.update(ch for ch in match.group(1) if is_cjk(ch))

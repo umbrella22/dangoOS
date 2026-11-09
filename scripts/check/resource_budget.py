@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check a generated OTA image and linked SRAM against the firmware budget."""
+"""Check a generated main image and linked SRAM against the firmware budget."""
 import argparse
 import hashlib
 import json
@@ -11,7 +11,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/device"))
-from ota_image import SLOT_BYTES, validate_image
+from main_image import MAIN_BYTES, validate_image
 
 POLICY = Path(__file__).with_name("resource-budget.json")
 
@@ -57,11 +57,9 @@ def elf_usage(data):
 def assess(elf, image, policy=None):
     if policy is None:
         policy = json.loads(POLICY.read_text())
-    if policy["application_slot_bytes"] != SLOT_BYTES:
-        raise ValueError("resource budget slot differs from the OTA layout")
+    if policy["application_slot_bytes"] != MAIN_BYTES:
+        raise ValueError("resource budget slot differs from the S31ONE03 layout")
     info = validate_image(image)
-    if not info["ab_layout"]:
-        raise ValueError("resource budget requires the current A/B layout")
     usage = elf_usage(elf)
     baseline = policy["baseline"]
     current = {"image_bytes": len(image), **{k: v for k, v in usage.items() if k != "sections"}}

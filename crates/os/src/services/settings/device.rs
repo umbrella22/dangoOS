@@ -38,6 +38,7 @@ pub struct Preferences {
     pub error: bool,
     pub saving_revision: u32,
     pub storage_ready: bool,
+    pub space_loaded: bool,
     pub total_kib: u32,
     pub free_kib: u32,
     pub heap_free_kib: Option<u32>,
@@ -50,6 +51,7 @@ static PREFERENCES: critical_section::Mutex<Cell<Preferences>> =
         error: false,
         saving_revision: 0,
         storage_ready: false,
+        space_loaded: false,
         total_kib: 0,
         free_kib: 0,
         heap_free_kib: None,
@@ -135,7 +137,7 @@ pub async fn task() {
             }
             Action::SelectSkin(id) => {
                 SKIN_FEEDBACK_PAINTED.wait().await;
-                if crate::services::update::ota::device::active() {
+                if crate::services::update::boot::device::active() {
                     "@err skin OTA busy".into()
                 } else {
                     let selected = ::fs::global::with(|vfs| {
@@ -163,10 +165,11 @@ pub async fn task() {
 fn read_space(state: &mut Preferences) {
     if let Ok(space) = ::fs::global::with(|vfs| vfs.space("/data")) {
         state.storage_ready = true;
+        state.space_loaded = true;
         state.total_kib = (u64::from(space.blocks) * u64::from(space.block_size) / 1024) as u32;
         state.free_kib = (u64::from(space.free) * u64::from(space.block_size) / 1024) as u32;
     } else {
-        state.storage_ready = false;
+        state.space_loaded = false;
     }
 }
 
@@ -189,7 +192,7 @@ pub async fn preferences_task() {
         }
     }
     state.loaded = true;
-    read_space(&mut state);
+    state.storage_ready = crate::platform::storage::nand::mounted();
     publish(state);
     let mut revision = 0u32;
     loop {
@@ -200,7 +203,7 @@ pub async fn preferences_task() {
                     state.heap_free_kib = Some((esp_alloc::HEAP.free() / 1024) as u32);
                     publish(state);
                 }
-                if !crate::services::update::ota::device::active()
+                if !crate::services::update::boot::device::active()
                     && REFRESH_STORAGE.swap(false, Ordering::AcqRel)
                 {
                     read_space(&mut state);
@@ -215,7 +218,7 @@ pub async fn preferences_task() {
                 Either::Second(()) => break,
             }
         }
-        while crate::services::update::ota::device::active() {
+        while crate::services::update::boot::device::active() {
             Timer::after_millis(100).await;
         }
         if let Some(next) = UPDATE.try_take() {
@@ -234,7 +237,7 @@ pub async fn preferences_task() {
         while FEEDBACK_PAINTED.wait().await != revision {}
         let mut save = settings::Save::new(value);
         let result = loop {
-            while crate::services::update::ota::device::active() {
+            while crate::services::update::boot::device::active() {
                 Timer::after_millis(100).await;
             }
             let result = ::fs::global::with(|vfs| save.step(vfs));

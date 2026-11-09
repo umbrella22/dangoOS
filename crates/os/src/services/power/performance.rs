@@ -16,7 +16,8 @@ pub async fn task() {
                     | crate::services::audio::State::Recording
             )
             || crate::services::update::task::busy()
-            || crate::services::update::ota::device::blocks_standby();
+            || crate::services::voice::device::busy()
+            || crate::services::update::boot::device::blocks_standby();
         let demand = device::demand();
         let target = policy.target(Instant::now().as_millis(), demand, background_busy);
         device::apply(target, demand);

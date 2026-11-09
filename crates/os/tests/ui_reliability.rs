@@ -212,6 +212,60 @@ fn shell_native_queue_and_controlled_writeback() {
 }
 
 #[test]
+fn voice_partial_text_controls_and_page_teardown_use_the_native_owner() {
+    use os::services::voice::{Command, Phase, Snapshot};
+    with_display(|display| {
+        let mut app = shell(SettingsPage::Root);
+        app.go(Page::App(AppId::Voice));
+        let mut ui = Ui::new(display, theme()).unwrap();
+        ui.mount(&app).unwrap();
+        for (phase, primary) in [
+            (Phase::Idle, "开始录音"),
+            (Phase::Preparing, "取消"),
+            (Phase::Listening, "结束并发送"),
+            (Phase::Transcribing, "取消"),
+            (Phase::Replying, "取消"),
+            (Phase::Done, "开始录音"),
+        ] {
+            app.set_voice(Snapshot {
+                session: 1,
+                phase,
+                recorded_ms: 1200,
+                transcript: "你好".into(),
+                reply: if phase == Phase::Replying || phase == Phase::Done {
+                    "你好，团子".into()
+                } else {
+                    String::new()
+                },
+                error: None,
+                ..Snapshot::default()
+            });
+            ui.update(&app).unwrap();
+            ui.timer_handler();
+            label(primary);
+            label("你：你好");
+        }
+        // The label is nested inside the actual native clickable container.
+        unsafe {
+            let button = sys::lv_obj_get_parent(label("开始录音"));
+            sys::lv_obj_send_event(
+                button,
+                sys::lv_event_code_t_LV_EVENT_CLICKED,
+                ptr::null_mut(),
+            );
+        }
+        ui.drain(&mut app, 8).unwrap();
+        assert_eq!(app.take_voice_action(), Some(Command::Toggle));
+        app.update(AppMsg::Gesture(
+            os::shell::navigation::gesture::SystemGesture::Back,
+        ));
+        ui.update(&app).unwrap();
+        assert_eq!(app.take_voice_action(), Some(Command::Cancel));
+        ui.unmount();
+    });
+}
+
+#[test]
 fn real_pages_strict_validation_and_skip_decisions() {
     with_display(|display| {
         let mut app = shell(SettingsPage::Root);

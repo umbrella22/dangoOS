@@ -166,7 +166,7 @@ pub fn read_bounced(addr: u32, out: &mut [u8]) -> Result<(), Errno> {
     Ok(())
 }
 
-/// Flash size from the bootloader image header at 0 (byte 3, high nibble).
+/// Flash size from the bootloader header at 0x2000 (byte 3, high nibble).
 fn header_flash_size(header: &[u8]) -> Option<u32> {
     if header.first() != Some(&0xE9) {
         return None;
@@ -251,16 +251,36 @@ pub fn erase_flash(addr: u32) -> Result<(), Errno> {
     let _guard = flash_guard()?;
     shared().0.erase_sector(addr)
 }
-pub struct OtaFlash;
-impl crate::services::update::ota::Flash for OtaFlash {
-    fn read(&mut self, a: u32, b: &mut [u8]) -> crate::services::update::ota::Result<()> {
-        read_bounced(a, b).map_err(|_| crate::services::update::ota::Error::Flash)
+/// The running application can commit boot records; Recovery writes main.
+pub struct BootFlash;
+impl BootFlash {
+    fn allowed(address: u32, len: usize) -> bool {
+        address.checked_add(len as u32).is_some_and(|end| {
+            boot_contract::JOURNAL
+                .iter()
+                .any(|&base| address >= base && end <= base + boot_contract::RECORD as u32)
+        })
     }
-    fn write(&mut self, a: u32, b: &[u8]) -> crate::services::update::ota::Result<()> {
-        write_flash(a, b).map_err(|_| crate::services::update::ota::Error::Flash)
+}
+impl boot_contract::Flash for BootFlash {
+    type Error = Errno;
+    fn read(&mut self, address: u32, out: &mut [u8]) -> Result<(), Errno> {
+        if !Self::allowed(address, out.len()) {
+            return Err(Errno::INVAL);
+        }
+        read_bounced(address, out)
     }
-    fn erase(&mut self, a: u32) -> crate::services::update::ota::Result<()> {
-        erase_flash(a).map_err(|_| crate::services::update::ota::Error::Flash)
+    fn program(&mut self, address: u32, bytes: &[u8]) -> Result<(), Errno> {
+        if !Self::allowed(address, bytes.len()) {
+            return Err(Errno::INVAL);
+        }
+        write_flash(address, bytes)
+    }
+    fn erase(&mut self, address: u32) -> Result<(), Errno> {
+        if !boot_contract::JOURNAL.contains(&address) {
+            return Err(Errno::INVAL);
+        }
+        erase_flash(address)
     }
 }
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -271,33 +291,21 @@ pub fn mounted() -> (bool, bool) {
         crate::platform::storage::nand::mounted(),
     )
 }
-pub fn layout() -> crate::services::update::ota::Result<crate::services::update::ota::layout::Layout>
-{
+/// Exact geometry and digest, using fixed stack storage before any NOR write.
+pub fn verify_layout() -> Result<(), Errno> {
     if !INITIALIZED.load(Ordering::Acquire) {
-        return Err(crate::services::update::ota::Error::Unavailable);
+        return Err(Errno::IO);
     }
     let mut table = [0; PARTITION_TABLE_LEN];
-    read_bounced(PARTITION_TABLE, &mut table)
-        .map_err(|_| crate::services::update::ota::Error::Flash)?;
+    read_bounced(PARTITION_TABLE, &mut table)?;
     let capacity = {
-        let _guard = flash_guard().map_err(|_| crate::services::update::ota::Error::Flash)?;
+        let _guard = flash_guard()?;
         shared().0.size
     };
-    crate::services::update::ota::layout::parse(&table, capacity)
-}
-/// Read and verify the A/B table with fixed stack storage, before allocator setup.
-pub fn early_ab() -> crate::services::update::ota::Result<()> {
-    if !INITIALIZED.load(Ordering::Acquire) {
-        return Err(crate::services::update::ota::Error::Unavailable);
+    if capacity != 0x1000000 || !boot_contract::partition::verify(&table) {
+        return Err(Errno::INVAL);
     }
-    let mut table = [0; PARTITION_TABLE_LEN];
-    read_bounced(PARTITION_TABLE, &mut table)
-        .map_err(|_| crate::services::update::ota::Error::Flash)?;
-    let capacity = {
-        let _guard = flash_guard().map_err(|_| crate::services::update::ota::Error::Flash)?;
-        shared().0.size
-    };
-    crate::services::update::ota::layout::verify_ab_early(&table, capacity)
+    Ok(())
 }
 /// Initializes ROM flash access without allocation, before PSRAM/panel/filesystems.
 pub fn init_flash() {
@@ -310,16 +318,12 @@ pub fn init_flash() {
             unlocked: false,
         });
     }
-    let mut size = None;
-    for at in [0u32, 0x2000] {
-        let mut h = [0; 32];
-        if read_bounced(at, &mut h).is_ok() {
-            size = size.or(header_flash_size(&h));
+    let mut header = [0; 32];
+    if read_bounced(0x2000, &mut header).is_ok() {
+        if let Some(size) = header_flash_size(&header) {
+            shared().0.size = size;
+            INITIALIZED.store(true, Ordering::Release);
         }
-    }
-    if let Some(size) = size {
-        shared().0.size = size;
-        INITIALIZED.store(true, Ordering::Release);
     }
 }
 
@@ -340,19 +344,12 @@ pub fn ready() -> bool {
 /// Takes the `FLASH` peripheral so nothing else drives the chip meanwhile.
 pub fn init(_flash: esp_hal::peripherals::FLASH<'static>) {
     init_flash();
-    let layout = match layout() {
-        Ok(layout) => layout,
-        Err(e) => {
-            warn!("fs: unsafe/unknown partition table: {e}");
-            global::install(Vfs::new());
-            return;
-        }
-    };
-    let system = layout
-        .entries
-        .iter()
-        .find(|p| p.label == "system" && p.kind == 1 && p.subtype == 0x83)
-        .map(|p| (p.offset, p.size));
+    if let Err(error) = verify_layout() {
+        warn!("fs: single-main partition table rejected: {error}");
+        global::install(Vfs::new());
+        return;
+    }
+    let system = Some((boot_contract::SYSTEM_BASE, boot_contract::SYSTEM_BYTES));
     let mut vfs = Vfs::new();
     if let Some((base, len)) = system {
         let dev = FlashRegion {

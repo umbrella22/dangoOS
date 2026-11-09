@@ -336,6 +336,43 @@ fn main() {
     ui.mark_dirty();
     run(&mut ui, &mut app, 200);
     capture(out, "characters", &pixels);
+    app.go(Page::App(AppId::Voice));
+    for (name, phase, transcript, reply, error) in [
+        (
+            "voice-listening",
+            os::services::voice::Phase::Listening,
+            "",
+            "",
+            None,
+        ),
+        (
+            "voice-reply",
+            os::services::voice::Phase::Replying,
+            "团子",
+            "请先连接 Wi-Fi。",
+            None,
+        ),
+        (
+            "voice-error",
+            os::services::voice::Phase::Error,
+            "",
+            "",
+            Some("请先配置语音服务"),
+        ),
+    ] {
+        app.set_voice(os::services::voice::Snapshot {
+            session: 1,
+            phase,
+            recorded_ms: 2400,
+            transcript: transcript.into(),
+            reply: reply.into(),
+            error,
+            ..os::services::voice::Snapshot::default()
+        });
+        ui.mark_dirty();
+        run(&mut ui, &mut app, 200);
+        capture(out, name, &pixels);
+    }
     ui.unmount();
     drop(ui);
     unsafe {

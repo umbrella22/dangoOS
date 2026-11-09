@@ -87,6 +87,7 @@ impl Router {
             Page::App(AppId::Sensors) => Route::Sensors,
             Page::App(AppId::Timer) => Route::Timer,
             Page::App(AppId::Camera) => Route::Camera,
+            Page::App(AppId::Voice) => Route::Voice,
             Page::App(AppId::Lua(index)) => registry
                 .apps
                 .get(index as usize)

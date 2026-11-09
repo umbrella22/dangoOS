@@ -19,6 +19,11 @@ struct FontSource {
 impl FontSource {
     fn data(&self) -> FontData<'static> {
         #[cfg(target_os = "none")]
+        if self.index == 4 {
+            return crate::services::resources::voice_font::active()
+                .map_or(self.recovery, |font| font.data());
+        }
+        #[cfg(target_os = "none")]
         if let Some(fonts) = device::active() {
             return fonts.font(self.index);
         }
@@ -199,6 +204,12 @@ static SOURCE_DIGITS: FontSource = FontSource {
     index: 3,
     recovery: FontData::checked(FILE_DIGITS_64),
 };
+static SOURCE_VOICE: FontSource = FontSource {
+    index: 4,
+    recovery: FontData::checked(FILE_20),
+};
+/// Arbitrary CJK conversation text; the voice resource is activated by UI.
+pub static VOICE_20: StaticFont = StaticFont::new(&SOURCE_VOICE);
 /// Body text and small labels.
 pub static HUB_20: StaticFont = StaticFont::new(&SOURCE_20);
 /// Row labels and values.
@@ -347,6 +358,7 @@ mod tests {
             include_str!("../pages/sensors.rs"),
             include_str!("../pages/timer.rs"),
             include_str!("../pages/camera.rs"),
+            include_str!("../pages/voice.rs"),
             include_str!("../pages/lua.rs"),
             include_str!("../pages/low_battery.rs"),
             include_str!("../components/page.rs"),
@@ -371,6 +383,9 @@ mod tests {
             include_str!("../runtime/mod.rs"),
             include_str!("../runtime/settings.rs"),
             include_str!("../../services/radio/mod.rs"),
+            include_str!("../../services/voice/config.rs"),
+            include_str!("../../services/voice/device.rs"),
+            include_str!("../../services/resources/voice_font.rs"),
             include_str!("../../services/camera/mod.rs"),
             include_str!("../model.rs"),
             include_str!("../../services/timer.rs"),

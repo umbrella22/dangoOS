@@ -179,7 +179,7 @@ fn controls_blocked() -> bool {
     STOP.load(Ordering::Acquire)
         || MANAGEMENT.load(Ordering::Acquire)
         || START.signaled()
-        || crate::services::update::ota::device::active()
+        || crate::services::update::boot::device::active()
         || crate::services::update::task::busy()
         || crate::services::power::button_task::shutdown_requested()
 }

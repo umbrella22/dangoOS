@@ -101,6 +101,8 @@ pub struct MosaicoApp {
     toast: Option<String>,
     camera_action: Option<crate::services::camera::Command>,
     settings_session: crate::shell::pages::settings::model::Session,
+    voice: crate::services::voice::Snapshot,
+    voice_action: Option<crate::services::voice::Command>,
 }
 
 impl MosaicoApp {
@@ -130,6 +132,8 @@ impl MosaicoApp {
             toast: None,
             camera_action: None,
             settings_session: crate::shell::pages::settings::model::Session::default(),
+            voice: Default::default(),
+            voice_action: None,
         }
     }
 
@@ -216,6 +220,9 @@ impl MosaicoApp {
         if page == self.page() {
             return;
         }
+        if self.page() == Page::App(AppId::Voice) {
+            self.voice_action = Some(crate::services::voice::Command::Cancel);
+        }
         let route = self.router.resolve(page, &self.registry);
         self.router.navigate(route);
         self.settings_session.password = crate::shell::pages::settings::model::Password::default();
@@ -225,6 +232,20 @@ impl MosaicoApp {
         }
     }
 
+    pub fn voice(&self) -> &crate::services::voice::Snapshot {
+        &self.voice
+    }
+    pub fn set_voice(&mut self, snapshot: crate::services::voice::Snapshot) {
+        let entering = self.voice.session != snapshot.session
+            && snapshot.phase != crate::services::voice::Phase::Cancelled;
+        self.voice = snapshot;
+        if entering {
+            self.go(Page::App(AppId::Voice));
+        }
+    }
+    pub fn take_voice_action(&mut self) -> Option<crate::services::voice::Command> {
+        self.voice_action.take()
+    }
     pub fn take_camera_action(&mut self) -> Option<crate::services::camera::Command> {
         self.camera_action.take()
     }
@@ -378,6 +399,26 @@ impl App for MosaicoApp {
                     self.go(next);
                 }
             }
+            AppMsg::VoiceToggle => {
+                if self.page() == Page::App(AppId::Voice) {
+                    self.voice_action = Some(crate::services::voice::Command::Toggle);
+                }
+            }
+            AppMsg::VoicePage(forward) => {
+                if self.page() == Page::App(AppId::Voice) && !self.voice.phase.active() {
+                    let offset = if forward {
+                        self.voice.reply_start + self.voice.reply.len()
+                    } else {
+                        self.voice
+                            .reply_start
+                            .saturating_sub(crate::services::voice::WINDOW_BYTES)
+                    };
+                    self.voice_action = Some(crate::services::voice::Command::Page(offset));
+                }
+            }
+            AppMsg::VoiceCancel => {
+                self.voice_action = Some(crate::services::voice::Command::Cancel);
+            }
             AppMsg::CameraCapture => {
                 self.camera_action = Some(crate::services::camera::Command::Capture)
             }
@@ -425,6 +466,7 @@ impl App for MosaicoApp {
                         .as_deref()
                         .or(crate::shell::theme::font::resource_notice()),
                 ),
+                Page::App(AppId::Voice) => pages::voice::view(&self.voice),
                 Page::App(AppId::Settings) => pages::settings::view::view(
                     &self.hub,
                     &self.settings_session,

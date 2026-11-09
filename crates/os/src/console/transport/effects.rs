@@ -1,21 +1,28 @@
 //! Ordered device-effect dispatch after the protocol releases its VFS guard.
 use super::logging::{reboot_reply_sent, reply};
 use crate::apps::device as apps;
-use crate::console::protocol::{Effect, Session};
-use crate::services::update::ota::device::DeviceUpdater;
+use crate::console::protocol::Effect;
 use alloc::vec::Vec;
 use embassy_time::Timer;
 use log::{info, warn};
 
-pub(super) async fn apply(effects: Vec<Effect>, session: &mut Session, ota: &mut DeviceUpdater) {
+pub(super) async fn apply(effects: Vec<Effect>) {
     for effect in effects {
         let passive = matches!(
             effect,
-            Effect::Power(_) | Effect::NandInfo | Effect::NandStatus
+            Effect::Power(_) | Effect::NandInfo | Effect::NandStatus | Effect::BootStatus
         ) || matches!(
             &effect,
             Effect::Audio(crate::services::audio::Command::Status)
         ) || matches!(&effect, Effect::Radio(command) if command.status())
+            || matches!(
+                &effect,
+                Effect::Voice(
+                    crate::services::voice::Command::Status
+                        | crate::services::voice::Command::Read(_)
+                        | crate::services::voice::Command::Desktop(_)
+                )
+            )
             || matches!(
                 &effect,
                 Effect::Update(crate::services::update::Command::Status)
@@ -24,6 +31,9 @@ pub(super) async fn apply(effects: Vec<Effect>, session: &mut Session, ota: &mut
             crate::services::power::coordinator::wake();
         }
         match effect {
+            Effect::Voice(command) => {
+                reply(&crate::services::voice::device::execute(command).await).await
+            }
             Effect::Audio(command) => {
                 reply(&crate::services::audio::task::execute(command).await).await
             }
@@ -45,7 +55,7 @@ pub(super) async fn apply(effects: Vec<Effect>, session: &mut Session, ota: &mut
             }
             Effect::NandStatus => reply(&crate::platform::storage::nand::status()).await,
             Effect::NandFormat => {
-                let result = if crate::services::update::ota::device::active() {
+                let result = if crate::services::update::boot::device::active() {
                     Err(::fs::Errno::BUSY)
                 } else if !crate::services::power::coordinator::ensure_awake().await {
                     Err(::fs::Errno::IO)
@@ -100,65 +110,17 @@ pub(super) async fn apply(effects: Vec<Effect>, session: &mut Session, ota: &mut
                 reply(&crate::services::power::coordinator::execute(command).await).await
             }
 
-            Effect::OtaCancel => {
-                ota.abort();
-                session.set_ota_active(false);
-            }
-            Effect::Ota(command) => {
-                if !matches!(command, crate::services::update::ota::Command::Status)
-                    && crate::services::update::task::busy()
-                {
-                    reply("@err OTA network update busy").await;
-                    continue;
-                }
-                if matches!(command, crate::services::update::ota::Command::Begin { .. }) {
-                    if let Err(error) = ota.reserve() {
-                        reply(&alloc::format!("@err ota-begin: {error}")).await;
-                        continue;
-                    }
-                }
-                if matches!(command, crate::services::update::ota::Command::Begin { .. })
-                    && !crate::services::camera::task::quiesce().await
-                {
-                    ota.abort();
-                    reply("@err OTA camera shutdown failed").await;
-                    continue;
-                }
-                if matches!(command, crate::services::update::ota::Command::Begin { .. })
-                    && !crate::services::radio::device::quiesce().await
-                {
-                    ota.abort();
-                    reply("@err OTA wireless shutdown failed").await;
-                    continue;
-                }
-                if !crate::services::power::coordinator::ensure_awake().await {
-                    ota.abort();
-                    reply("@err OTA display restore failed").await;
-                    continue;
-                }
-                let result = ota.execute(command).await;
-                session.set_ota_active(crate::services::update::ota::device::active());
-                match result {
-                    Ok((text, reboot)) => {
-                        if reboot {
-                            if reboot_reply_sent(&text).await
-                                && !crate::services::power::button_task::shutdown_requested()
-                            {
-                                esp_hal::system::software_reset();
-                            } else {
-                                // The candidate is selected, but no successful ACK
-                                // delivery is established: leave reboot to the operator.
-                                warn!(
-                                    "ota: reboot ACK delivery timed out; candidate selected, automatic reset withheld"
-                                );
-                                ota.abort();
-                                session.set_ota_active(false);
-                            }
-                        } else {
-                            reply(&text).await;
+            Effect::BootStatus => reply(&crate::services::update::boot::device::status()).await,
+            Effect::Recovery => {
+                match crate::services::update::boot::device::enter_recovery().await {
+                    Ok(()) => {
+                        if reboot_reply_sent("@ok recovery").await {
+                            esp_hal::system::software_reset();
                         }
+                        crate::services::update::boot::device::cancel_handoff();
+                        warn!("recovery: reboot acknowledgement was not delivered; reset withheld");
                     }
-                    Err(text) => reply(&text).await,
+                    Err(error) => reply(&alloc::format!("@err recovery {error}")).await,
                 }
             }
             Effect::Manage(op) => {

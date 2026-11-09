@@ -55,6 +55,10 @@ struct Request {
     source: Source,
 }
 enum Source {
+    Voice {
+        id: u32,
+        filter: crate::services::voice::capture::Downsample,
+    },
     Wave {
         data: Vec<u8>,
         offset: usize,
@@ -64,6 +68,66 @@ enum Source {
         data: Vec<u8>,
         frames: u32,
     },
+}
+impl Request {
+    fn recording(&self) -> bool {
+        matches!(self.source, Source::Record { .. } | Source::Voice { .. })
+    }
+    fn complete(self, result: Result<(), &'static str>) {
+        match self.source {
+            Source::Voice { id, .. } => {
+                super::capture::close(id, result.err());
+                PENDING.store(false, Ordering::Release);
+            }
+            Source::Record { data, .. } => DONE.signal(result.map(|()| {
+                let mut bytes = wav::header(self.format, data.len() as u32)
+                    .unwrap()
+                    .to_vec();
+                bytes.extend_from_slice(&data);
+                bytes
+            })),
+            Source::Wave { .. } => DONE.signal(result.map(|()| Vec::new())),
+        }
+    }
+}
+/// The voice session has initialized its bounded queue before reserving audio.
+/// Once queued, only the audio owner releases PENDING after stopping I2S.
+pub fn start_voice(id: u32) -> Result<(), &'static str> {
+    if !available() {
+        return Err("音频服务未就绪");
+    }
+    if crate::services::power::button_task::shutdown_requested() {
+        return Err("设备正在关机");
+    }
+    if crate::services::radio::device::classic::state().enabled() {
+        return Err("请先关闭蓝牙音频再录音");
+    }
+    if PENDING.swap(true, Ordering::AcqRel) {
+        return Err("音频服务正忙");
+    }
+    if let Err(e) = super::capture::start(id) {
+        PENDING.store(false, Ordering::Release);
+        return Err(e);
+    }
+    STOP.store(false, Ordering::Release);
+    if REQUEST
+        .try_send(Request {
+            format: Format {
+                rate: 48_000,
+                channels: 1,
+            },
+            source: Source::Voice {
+                id,
+                filter: Default::default(),
+            },
+        })
+        .is_err()
+    {
+        super::capture::close(id, Some("音频请求队列正忙"));
+        PENDING.store(false, Ordering::Release);
+        return Err("音频请求队列正忙");
+    }
+    Ok(())
 }
 static REQUEST: Channel<CriticalSectionRawMutex, Request, 1> = Channel::new();
 static DONE: Signal<CriticalSectionRawMutex, Result<Vec<u8>, &'static str>> = Signal::new();
@@ -180,7 +244,7 @@ pub async fn execute(command: Command) -> String {
     if !READY.load(Ordering::Acquire) {
         return "@err audio service starting".into();
     }
-    if crate::services::update::ota::device::active()
+    if crate::services::update::boot::device::active()
         || crate::services::update::task::busy()
         || crate::services::power::button_task::shutdown_requested()
     {
@@ -368,7 +432,7 @@ fn pump_stream(
                 n * 4
             }
 
-            Source::Record { .. } => 0,
+            Source::Record { .. } | Source::Voice { .. } => 0,
         }
     });
     let rx = s.receive(scratch);
@@ -388,6 +452,21 @@ fn pump_stream(
             *frames -= 1;
         }
         exhausted = *frames == 0;
+    }
+    if let Some(Request {
+        source: Source::Voice { id, filter },
+        ..
+    }) = local.as_mut()
+    {
+        let n = filter.convert_in_place(&mut scratch[..rx]);
+        let result = super::capture::push(*id, &scratch[..n]);
+        if let Ok(status) = super::capture::status(*id) {
+            exhausted = result.is_err()
+                || status.finish
+                || status.ms >= crate::services::voice::MAX_RECORDING_MS as u32;
+        } else {
+            exhausted = true;
+        }
     }
     let drops = BT.lock(|b| b.borrow().drops);
     update(|s| {
@@ -431,10 +510,11 @@ pub async fn task(
                 let _ = stop(&mut codec, &mut io, &mut stream).await;
                 configured = false;
             }
-            let cancelled = local.take().is_some();
-            let queued = REQUEST.try_receive().is_ok();
-            if cancelled || queued {
-                DONE.signal(Err("low battery shutdown"));
+            if let Some(r) = local.take() {
+                r.complete(Err("low battery shutdown"));
+            }
+            if let Ok(r) = REQUEST.try_receive() {
+                r.complete(Err("low battery shutdown"));
             }
             bt_mode = false;
             update(|s| {
@@ -447,14 +527,19 @@ pub async fn task(
             continue;
         }
         if STOP.swap(false, Ordering::AcqRel) {
-            if local.take().is_some() {
-                DONE.signal(Err("cancelled"));
-            }
+            let stopped = local.take();
+            let queued = REQUEST.try_receive().ok();
             let result = if stream.is_some() || configured {
                 stop(&mut codec, &mut io, &mut stream).await
             } else {
                 Ok(())
             };
+            if let Some(r) = stopped {
+                r.complete(Err("cancelled"));
+            }
+            if let Some(r) = queued {
+                r.complete(Err("cancelled"));
+            }
             configured = false;
             bt_mode = false;
             update(|s| {
@@ -494,12 +579,8 @@ pub async fn task(
             if let Some(rate) = next {
                 bt_mode = local.is_none();
                 bt_epoch = target.0;
-                let recording = local
-                    .as_ref()
-                    .is_some_and(|r| matches!(r.source, Source::Record { .. }));
-                let output = !local
-                    .as_ref()
-                    .is_some_and(|r| matches!(r.source, Source::Record { .. }));
+                let recording = local.as_ref().is_some_and(Request::recording);
+                let output = !local.as_ref().is_some_and(Request::recording);
                 match start(&mut codec, &mut io, rate, output).await {
                     Ok(mut s) => {
                         if recording {
@@ -514,6 +595,13 @@ pub async fn task(
                             }
                         }
 
+                        if let Some(Request {
+                            source: Source::Voice { id, .. },
+                            ..
+                        }) = local.as_ref()
+                        {
+                            super::capture::ready(*id);
+                        }
                         stream = Some(s);
                         configured = true;
                         last_progress = Instant::now();
@@ -528,8 +616,8 @@ pub async fn task(
                     Err(e) => {
                         codec.amplifier(false);
                         let _ = stop(&mut codec, &mut io, &mut stream).await;
-                        if local.take().is_some() {
-                            DONE.signal(Err(e));
+                        if let Some(r) = local.take() {
+                            r.complete(Err(e));
                         }
                         if bt_mode {
                             bluetooth_active(false);
@@ -566,12 +654,7 @@ pub async fn task(
                     log::error!("audio: I2S progress timeout");
                 }
                 // Drain the final TX descriptors before stopping the amplifier.
-                if exhausted
-                    && !matches!(
-                        local.as_ref().map(|r| &r.source),
-                        Some(Source::Record { .. })
-                    )
-                {
+                if exhausted && !local.as_ref().is_some_and(Request::recording) {
                     let periods = (2_048_000u32 / snapshot().rate.max(1) + 12) / 2;
                     for _ in 0..periods {
                         Timer::after_millis(2).await;
@@ -587,20 +670,7 @@ pub async fn task(
                     result
                 };
                 if let Some(r) = local.take() {
-                    match result {
-                        Err(e) => DONE.signal(Err(e)),
-                        Ok(()) => {
-                            let data = if let Source::Record { data, .. } = r.source {
-                                let mut bytes =
-                                    wav::header(r.format, data.len() as u32).unwrap().to_vec();
-                                bytes.extend_from_slice(&data);
-                                bytes
-                            } else {
-                                Vec::new()
-                            };
-                            DONE.signal(Ok(data));
-                        }
-                    }
+                    r.complete(result);
                 }
                 if timeout && bt_mode {
                     bluetooth_active(false);

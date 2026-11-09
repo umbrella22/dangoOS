@@ -46,6 +46,16 @@ impl Sync {
         frames: &mut frames::Frames,
         radio: crate::services::radio::Snapshot,
     ) -> crate::services::settings::device::Preferences {
+        let control = crate::apps::agent::take_control();
+        if let Some((_, action)) = control {
+            use voice_session::agent::Action;
+            match action {
+                Action::Volume(percent) => app.update(AppMsg::AudioVolume(i32::from(percent))),
+                Action::Brightness(percent) => app.update(AppMsg::Brightness(i32::from(percent))),
+                Action::Status => (),
+            }
+            ui.mark_dirty();
+        }
         let preferences = crate::services::settings::device::preferences();
         if app.hub().about.free_kib != preferences.heap_free_kib {
             app.hub_mut().about.free_kib = preferences.heap_free_kib;
@@ -187,17 +197,18 @@ impl Sync {
                     || crate::services::radio::device::wifi::busy()
                     || app.settings_session().wifi_saved.saving
                     || app.settings_session().loading_skin.is_some()
-                    || crate::services::update::ota::device::active()
+                    || crate::services::update::boot::device::active()
                     || crate::services::update::task::busy(),
                 storage_ready: preferences.storage_ready,
+                space_loaded: preferences.space_loaded,
                 data_total_kib: preferences.total_kib,
                 data_free_kib: preferences.free_kib,
                 saved: preferences.persisted == Some(current),
                 save_error: preferences.error || app.settings_session().wifi_saved.error,
                 saving: preferences.saving_revision != 0
                     || app.settings_session().wifi_saved.saving,
-                candidate: crate::services::update::ota::device::candidate(),
-                boot_slot: crate::services::update::ota::device::booted_slot().ok(),
+                candidate: crate::services::update::boot::device::candidate(),
+                main_image: crate::services::update::boot::device::booted_main(),
             };
             if app.settings_session().info != info {
                 app.settings_session_mut().info = info;
@@ -249,6 +260,25 @@ impl Sync {
             self.value = current;
         }
 
+        if let Some((id, action)) = control {
+            // A console or remote control may change the output while Settings
+            // is hidden. A requested value must reach the service even when
+            // it equals the UI's remembered preference.
+            match action {
+                crate::apps::agent::Action::Volume(percent)
+                    if crate::services::audio::task::snapshot().volume != percent =>
+                {
+                    crate::services::audio::task::volume(percent);
+                }
+                crate::apps::agent::Action::Brightness(percent)
+                    if plane::brightness() != Some(percent) =>
+                {
+                    plane::set_brightness(percent);
+                }
+                _ => (),
+            }
+            crate::apps::agent::accepted(id);
+        }
         preferences
     }
 }

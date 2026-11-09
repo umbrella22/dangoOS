@@ -3,7 +3,7 @@
   "baseline_commit": "3e16d9b0bde49030a6758d2dc56376fdcc8cae94",
   "baseline_elf_sha256": "35ae16d9bb7158cdd54dc0dfb1ea002ad2da7fdf6e0743667a107a405541b19c",
   "baseline_image_sha256": "65aa2558b28efd4c50d159669360dc49c58e95518d2d60678b7c0b6a40fc3a37",
-  "application_slot_bytes": 6291456,
+  "application_slot_bytes": 12582912,
   "minimum_slot_headroom_bytes": 524288,
   "maximum_growth_bytes": {
     "image_bytes": 65536,

@@ -36,7 +36,7 @@ pub(super) fn view(hub: &Hub, info: Info) -> View<AppMsg> {
             ),
         ))
         .child(row(
-            "ota",
+            "boot",
             "固件状态",
             text(
                 if info.candidate {
@@ -49,13 +49,13 @@ pub(super) fn view(hub: &Hub, info: Info) -> View<AppMsg> {
             ),
         ))
         .child(row(
-            "slot",
-            "启动槽",
+            "image",
+            "运行镜像",
             text(
-                match info.boot_slot {
-                    Some(0) => "A",
-                    Some(1) => "B",
-                    _ => "未知",
+                if info.main_image {
+                    "主应用"
+                } else {
+                    "未知"
                 },
                 font_20(),
                 MUTED,

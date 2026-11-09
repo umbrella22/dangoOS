@@ -95,11 +95,12 @@ pub struct Info {
     pub data_free_kib: u32,
     pub data_total_kib: u32,
     pub storage_ready: bool,
+    pub space_loaded: bool,
     pub saved: bool,
     pub saving: bool,
     pub save_error: bool,
     pub candidate: bool,
-    pub boot_slot: Option<u8>,
+    pub main_image: bool,
 }
 
 #[cfg(test)]

@@ -52,6 +52,9 @@ pub(crate) fn apply(
     gestures.reset_pass();
     gestures.set_full_screen(is_lua_page(to));
     lvgl_port::set_pointer(0, 0, false);
+    if from == Page::App(AppId::Voice) && to != from {
+        crate::services::voice::device::cancel();
+    }
     if is_lua_page(from) {
         lua::stop();
         lua::set_pointer(0, 0, false);

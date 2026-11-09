@@ -422,13 +422,28 @@ impl Fs {
     }
 
     pub fn read_dir(&mut self, path: &str) -> Result<Vec<DirEntry>, Errno> {
+        self.read_dir_page(path, 0, usize::MAX)
+    }
+
+    /// Enumerate a window without allocating entries for the whole directory.
+    /// `start` counts ordinary entries, excluding `.` and `..`.
+    pub fn read_dir_page(
+        &mut self,
+        path: &str,
+        start: usize,
+        count: usize,
+    ) -> Result<Vec<DirEntry>, Errno> {
         let p = c_path(path)?;
         let mut d = core::ptr::null_mut();
         // SAFETY: p is NUL-terminated; d receives a handle closed below.
         check(unsafe { mfs_dir_open(self.m(), &mut d, p.as_ptr().cast()) })?;
         let mut out = Vec::new();
+        let mut skipped = 0;
         let mut name = [0u8; 256];
         let result = loop {
+            if out.len() == count {
+                break Ok(());
+            }
             let (mut kind, mut size) = (0, 0);
             // SAFETY: d is open; name holds LFS_NAME_MAX + 1 bytes.
             let r = unsafe {
@@ -444,6 +459,10 @@ impl Fs {
                 .map(|c| String::from_utf8_lossy(c.to_bytes()).into_owned())
                 .unwrap_or_default();
             if n == "." || n == ".." {
+                continue;
+            }
+            if skipped < start {
+                skipped += 1;
                 continue;
             }
             out.push(DirEntry {

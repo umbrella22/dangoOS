@@ -15,8 +15,6 @@ use embassy_usb::{class::cdc_acm::Receiver, driver::EndpointError};
 pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
     let mut buf = [0u8; 512];
     let mut session = Session::new();
-    let mut ota = crate::services::update::ota::device::DeviceUpdater::new();
-    let mut no_mounts = ::fs::Vfs::new();
     let mut pending_packet = None;
     loop {
         class.wait_connection().await;
@@ -52,27 +50,40 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
             // command boundary before processing the packet's remaining bytes.
             let mut consumed = 0;
             while consumed < n {
-                session.set_ota_active(
-                    crate::services::update::ota::device::active()
+                session.set_update_active(
+                    crate::services::update::boot::device::active()
                         || crate::services::update::task::busy(),
                 );
                 session.set_management_busy(apps::is_managing());
                 let mut effects = Vec::new();
 
-                let fed = ::fs::global::with(|vfs| {
-                    Ok(session
-                        .feed_until_deferred(vfs, &buf[consumed..n], &mut |e| effects.push(e)))
-                });
-                consumed += match fed {
-                    Ok(n) => n,
-                    Err(_) => {
-                        session.feed_until_deferred(&mut no_mounts, &buf[consumed..n], &mut |e| {
-                            effects.push(e)
-                        })
-                    }
-                };
+                // CDC state stays on one executor. Move only owned protocol
+                // bytes/state to the storage worker; a blocking VFS operation
+                // must not stop USB control, input, or network pumping.
+                let packet = buf;
+                let (next, fed, pending) =
+                    crate::platform::runtime::executors::services::run(move || {
+                        let fed = ::fs::global::with(|vfs| {
+                            Ok(
+                                session.feed_until_deferred(vfs, &packet[consumed..n], &mut |e| {
+                                    effects.push(e)
+                                }),
+                            )
+                        });
+                        let fed = fed.unwrap_or_else(|_| {
+                            session.feed_until_deferred(
+                                &mut ::fs::Vfs::new(),
+                                &packet[consumed..n],
+                                &mut |e| effects.push(e),
+                            )
+                        });
+                        (session, fed, effects)
+                    })
+                    .await;
+                session = next;
+                consumed += fed;
 
-                effects::apply(effects, &mut session, &mut ota).await;
+                effects::apply(pending).await;
             }
             // A continuously ready USB read does not yield to other thread tasks.
             embassy_futures::yield_now().await;
@@ -95,13 +106,16 @@ pub async fn receive<'a>(class: &mut Receiver<'a, Driver<'a>>) {
                 }
             }
         }
-        ota.abort();
         crate::services::power::coordinator::wake();
         // The host went away mid-push: drop the staged files.
 
-        let _reset_result = ::fs::global::with(|vfs| {
-            session.reset(vfs);
-            Ok(())
-        });
+        session = crate::platform::runtime::executors::services::run(move || {
+            let _ = ::fs::global::with(|vfs| {
+                session.reset(vfs);
+                Ok(())
+            });
+            session
+        })
+        .await;
     }
 }

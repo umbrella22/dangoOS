@@ -5,6 +5,8 @@ fw = "build -p os --bin os-fw --features firmware --release --target riscv32imaf
 fw-run = "run -p os --bin os-fw --features firmware --release --target riscv32imafc-unknown-none-elf"
 fw-ts = "build -p os --bin os-fw --no-default-features --features firmware,dual-core-ui,ts-engine --release --target riscv32imafc-unknown-none-elf"
 
+recovery = "build -p recovery --bin recovery-fw --features firmware,boot-animation --release --target riscv32imafc-unknown-none-elf"
+
 [target.riscv32imafc-unknown-none-elf]
 runner = "espflash flash --monitor --chip esp32s31"
 rustflags = ["-C", "link-arg=-Tmosaico-link.x"]

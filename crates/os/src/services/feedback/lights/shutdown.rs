@@ -66,20 +66,30 @@ mod tests {
         let mut power = super::buttons::Shutdown::Idle;
         power.request(0);
         light.request_shutdown();
-        assert!(!power.poll(10_000, light.shutdown_cleared()));
-        power.uploaded(10_000, true, true);
-        // Repeated failed or absent clear attempts cannot advance power to Cut.
-        for now in [11_500, 20_000, 1_000_000] {
-            assert!(!power.poll(now, light.shutdown_cleared()));
+        assert!(!power.poll(100, light.shutdown_cleared(), true));
+        power.uploaded(100, true, true);
+        // Before the deadline, only this shutdown's clear can release power.
+        for now in [1600, 3000, 4999] {
+            assert!(!power.poll(now, light.shutdown_cleared(), true));
         }
         light.cleared(Clear::Shutdown);
-        assert!(power.poll(1_000_001, light.shutdown_cleared()));
-        assert!(!power.poll(1_000_002, light.shutdown_cleared()));
+        assert!(power.poll(4999, light.shutdown_cleared(), true));
+        assert!(!power.poll(5000, light.shutdown_cleared(), true));
         let mut early = super::buttons::Shutdown::Idle;
         early.request(0);
         early.uploaded(100, true, true);
-        assert!(!early.poll(1599, light.shutdown_cleared()));
-        assert!(early.poll(1600, light.shutdown_cleared()));
+        assert!(!early.poll(1599, light.shutdown_cleared(), true));
+        assert!(early.poll(1600, light.shutdown_cleared(), true));
+
+        let mut failed_light = Lifecycle::new();
+        failed_light.request_shutdown();
+        let mut fallback = super::buttons::Shutdown::Idle;
+        fallback.request(0);
+        fallback.uploaded(100, true, true);
+        assert!(!fallback.poll(4999, failed_light.shutdown_cleared(), true));
+        assert!(fallback.poll(5000, failed_light.shutdown_cleared(), true));
+        assert!(!failed_light.shutdown_cleared());
+        assert!(!fallback.poll(5001, failed_light.shutdown_cleared(), true));
     }
     #[test]
     fn startup_failure_retries_and_color_waits_for_success() {

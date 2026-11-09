@@ -11,6 +11,7 @@ pub mod lua;
 pub mod sensors;
 pub mod settings;
 pub mod timer;
+pub mod voice;
 /// The view for one app.
 pub fn app(hub: &Hub, registry: &Registry, app: AppId) -> View<AppMsg> {
     match app {
@@ -21,6 +22,7 @@ pub fn app(hub: &Hub, registry: &Registry, app: AppId) -> View<AppMsg> {
         ),
         AppId::Sensors => sensors::sensors(hub),
         AppId::Timer => timer::timer(hub),
+        AppId::Voice => voice::view(&Default::default()),
         AppId::Camera => camera::camera(hub.camera),
         AppId::Lua(i) => lua::lua_app(registry.apps.get(i as usize)),
     }

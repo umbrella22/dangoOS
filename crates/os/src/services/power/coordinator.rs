@@ -197,7 +197,7 @@ impl Coordinator {
         let epoch = WAKE_EPOCH.load(Ordering::Acquire);
         if matches!(self.policy.state(), State::Entering | State::ScreenOff)
             && (crate::services::power::button_task::shutdown_requested()
-                || crate::services::update::ota::device::active()
+                || crate::services::update::boot::device::active()
                 || !crate::console::transport::connected())
         {
             self.policy.wake();
@@ -229,7 +229,11 @@ impl Coordinator {
                     Command::ScreenOff(seconds) => {
                         let blocker = blocker
                             .or_else(|| {
-                                crate::services::update::ota::device::blocks_standby()
+                                crate::services::voice::device::busy()
+                                    .then_some("voice session active")
+                            })
+                            .or_else(|| {
+                                crate::services::update::boot::device::blocks_standby()
                                     .then_some("OTA or boot health window")
                             })
                             .or_else(|| {

@@ -10,7 +10,7 @@
     scripts/device/console.py skin-select <id> | skin-rm <id> | skin-ls
     scripts/device/console.py brain-push <script.lua> | brain-reload | brain-default | brain-status
     scripts/device/console.py photo-push <image> [--name subdir/name.jpg] [--run]
-    scripts/device/console.py ota <firmware.bin> | ota-status | ota-abort
+    scripts/device/console.py recovery | boot-status
     scripts/device/console.py update-status | update-check | update-install | update-cancel
     scripts/device/console.py update-url <https-manifest-url>  # explicit development install
     scripts/device/console.py nand-status | nand-format
@@ -21,6 +21,10 @@
     scripts/device/console.py audio-volume <0..100> | audio-mute <0|1>
     scripts/device/console.py audio-play </data/file.wav>
     scripts/device/console.py audio-record </data/file.wav> [--duration-ms 1000]
+    scripts/device/console.py voice-config-push <private-config.json>
+    scripts/device/console.py voice-font-push <voice-20.bin>
+    scripts/device/console.py voice-status | voice-toggle | voice-cancel | voice-reload
+    scripts/device/console.py voice-ask <text> | voice-read
     scripts/device/console.py screen-off <seconds:1..60>
 
 <app-dir> holds launcher.json and the files it names; everything except
@@ -55,6 +59,8 @@ SAFE_PART = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,47}$")
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,63}$")
 FILE_MAX = 1024 * 1024
 BRAIN_MAX = 64 * 1024
+CONSOLE_LINE_MAX = 320
+VOICE_TEXT_BYTES = 1024
 
 
 class ConsoleSerial(serial.Serial):
@@ -93,7 +99,7 @@ class Device:
                 line, self.buf = self.buf.split(b"\n", 1)
                 yield line.decode("utf-8", "replace").rstrip("\r")
             # Return available bytes promptly. A large blocking read can collect
-            # the final OTA ACK, then lose it when reset interrupts the remainder.
+            # the final reboot ACK, then lose it when reset interrupts the remainder.
             chunk = self.ser.read(min(4096, self.ser.in_waiting or 1))
             if chunk:
                 self.buf += chunk
@@ -102,7 +108,7 @@ class Device:
         for line in self.lines(time.monotonic() + timeout):
             if line.startswith("@ok") or line.startswith("@err"):
                 return line
-            if self.echo or line.startswith(("@ota-slot ", "@wifi-ap ")):
+            if self.echo or line.startswith(("@wifi-ap ", "@voice-heap ", "@voice-error ", "@voice-record ")):
                 print(line)
         raise SystemExit("no reply from the device (is the port right, is the firmware new enough?)")
 
@@ -137,6 +143,42 @@ def default_port():
     if not ports:
         sys.exit("no USB console port found; pass --port")
     return ports[0]
+
+
+def voice_ask_command(text):
+    data = text.encode("utf-8")
+    if not text.strip() or len(data) > VOICE_TEXT_BYTES or "\0" in text:
+        raise ValueError("voice text must be nonempty, at most 1024 UTF-8 bytes and contain no NUL")
+    command = "voice-ask " + data.hex()
+    if len((PREFIX + command).encode("ascii")) > CONSOLE_LINE_MAX:
+        raise ValueError("voice text exceeds the console command capacity after hex encoding")
+    return command
+
+
+def read_voice_reply(dev):
+    data = bytearray()
+    identity = None
+    while True:
+        line = dev.command(f"voice-read {len(data)}")
+        match = re.fullmatch(r"@ok voice-read session=([0-9]+) offset=([0-9]+) total=([0-9]+) hex=([A-Fa-f0-9]*)", line)
+        if not match:
+            raise SystemExit("invalid voice-read response")
+        session, offset, total = map(int, match.group(1, 2, 3))
+        if offset != len(data) or (identity is not None and identity != (session, total)):
+            raise SystemExit("voice reply changed or returned an invalid offset/length")
+        identity = (session, total)
+        try:
+            chunk = bytes.fromhex(match[4])
+        except ValueError:
+            raise SystemExit("invalid voice reply hex") from None
+        if len(chunk) > 48 or len(data) + len(chunk) > total or (not chunk and len(data) < total):
+            raise SystemExit("invalid voice reply chunk length or no progress")
+        data.extend(chunk)
+        if len(data) == total:
+            try:
+                return data.decode("utf-8")
+            except UnicodeDecodeError:
+                raise SystemExit("invalid voice reply UTF-8") from None
 
 
 def app_files(root):
@@ -246,6 +288,52 @@ def push_fonts(dev, root):
     print("UI fonts installed. Restart the device to activate them.")
 
 
+def read_voice_resource(path, font=False):
+    limit = 5 * 1024 * 1024 if font else 8192
+    with open(path, "rb") as source:
+        data = source.read(limit + 1)
+    if not data or len(data) > limit:
+        raise ValueError("voice resource is empty or exceeds its size limit")
+    if font:
+        if len(data) < 16 or data[:6] != b"MFNT\x01\x04":
+            raise ValueError("voice font requires the generated MFNT resource")
+    else:
+        # Do not include JSON errors or field values in diagnostics: this file
+        # contains credentials. Firmware validates the complete configuration.
+        try:
+            config = json.loads(data)
+            if config.get("schema") != 1:
+                raise ValueError()
+            for name, scheme in [("asr", "wss"), ("chat", "https")]:
+                endpoint = config[name]
+                url = urlsplit(endpoint["url"])
+                if url.scheme != scheme or not url.hostname or url.username is not None or url.fragment:
+                    raise ValueError()
+                if not all(isinstance(endpoint[key], str) and endpoint[key] for key in ("api_key", "model")):
+                    raise ValueError()
+        except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
+            raise ValueError("invalid voice configuration; check schema, encrypted URLs, keys and models") from None
+    return data
+
+
+def push_voice_resource(dev, data, font=False):
+    kind = "font" if font else "config"
+    filename = "font.bin" if font else "config.json"
+    dev.command(f"voice-{kind}-begin")
+    try:
+        dev.command(f"file {filename} {len(data)} {zlib.crc32(data):08x}")
+        dev.write_all(data)
+        reply = dev.reply(timeout=120)
+        if not reply.startswith("@ok"):
+            raise SystemExit(f"voice resource upload failed: {reply}")
+        print(dev.command(f"voice-{kind}-commit", timeout=120))
+    except (SystemExit, OSError):
+        dev.command("abort", check=False)
+        raise
+    if not font:
+        print(dev.command("voice-reload", check=False))
+
+
 def read_brain(path):
     with open(path, "rb") as f:
         data = f.read(BRAIN_MAX + 1)
@@ -330,56 +418,6 @@ def push_photo(dev, rel, data, run=False):
         dev.command("run photo")
 
 
-def read_ota(path):
-    # Explicit sibling loading also supports importlib consumers of this CLI.
-    import importlib.util
-    from pathlib import Path
-    spec = importlib.util.spec_from_file_location("mosaico_ota_image", Path(__file__).with_name("ota_image.py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    try:
-        return module.read_image(path)
-    except (ValueError, OSError) as error:
-        raise SystemExit(f"OTA image rejected before connection: {error}") from None
-
-
-def push_ota(dev, data, info):
-    dev.ser.write_timeout = 20.0
-    dev.command("hello")
-    begun = False
-    ending = False
-    try:
-        line = dev.command(f"ota-begin {len(data)} {info['sha256']}", timeout=60.0)
-        begun = True
-        match = re.fullmatch(r"@ok ota-begin ([01]) ([01])", line)
-        if not match or match[1] == match[2]:
-            raise SystemExit(f"OTA begin did not confirm a distinct inactive slot: {line}")
-        booted, target = match.groups()
-        for offset in range(0, len(data), 4096):
-            chunk = data[offset:offset + 4096]
-            # No ready reply: acknowledge only after Flash write and readback.
-            dev.write_all((PREFIX + f"ota-chunk {offset} {len(chunk)} {zlib.crc32(chunk):08x}\n").encode())
-            dev.write_all(chunk)
-            line = dev.reply(timeout=30.0)
-            if line != f"@ok ota-chunk {offset + len(chunk)}":
-                raise SystemExit(f"OTA chunk at {offset} failed: {line}")
-        ending = True
-        line = dev.command("ota-end", timeout=120.0)
-        if line != "@ok ota-end":
-            raise SystemExit(f"OTA activation acknowledgement missing: {line}")
-    except (SystemExit, OSError, serial.SerialException) as error:
-        if begun:
-            try:
-                dev.command("ota-abort", timeout=2.0, check=False)
-            except (SystemExit, OSError, serial.SerialException):
-                pass
-        if ending:
-            raise SystemExit(f"OTA completion is unconfirmed: {error}. Reconnect and inspect ota-status; do not assume the new slot booted.") from None
-        raise
-    print(f"OTA activated: slot {booted} -> {target}; {len(data)} B; sha256={info['sha256']}")
-    print("Reboot requested. After reconnection, ota-status must report Valid after the 30-second self-test.")
-
-
 def response_fields(text):
     return dict(word.split("=", 1) for word in text.split() if "=" in word)
 
@@ -436,10 +474,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     camera = ("camera-status", "camera-start", "camera-stop", "camera-capture")
     audio = ("audio-status", "audio-stop", "audio-play", "audio-record", "audio-volume", "audio-mute")
+    voice = ("voice-status", "voice-toggle", "voice-cancel", "voice-reload", "voice-config-push", "voice-font-push", "voice-ask", "voice-read", "voice-page")
     wireless = ("wifi-status", "wifi-on", "wifi-scan", "wifi-connect", "wifi-disconnect", "wifi-off", "wifi-saved", "wifi-saved-connect", "wifi-forget", "wifi-auto", "bt-status", "bt-on", "bt-off")
     updates = ("update-status", "update-check", "update-install", "update-cancel", "update-url")
     updates += ("update-proxy",)
-    ap.add_argument("action", choices=["bundle-push", "fonts-push", "fonts-status", "push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "ota", "ota-status", "ota-abort", "nand-info", "nand-status", "nand-format", "power-status", "screen-off", "screen-on", *wireless, *camera, *updates, *audio])
+    ap.add_argument("action", choices=["bundle-push", "fonts-push", "fonts-status", "push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "recovery", "boot-status", "nand-info", "nand-status", "nand-format", "power-status", "screen-off", "screen-on", *wireless, *camera, *updates, *audio, *voice])
     ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id, brain script or photo file")
     ap.add_argument("--name", help="photo path relative to Album photos (photo-push only)")
     ap.add_argument("--select", action="store_true", help="select after skin-push")
@@ -450,7 +489,7 @@ def main():
     ap.add_argument("--duration-ms", type=int, default=1000, help="audio-record duration in milliseconds")
     args = ap.parse_args()
 
-    needs_target = args.action in ("bundle-push", "fonts-push", "push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "ota", "screen-off", "wifi-connect", "wifi-saved-connect", "wifi-forget", "wifi-auto", "update-url", "update-proxy", "audio-play", "audio-record", "audio-volume", "audio-mute")
+    needs_target = args.action in ("bundle-push", "fonts-push", "push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "screen-off", "wifi-connect", "wifi-saved-connect", "wifi-forget", "wifi-auto", "update-url", "update-proxy", "audio-play", "audio-record", "audio-volume", "audio-mute", "voice-config-push", "voice-font-push", "voice-ask", "voice-page")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
     if args.action == "screen-off" and (not re.fullmatch(r"[0-9]+", args.target) or not 1 <= int(args.target) <= 60):
@@ -461,8 +500,6 @@ def main():
         ap.error("invalid exact skin id")
     if args.name is not None and args.action != "photo-push":
         ap.error("--name requires photo-push")
-    if args.action == "ota" and (args.run or args.follow):
-        ap.error("ota reboots the device; use ota-status after reconnection instead of --run/--follow")
     wifi_command = None
     if args.action == "wifi-connect":
         try:
@@ -485,8 +522,21 @@ def main():
         except (ValueError, KeyError, TypeError, OSError) as error:
             ap.error(str(error))
     brain_data = read_brain(args.target) if args.action == "brain-push" else None
+    voice_command = args.action
+    if args.action == "voice-page" and (not re.fullmatch(r"[0-9]+",args.target) or int(args.target)>0xffffffff):
+        ap.error("voice-page requires a NAND byte offset")
+    if args.action == "voice-ask":
+        try:
+            voice_command = voice_ask_command(args.target)
+        except ValueError as error:
+            ap.error(str(error))
+    voice_data = None
+    if args.action in ("voice-config-push", "voice-font-push"):
+        try:
+            voice_data = read_voice_resource(args.target, args.action == "voice-font-push")
+        except (ValueError, OSError) as error:
+            ap.error(str(error))
     photo = read_photo(args.target, args.name) if args.action == "photo-push" else None
-    ota = read_ota(args.target) if args.action == "ota" else None
     update_command = args.action
     if args.action == "update-url":
         try:
@@ -507,6 +557,21 @@ def main():
     if args.action in updates:
         try:
             print(dev.command(update_command))
+            if args.follow:
+                dev.follow()
+        finally:
+            dev.ser.close()
+        return
+    if args.action in voice:
+        try:
+            if voice_data is not None:
+                push_voice_resource(dev, voice_data, args.action == "voice-font-push")
+            elif args.action == "voice-page":
+                print(dev.command("voice-page "+args.target))
+            elif args.action == "voice-read":
+                print(read_voice_reply(dev))
+            else:
+                print(dev.command(voice_command, timeout=30.0))
             if args.follow:
                 dev.follow()
         finally:
@@ -557,13 +622,7 @@ def main():
         finally:
             dev.ser.close()
         return
-    if args.action == "ota":
-        try:
-            push_ota(dev, *ota)
-        finally:
-            dev.ser.close()
-        return
-    elif args.action in ("ota-status", "ota-abort"):
+    if args.action in ("recovery", "boot-status"):
         try:
             print(dev.command(args.action, timeout=30.0))
         finally:

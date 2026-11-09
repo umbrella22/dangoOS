@@ -40,5 +40,5 @@ system 镜像从当前应用集全新生成，README、许可证和来源记录�
 python3 scripts/device/console.py bundle-push target/snake-bundle --port RUNTIME_PORT
 ```
 
-该更新不写 A/B 固件槽，也不改存档。Rust 原生模块仍静态链接在固件中；新增宿主 API 需要
+应用包更新只替换应用文件并保留存档。Rust 原生模块仍静态链接在主应用镜像中；新增宿主 API 需要
 同时升级固件。完整 UI 字体通过匹配内容哈希的独立资源包交付，与各应用脚本分别管理。

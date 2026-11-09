@@ -337,7 +337,7 @@ pub async fn lights_task(mut channel: LightChannel) {
         };
         if !allows_color
             || !ENABLED.load(Ordering::Relaxed)
-            || crate::services::update::ota::device::active()
+            || crate::services::update::boot::device::active()
             || SUSPENDED.load(Ordering::Acquire)
         {
             frame.iter_mut().for_each(|led| *led = Default::default());

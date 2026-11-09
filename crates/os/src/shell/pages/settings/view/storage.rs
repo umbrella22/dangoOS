@@ -6,6 +6,7 @@ use crate::shell::{
     pages::settings::model::Info,
     theme::tokens::MUTED,
 };
+use alloc::string::String;
 use rs_lvgl_ui::View;
 
 pub(super) fn view(info: Info) -> View<AppMsg> {
@@ -26,11 +27,27 @@ pub(super) fn view(info: Info) -> View<AppMsg> {
         .child(row(
             "total",
             "总空间",
-            text(size(info.data_total_kib), font_20(), MUTED),
+            text(
+                if info.space_loaded {
+                    size(info.data_total_kib)
+                } else {
+                    String::from("读取中")
+                },
+                font_20(),
+                MUTED,
+            ),
         ))
         .child(row(
             "free",
             "可用空间",
-            text(size(info.data_free_kib), font_20(), MUTED),
+            text(
+                if info.space_loaded {
+                    size(info.data_free_kib)
+                } else {
+                    String::from("读取中")
+                },
+                font_20(),
+                MUTED,
+            ),
         ))
 }

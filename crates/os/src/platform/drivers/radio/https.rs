@@ -1,5 +1,6 @@
 //! HTTPS transport; update policy, staging and activation remain in the task.
-use alloc::{format, sync::Arc, vec};
+use crate::formats::http::{connect_request, HttpProxy, Response, TunnelHead, Url};
+use alloc::{format, string::String, sync::Arc, vec, vec::Vec};
 use core::cell::Cell;
 use embassy_net::{tcp::TcpSocket, Stack};
 use embassy_time::{with_timeout, Duration, Instant};
@@ -10,11 +11,6 @@ use rustls::{
     pki_types::{ServerName, UnixTime},
     time_provider::TimeProvider,
     ClientConfig, RootCertStore,
-};
-use {
-    crate::services::update::http::connect_request, crate::services::update::http::Response,
-    crate::services::update::http::TunnelHead, crate::services::update::HttpProxy,
-    crate::services::update::Url,
 };
 
 static TIME: critical_section::Mutex<Cell<Option<(u64, u64)>>> =
@@ -108,7 +104,7 @@ pub async fn sync_clock(stack: Stack<'_>) -> Result<(), &'static str> {
     Err("无法同步时间，请稍后重试")
 }
 
-struct Tls<'a> {
+pub(crate) struct Tls<'a> {
     socket: TcpSocket<'a>,
     engine: Option<Engine>,
 }
@@ -117,35 +113,40 @@ use {
     crate::platform::drivers::radio::https::engine::Action,
     crate::platform::drivers::radio::https::engine::Engine,
 };
-fn engine(url: &Url) -> Result<Engine, &'static str> {
+fn engine(host: String, request: Vec<u8>) -> Result<Engine, &'static str> {
     let mut roots = RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let mut config = ClientConfig::builder_with_details(
-        Arc::new(rustls_rustcrypto::provider()),
-        Arc::new(Clock),
-    )
-    .with_safe_default_protocol_versions()
-    .map_err(|_| "TLS versions")?
-    .with_root_certificates(roots)
-    .with_no_client_auth();
+    let mut config =
+        ClientConfig::builder_with_details(Arc::new(engine::provider()), Arc::new(Clock))
+            .with_safe_default_protocol_versions()
+            .map_err(|_| "TLS versions")?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     config.resumption = rustls::client::Resumption::disabled();
-    let name = ServerName::try_from(url.host.clone()).map_err(|_| "TLS hostname")?;
+    let name = ServerName::try_from(host).map_err(|_| "TLS hostname")?;
     let connection =
         UnbufferedClientConnection::new(Arc::new(config), name).map_err(|_| "TLS configuration")?;
-    let request = format!(
+    Ok(Engine::new(connection, request))
+}
+fn get_request(url: &Url) -> Vec<u8> {
+    format!(
         "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: dangoOS/{}\r\nAccept: application/octet-stream\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
         url.path,
         url.authority(),
         env!("CARGO_PKG_VERSION")
-    );
-    Ok(Engine::new(connection, request.into_bytes()))
+    ).into_bytes()
 }
 impl<'a> Tls<'a> {
-    async fn new(socket: TcpSocket<'a>, url: &Url) -> Result<Self, &'static str> {
-        let url = url.clone();
+    async fn with_request(
+        socket: TcpSocket<'a>,
+        url: &Url,
+        request: Vec<u8>,
+    ) -> Result<Self, &'static str> {
+        let host = url.host.clone();
         let engine =
-            crate::platform::runtime::executors::services::run(move || engine(&url)).await?;
+            crate::platform::runtime::executors::services::run(move || engine(host, request))
+                .await?;
         Ok(Self {
             socket,
             engine: Some(engine),
@@ -163,7 +164,61 @@ impl<'a> Tls<'a> {
     }
     async fn receive(&mut self) -> Result<bool, &'static str> {
         loop {
+            match self.receive_poll(None).await? {
+                Some(open) => return Ok(open),
+                None => (),
+            }
+        }
+    }
+    // A timed poll cancels only TcpSocket::read, while all TLS state is back
+    // inside self. Never select away a service-thread Engine operation and then
+    // reuse the connection: that would strand its owned crypto state.
+    async fn receive_poll(&mut self, wait: Option<Duration>) -> Result<Option<bool>, &'static str> {
+        loop {
             let mut engine = self.engine.take().expect("one TLS step in flight");
+            let (engine, action) = crate::platform::runtime::executors::services::run(move || {
+                let action = engine.step();
+                (engine, action)
+            })
+            .await;
+            self.engine = Some(engine);
+            let engine = self.engine.as_mut().unwrap();
+            match action? {
+                Action::Send(n) => Self::send(&mut self.socket, &engine.outgoing[..n]).await?,
+                Action::Receive => {
+                    if engine.used == engine.incoming.len() {
+                        return Err("TLS record too large");
+                    }
+                    let read = self.socket.read(&mut engine.incoming[engine.used..]);
+                    let n = match wait {
+                        Some(wait) => match with_timeout(wait, read).await {
+                            Ok(n) => n,
+                            Err(_) => return Ok(None),
+                        },
+                        None => read.await,
+                    }
+                    .map_err(|_| "HTTPS receive")?;
+                    if n == 0 {
+                        return Ok(Some(false));
+                    }
+                    engine.used += n;
+                }
+                Action::Continue => (),
+                Action::Plain => return Ok(Some(true)),
+                Action::Closed => return Ok(Some(false)),
+            }
+        }
+    }
+    pub(crate) async fn write_plain(&mut self, bytes: &[u8]) -> Result<(), &'static str> {
+        // connect() retains the HTTP head until the TLS handshake can send it.
+        // Finish that write before queuing the first streamed body segment.
+        self.flush_pending().await?;
+        self.engine.as_mut().unwrap().queue(bytes)?;
+        self.flush_pending().await
+    }
+    async fn flush_pending(&mut self) -> Result<(), &'static str> {
+        while self.engine.as_ref().unwrap().pending() {
+            let mut engine = self.engine.take().unwrap();
             let (engine, action) = crate::platform::runtime::executors::services::run(move || {
                 let action = engine.step();
                 (engine, action)
@@ -183,19 +238,41 @@ impl<'a> Tls<'a> {
                         .await
                         .map_err(|_| "HTTPS receive")?;
                     if n == 0 {
-                        return Ok(false);
+                        return Err("TLS closed during write");
                     }
                     engine.used += n;
                 }
-                Action::Continue => (),
-                Action::Plain => return Ok(true),
-                Action::Closed => return Ok(false),
+                Action::Closed => return Err("TLS closed during write"),
+                Action::Plain | Action::Continue => (),
             }
         }
+        Ok(())
+    }
+    /// None means no network bytes arrived during this poll; Some(0) is EOF.
+    pub(crate) async fn poll_read(
+        &mut self,
+        out: &mut [u8],
+        wait: Duration,
+    ) -> Result<Option<usize>, &'static str> {
+        if self.engine.as_ref().unwrap().position == self.engine.as_ref().unwrap().plain.len() {
+            let e = self.engine.as_mut().unwrap();
+            e.plain.clear();
+            e.position = 0;
+            match self.receive_poll(Some(wait)).await? {
+                None => return Ok(None),
+                Some(false) => return Ok(Some(0)),
+                Some(true) => (),
+            }
+        }
+        let e = self.engine.as_mut().unwrap();
+        let n = out.len().min(e.plain.len() - e.position);
+        out[..n].copy_from_slice(&e.plain[e.position..e.position + n]);
+        e.position += n;
+        Ok(Some(n))
     }
 }
 #[derive(Debug)]
-struct Io;
+pub(crate) struct Io;
 impl core::fmt::Display for Io {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("HTTPS I/O")
@@ -234,6 +311,74 @@ impl Read for Tls<'_> {
     }
 }
 
+/// Authenticated HTTP/1.1 stream. The caller retains socket buffers for the
+/// connection's lifetime. Redirect policy belongs to that caller.
+pub(crate) async fn connect<'a>(
+    stack: Stack<'a>,
+    url: &Url,
+    proxy: Option<HttpProxy>,
+    rx: &'a mut [u8],
+    tx: &'a mut [u8],
+    request: Vec<u8>,
+) -> Result<Tls<'a>, &'static str> {
+    let (address, port) = if let Some(proxy) = proxy {
+        (
+            embassy_net::IpAddress::Ipv4(embassy_net::Ipv4Address::from(proxy.ip)),
+            proxy.port,
+        )
+    } else {
+        let addresses = with_timeout(
+            Duration::from_secs(10),
+            stack.dns_query(&url.host, embassy_net::dns::DnsQueryType::A),
+        )
+        .await
+        .map_err(|_| "DNS timeout")?
+        .map_err(|_| "DNS failed")?;
+        (*addresses.first().ok_or("no IPv4 address")?, url.port)
+    };
+    let mut socket = TcpSocket::new(stack, rx, tx);
+    socket.set_timeout(Some(Duration::from_secs(15)));
+    with_timeout(Duration::from_secs(15), socket.connect((address, port)))
+        .await
+        .map_err(|_| {
+            if proxy.is_some() {
+                "连接代理超时，请检查地址、端口和局域网访问"
+            } else {
+                "TCP timeout"
+            }
+        })?
+        .map_err(|_| {
+            if proxy.is_some() {
+                "无法连接代理，请检查地址、端口和局域网访问"
+            } else {
+                "TCP connect"
+            }
+        })?;
+    if proxy.is_some() {
+        with_timeout(Duration::from_secs(20), async {
+            Tls::send(&mut socket, connect_request(url).as_bytes()).await?;
+            let mut head = TunnelHead::default();
+            let mut byte = [0];
+            loop {
+                if socket
+                    .read(&mut byte)
+                    .await
+                    .map_err(|_| "代理连接读取失败")?
+                    == 0
+                {
+                    return Err("代理提前关闭连接");
+                }
+                if head.push(byte[0])? {
+                    return Ok(());
+                }
+            }
+        })
+        .await
+        .map_err(|_| "代理响应超时")??;
+    }
+    Tls::with_request(socket, url, request).await
+}
+
 pub async fn get(
     stack: Stack<'_>,
     url: &Url,
@@ -244,65 +389,10 @@ pub async fn get(
 ) -> Result<u32, &'static str> {
     let mut url = url.clone();
     for _ in 0..6 {
-        let (address, port) = if let Some(proxy) = proxy {
-            (
-                embassy_net::IpAddress::Ipv4(embassy_net::Ipv4Address::from(proxy.ip)),
-                proxy.port,
-            )
-        } else {
-            let addresses = with_timeout(
-                Duration::from_secs(10),
-                stack.dns_query(&url.host, embassy_net::dns::DnsQueryType::A),
-            )
-            .await
-            .map_err(|_| "DNS timeout")?
-            .map_err(|_| "DNS failed")?;
-            (*addresses.first().ok_or("no IPv4 address")?, url.port)
-        };
         let mut rx = vec![0; 4096];
         let mut tx = vec![0; 2048];
-        let mut socket = TcpSocket::new(stack, &mut rx, &mut tx);
-        socket.set_timeout(Some(Duration::from_secs(15)));
-        with_timeout(Duration::from_secs(15), socket.connect((address, port)))
-            .await
-            .map_err(|_| {
-                if proxy.is_some() {
-                    "连接代理超时，请检查地址、端口和局域网访问"
-                } else {
-                    "TCP timeout"
-                }
-            })?
-            .map_err(|_| {
-                if proxy.is_some() {
-                    "无法连接代理，请检查地址、端口和局域网访问"
-                } else {
-                    "TCP connect"
-                }
-            })?;
-        if proxy.is_some() {
-            with_timeout(Duration::from_secs(20), async {
-                Tls::send(&mut socket, connect_request(&url).as_bytes()).await?;
-                let mut head = TunnelHead::default();
-                let mut byte = [0];
-                loop {
-                    if socket
-                        .read(&mut byte)
-                        .await
-                        .map_err(|_| "代理连接读取失败")?
-                        == 0
-                    {
-                        return Err("代理提前关闭连接");
-                    }
-                    if head.push(byte[0])? {
-                        break;
-                    }
-                }
-                Ok::<(), &'static str>(())
-            })
-            .await
-            .map_err(|_| "代理响应超时")??;
-        }
-        let mut response = Response::new(Tls::new(socket, &url).await?);
+        let tls = connect(stack, &url, proxy, &mut rx, &mut tx, get_request(&url)).await?;
+        let mut response = Response::new(tls);
         let head = with_timeout(Duration::from_secs(45), response.head())
             .await
             .map_err(|_| "HTTPS header timeout")??;

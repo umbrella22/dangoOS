@@ -28,7 +28,7 @@ class ResourceBudgetTests(unittest.TestCase):
     def setUp(self):
         self.image = application()
         self.policy = {
-            "baseline_commit": "1" * 40, "application_slot_bytes": 6291456,
+            "baseline_commit": "1" * 40, "application_slot_bytes": 12582912,
             "minimum_slot_headroom_bytes": 524288, "minimum_main_stack_bytes": 32768,
             "baseline": {"image_bytes": len(self.image), "internal_allocated_sections_bytes": 4096,
                          "rtc_allocated_sections_bytes": 0, "main_stack_bytes": 48000},
@@ -45,7 +45,7 @@ class ResourceBudgetTests(unittest.TestCase):
 
     def test_slot_headroom_and_stack_reserve_are_independent_gates(self):
         policy = copy.deepcopy(self.policy)
-        policy["minimum_slot_headroom_bytes"] = 6291456 - len(self.image) + 1
+        policy["minimum_slot_headroom_bytes"] = 12582912 - len(self.image) + 1
         self.assertIn("slot headroom", API.assess(elf(), self.image, policy)["failures"][0])
         report = API.assess(elf(stack=32764), self.image, self.policy)
         self.assertTrue(any("main stack" in message for message in report["failures"]))
@@ -60,7 +60,7 @@ class ResourceBudgetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "RISC-V"):
             API.elf_usage(data)
 
-    def test_budget_never_accepts_an_invalid_or_old_layout_ota_image(self):
+    def test_budget_never_accepts_an_invalid_or_old_layout_main_image(self):
         for image in (self.image[:-1], application(marker=False)):
             with self.assertRaises(ValueError):
                 API.assess(elf(), image, self.policy)

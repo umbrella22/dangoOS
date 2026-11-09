@@ -27,6 +27,9 @@ pub enum AppMsg {
     /// Settings: vibration motor.
     Haptics(bool),
     CameraCapture,
+    VoiceToggle,
+    VoiceCancel,
+    VoicePage(bool),
     CameraRetry,
     SettingsPage(crate::shell::pages::settings::model::Page),
     SettingsBack,

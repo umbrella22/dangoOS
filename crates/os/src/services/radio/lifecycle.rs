@@ -2,6 +2,34 @@
 //! operation waits for this acknowledgement before it can preempt a callback.
 use core::sync::atomic::{AtomicU8, Ordering};
 
+/// Includes the host's profile waits and failure teardown. Expiry releases
+/// the caller, never the still-running native operation or its controller.
+pub const HOST_OPERATION_TIMEOUT_MS: u64 = 60_000;
+
+pub struct HostOperation {
+    since_ms: u64,
+    replied: bool,
+}
+impl HostOperation {
+    pub fn new(now_ms: u64) -> Self {
+        Self {
+            since_ms: now_ms,
+            replied: false,
+        }
+    }
+    pub fn timeout(&mut self, now_ms: u64) -> bool {
+        if !self.replied && now_ms.saturating_sub(self.since_ms) >= HOST_OPERATION_TIMEOUT_MS {
+            self.replied = true;
+            return true;
+        }
+        false
+    }
+    /// A late completion retires the operation without replying a second time.
+    pub fn complete(&mut self) -> bool {
+        !core::mem::replace(&mut self.replied, true)
+    }
+}
+
 pub struct Gate(AtomicU8);
 
 impl Gate {
@@ -47,6 +75,20 @@ impl Drop for Pause<'_> {
 mod tests {
     use super::*;
     use std::sync::mpsc::channel;
+
+    #[test]
+    fn host_deadline_replies_once_and_late_completion_cannot_reply_again() {
+        let mut op = HostOperation::new(1000);
+        assert!(!op.timeout(60_999));
+        assert!(op.timeout(61_000));
+        assert!(!op.timeout(90_000));
+        assert!(!op.complete());
+        let mut next = HostOperation::new(90_000);
+        assert!(!next.timeout(90_001));
+        assert!(next.complete());
+        assert!(!next.complete());
+        assert!(!next.timeout(200_000));
+    }
 
     #[test]
     fn native_work_waits_for_running_callback_and_blocks_the_next_one() {

@@ -121,3 +121,87 @@ fn low_battery_blocks_settings_subroutes_and_late_page_messages() {
     assert_eq!(app.route(), Route::Settings(SettingsPage::Character));
     assert!(!app.accepts_page_result(session));
 }
+
+#[test]
+fn leaving_voice_cancels_queued_work_and_late_start_messages_do_not_reopen_it() {
+    use os::services::voice::Command;
+    let mut app = app();
+    app.go(Page::App(AppId::Voice));
+    let old = app.page_session();
+    app.update(AppMsg::VoiceToggle);
+    app.update(AppMsg::Gesture(SystemGesture::Back));
+    assert_eq!(app.page(), Page::Launcher);
+    assert_eq!(app.take_voice_action(), Some(Command::Cancel));
+    assert!(!app.accepts_page_result(old));
+    app.update(AppMsg::VoiceToggle);
+    assert_eq!(app.take_voice_action(), None);
+    app.go(Page::App(AppId::Voice));
+    assert_eq!(app.route(), Route::Voice);
+    app.show_low_battery();
+    app.update(AppMsg::VoiceToggle);
+    assert_eq!(app.take_voice_action(), None);
+}
+
+#[test]
+fn new_voice_session_opens_its_page_but_updates_after_leaving_do_not_reopen_it() {
+    use os::services::voice::{Phase, Snapshot};
+    let mut app = app();
+    app.set_voice(Snapshot {
+        session: 1,
+        phase: Phase::Done,
+        reply: "团子已连接。".into(),
+        ..Snapshot::default()
+    });
+    assert_eq!(app.route(), Route::Voice);
+    app.go(Page::Launcher);
+    app.set_voice(Snapshot {
+        session: 1,
+        phase: Phase::Replying,
+        ..Snapshot::default()
+    });
+    assert_eq!(app.page(), Page::Launcher);
+    app.set_voice(Snapshot {
+        session: 2,
+        phase: Phase::Cancelled,
+        ..Snapshot::default()
+    });
+    assert_eq!(app.page(), Page::Launcher);
+    app.set_voice(Snapshot {
+        session: 3,
+        phase: Phase::Preparing,
+        ..Snapshot::default()
+    });
+    assert_eq!(app.route(), Route::Voice);
+    app.show_low_battery();
+    app.set_voice(Snapshot {
+        session: 4,
+        phase: Phase::Replying,
+        ..Snapshot::default()
+    });
+    assert_eq!(app.screen(), os::Screen::LowBattery);
+}
+
+#[test]
+fn voice_page_actions_use_window_offsets_and_wait_for_the_turn_to_stop() {
+    use os::services::voice::{Command, Phase, Snapshot, WINDOW_BYTES};
+    let mut app = app();
+    app.set_voice(Snapshot {
+        session: 1,
+        phase: Phase::Done,
+        reply: "x".repeat(WINDOW_BYTES),
+        reply_start: 2048,
+        reply_bytes: 8192,
+        ..Snapshot::default()
+    });
+    app.update(AppMsg::VoicePage(false));
+    assert_eq!(app.take_voice_action(), Some(Command::Page(1024)));
+    app.update(AppMsg::VoicePage(true));
+    assert_eq!(app.take_voice_action(), Some(Command::Page(3072)));
+    app.set_voice(Snapshot {
+        session: 1,
+        phase: Phase::Replying,
+        ..Snapshot::default()
+    });
+    app.update(AppMsg::VoicePage(false));
+    assert_eq!(app.take_voice_action(), None);
+}

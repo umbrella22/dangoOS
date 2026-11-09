@@ -120,13 +120,13 @@ pub(super) async fn reboot_reply_sent(text: &str) -> bool {
         return false;
     }
     loop {
-        match crate::services::update::ota::reboot_ack(
+        match crate::services::update::boot::reboot_ack(
             REBOOT_ACK_SENT.load(Ordering::Acquire),
             start.elapsed().as_millis(),
         ) {
-            crate::services::update::ota::RebootAck::Sent => return true,
-            crate::services::update::ota::RebootAck::TimedOut => return false,
-            crate::services::update::ota::RebootAck::Waiting => Timer::after_millis(5).await,
+            crate::services::update::boot::RebootAck::Sent => return true,
+            crate::services::update::boot::RebootAck::TimedOut => return false,
+            crate::services::update::boot::RebootAck::Waiting => Timer::after_millis(5).await,
         }
     }
 }

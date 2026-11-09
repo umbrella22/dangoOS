@@ -26,7 +26,21 @@ pub(super) async fn sensors(app: &mut MosaicoApp, runtime: &mut Runtime, now_ms:
             }
             _ => {}
         }
-        if app.page() == Page::Home || reaches_fox_off_home(&event.kind) {
+        // The AI key belongs to the system on every route. Do not also feed
+        // these gestures to the script brain, which can emit the same command.
+        use crate::companion::behavior::affect::{EventKind, EventSource};
+        let ai_key = event.source == EventSource::ButtonPower
+            && matches!(event.kind, EventKind::ButtonShort | EventKind::ButtonDouble);
+        if ai_key {
+            if event.kind == EventKind::ButtonShort {
+                app.go(Page::App(AppId::Voice));
+                app.update(AppMsg::VoiceToggle);
+            } else {
+                app.update(AppMsg::VoiceCancel);
+            }
+            sensors_changed = true;
+        }
+        if !ai_key && (app.page() == Page::Home || reaches_fox_off_home(&event.kind)) {
             runtime.on_sensor(event);
         }
         // A FIFO batch may deliver 32 IMU events at once. Keep their

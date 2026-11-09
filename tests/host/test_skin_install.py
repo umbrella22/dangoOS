@@ -26,14 +26,14 @@ def fixture(root):
     files = {"dango-skin/eclipse/fox.bin": binary,
              "dango-skin/eclipse/skin.json": json.dumps(metadata).encode(),
              "install.py": b"# installer", "tools/console.py": b"# console",
-             "tools/ota_image.py": b"# image tools", "dangoOS-v0.3.0-esp32s31-ota.bin": b"application"}
+             "tools/main_image.py": b"# image tools", "tools/recovery.py": b"# rescue", "dangoOS-v0.3.0-esp32s31-main.bin": b"application"}
     catalog = [{"id": "eclipse", "name": "月蚀", "version": "test", "files": {
         name: {"bytes": len(files[f"dango-skin/eclipse/{name}"]),
                "sha256": digest(files[f"dango-skin/eclipse/{name}"])} for name in ("fox.bin", "skin.json")}}]
-    manifest = {"schema": 1, "project": "dangoOS", "version": "0.3.0", "tag": "v0.3.0",
+    manifest = {"schema": 2, "project": "dangoOS", "version": "0.3.0", "tag": "v0.3.0",
                 "chip": "esp32s31", "flash_bytes": 16 * 1024 * 1024,
-                "layout": "MOSAICO_S31_AB_LAYOUT_V2_6M_NAND", "nand_skins": catalog,
-                "images": {"ota": {"file": "dangoOS-v0.3.0-esp32s31-ota.bin", "bytes": 11,
+                "layout": "S31ONE03", "nand_skins": catalog,
+                "images": {"main": {"file": "dangoOS-v0.3.0-esp32s31-main.bin", "bytes": 11,
                                    "sha256": digest(b"application")},
                            "full": {"file": "dangoOS-v0.3.0-esp32s31-full.bin", "bytes": 16 * 1024 * 1024,
                                     "sha256": digest(b"\xff" * (16 * 1024 * 1024)), "flash_offset": 0}}}
@@ -87,12 +87,12 @@ class Console:
 
 
 class SkinInstallTests(unittest.TestCase):
-    def test_preflight_accepts_ota_or_full_bundle_and_checks_images(self):
+    def test_preflight_accepts_main_or_full_bundle_and_checks_images(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             manifest = fixture(root)
             self.assertEqual(INSTALL.validate_bundle(root), manifest)
-            (root / manifest["images"]["ota"]["file"]).unlink()
+            (root / manifest["images"]["main"]["file"]).unlink()
             (root / manifest["images"]["full"]["file"]).write_bytes(b"\xff" * (16 * 1024 * 1024))
             checksum(root)
             self.assertEqual(INSTALL.validate_bundle(root), manifest)

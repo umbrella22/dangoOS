@@ -118,6 +118,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -200,6 +206,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c051592f59fe68053524b4c4935249b806f72c1f544cfb7abe4f57c3be258e"
 dependencies = [
  "aligned",
+]
+
+[[package]]
+name = "board-s31"
+version = "0.4.4"
+dependencies = [
+ "boot-contract",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "esp-alloc",
+ "esp-hal",
+ "log",
+]
+
+[[package]]
+name = "boot-contract"
+version = "0.4.4"
+dependencies = [
+ "md-5",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -2149,6 +2176,9 @@ name = "os"
 version = "0.4.4"
 dependencies = [
  "app-host",
+ "base64",
+ "board-s31",
+ "boot-contract",
  "critical-section",
  "embassy-executor",
  "embassy-futures",
@@ -2186,8 +2216,10 @@ dependencies = [
  "rustls",
  "rustls-rustcrypto",
  "serde_json",
+ "sha1",
  "sha2 0.10.9",
  "static_cell",
+ "voice-session",
  "webpki-roots",
 ]
 
@@ -2422,6 +2454,31 @@ name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "recovery"
+version = "0.4.4"
+dependencies = [
+ "board-s31",
+ "boot-contract",
+ "critical-section",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-time",
+ "embassy-usb",
+ "esp-alloc",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-rtos",
+ "esp-storage",
+ "fs",
+ "miniz_oxide",
+ "serde_json",
+ "sha2 0.10.9",
+ "static_cell",
+]
 
 [[package]]
 name = "regex"
@@ -2838,6 +2895,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3207,6 +3275,14 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "voice-session"
+version = "0.4.4"
+dependencies = [
+ "fs",
+ "serde_json",
+]
 
 [[package]]
 name = "void"

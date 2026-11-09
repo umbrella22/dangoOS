@@ -12,3 +12,4 @@ pub mod resources;
 pub mod settings;
 pub mod timer;
 pub mod update;
+pub mod voice;

@@ -80,9 +80,9 @@ impl Store {
         self.publish(true);
         let mut save = known::Save::new(&self.value);
         let result = loop {
-            while crate::services::update::ota::device::active() {
-                Timer::after_millis(50).await;
-            }
+            // Finish this save before accepting WifiSuspend. Handoff waits
+            // for that acknowledgement, so waiting for handoff here deadlocks
+            // a background save. Keep the open descriptor through close/rename.
             let (next, result) = crate::platform::runtime::executors::services::run(move || {
                 let result = ::fs::global::with(|vfs| save.step(vfs));
                 (save, result)
@@ -519,7 +519,7 @@ pub async fn task(
                         retry.reset();
                     }
                 } else if retry.due(Instant::now().as_millis())
-                    && !crate::services::update::ota::device::active()
+                    && !crate::services::update::boot::device::active()
                     && !crate::services::update::task::busy()
                     && !crate::services::power::button_task::shutdown_requested()
                 {

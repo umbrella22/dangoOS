@@ -1,2 +1,4 @@
 # Binary application inputs are produced by the external EmbedTS builder.
 *.etb binary
+# SSE wire fixtures end each event with an empty line, including the last one.
+*.sse whitespace=-blank-at-eof

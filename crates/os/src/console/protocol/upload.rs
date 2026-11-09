@@ -40,7 +40,13 @@ impl Session {
             let up = self.upload.take().expect("upload");
             let closed = vfs.close(up.fd);
             let crc = !up.crc;
-            if matches!(self.kind, UploadKind::Photo | UploadKind::Fonts) {
+            if matches!(
+                self.kind,
+                UploadKind::Photo
+                    | UploadKind::Fonts
+                    | UploadKind::VoiceConfig
+                    | UploadKind::VoiceFont
+            ) {
                 self.completed_file = (up.failed.is_none() && closed.is_ok() && crc == up.want)
                     .then(|| up.rel.clone());
             }
@@ -66,6 +72,8 @@ impl Session {
             UploadKind::Brain => crate::companion::brain::store::STAGING,
             UploadKind::Photo => PHOTO_STAGING,
             UploadKind::Fonts => crate::services::resources::fonts::STAGING,
+            UploadKind::VoiceConfig => crate::services::voice::config::STAGING,
+            UploadKind::VoiceFont => crate::services::resources::voice_font::STAGING,
         }
     }
 
@@ -138,7 +146,21 @@ impl Session {
         if !rel_is_safe(rel) {
             return Err(format!("bad path {rel}"));
         }
-        if size > FILE_MAX {
+        if self.kind == UploadKind::VoiceConfig
+            && (rel != "config.json"
+                || size == 0
+                || size as usize > crate::services::voice::config::MAX_BYTES)
+        {
+            return Err("voice config requires config.json of 1..8192 bytes".into());
+        }
+        if self.kind == UploadKind::VoiceFont
+            && (rel != "font.bin"
+                || size < 16
+                || size as usize > crate::services::resources::voice_font::MAX_BYTES)
+        {
+            return Err("voice font requires font.bin of 16 bytes..5 MiB".into());
+        }
+        if size > FILE_MAX && self.kind != UploadKind::VoiceFont {
             return Err(format!("{rel} is larger than {FILE_MAX} bytes"));
         }
         let path = format!("{}/{id}/{rel}", self.staging_root());

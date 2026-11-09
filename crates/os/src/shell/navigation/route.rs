@@ -12,6 +12,7 @@ pub enum Route {
     Sensors,
     Timer,
     Camera,
+    Voice,
     Lua(Identity),
     UnavailableLua,
 }
@@ -24,6 +25,7 @@ impl Route {
             Self::Sensors => Page::App(AppId::Sensors),
             Self::Timer => Page::App(AppId::Timer),
             Self::Camera => Page::App(AppId::Camera),
+            Self::Voice => Page::App(AppId::Voice),
             // Running/reload follows the stable id, including a valid data
             // override. Launcher and management check the captured origin.
             Self::Lua(identity) => Page::App(AppId::Lua(
@@ -56,10 +58,12 @@ pub enum AppId {
     Sensors,
     Timer,
     Camera,
+    Voice,
     Lua(u8),
 }
 
 impl AppId {
+    /// Launcher entries; the voice page is opened by the dedicated AI key.
     pub const NATIVE: [AppId; 4] = [AppId::Settings, AppId::Sensors, AppId::Timer, AppId::Camera];
 
     /// Name of a native app under its icon and in the page title.
@@ -69,6 +73,7 @@ impl AppId {
             AppId::Sensors => "传感器",
             AppId::Timer => "计时器",
             AppId::Camera => "相机",
+            AppId::Voice => "语音",
             AppId::Lua(_) => "Lua",
         }
     }
@@ -80,6 +85,7 @@ impl AppId {
             AppId::Sensors => "app-sensors",
             AppId::Timer => "app-timer",
             AppId::Camera => "app-camera",
+            AppId::Voice => "app-voice",
             AppId::Lua(_) => "app-lua",
         }
     }

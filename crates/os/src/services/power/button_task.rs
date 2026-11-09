@@ -16,7 +16,7 @@ use {
 };
 use {
     crate::services::power::buttons::Button, crate::services::power::buttons::Gesture,
-    crate::services::power::buttons::Shutdown, crate::services::power::buttons::SLEEP_VISIBLE_MS,
+    crate::services::power::buttons::Shutdown,
 };
 
 static SNAPSHOT: Mutex<RefCell<OnboardButtons>> = Mutex::new(RefCell::new(OnboardButtons {
@@ -69,12 +69,12 @@ pub fn request_low_battery() {
         true
     });
     if first {
-        crate::services::update::ota::device::orderly_shutdown();
         crate::services::power::coordinator::wake();
         crate::services::feedback::lights::begin_shutdown();
         crate::services::feedback::haptic::set_enabled(false);
         crate::services::camera::task::set_ui_preview(false);
         crate::services::audio::task::request_stop();
+        crate::services::voice::device::cancel();
         crate::services::update::task::cancel_for_shutdown();
         info!("power: low battery latched; warning then physical shutdown, no software reset");
     }
@@ -107,10 +107,7 @@ pub async fn button_task(ai: Input<'static>, boot: Input<'static>, mut power: Ou
         s.pressed = [keys[0].pressed() as u32, keys[1].pressed() as u32];
     });
     info!("buttons: AI GPIO7 / BOOT GPIO61 low-active, 20ms debounce, 180ms clicks, 1500ms long");
-    let mut missing_frame_warned = false;
-    let mut missing_clear_warned = false;
     let mut radio_stop_requested = false;
-    let mut normal_cut_pending = false;
     loop {
         let now = Instant::now().as_millis();
         if low_battery_requested() {
@@ -156,8 +153,12 @@ pub async fn button_task(ai: Input<'static>, boot: Input<'static>, mut power: Ou
                 if index == 0 && gesture == Gesture::Long {
                     let first = critical_section::with(|cs| POWER.borrow_ref_mut(cs).request(now));
                     if first {
-                        crate::services::update::ota::device::orderly_shutdown();
+                        crate::services::voice::device::cancel();
                         crate::services::feedback::lights::begin_shutdown();
+                        // Teardown runs in parallel with the visible Sleep
+                        // interval. A failed optional output cannot defer it.
+                        radio_stop_requested = true;
+                        STOP_RADIO.signal(());
                         info!("power: shutdown latched; waiting for presented Sleep frame");
                     }
                 }
@@ -169,35 +170,24 @@ pub async fn button_task(ai: Input<'static>, boot: Input<'static>, mut power: Ou
             }
         }
         let lights_cleared = crate::services::feedback::lights::shutdown_cleared();
-        let (cut, waiting, clear_waiting) = critical_section::with(|cs| {
+        let services_quiet = RADIO_QUIET.load(Ordering::Acquire);
+        let (cut, expired, sleep_shown) = critical_section::with(|cs| {
             let mut p = POWER.borrow_ref_mut(cs);
-            let cut = p.poll(now, lights_cleared);
-            let waiting = matches!(*p,Shutdown::WaitingForSleep {requested_at} if now.saturating_sub(requested_at)>=5000);
-            let clear_waiting = !lights_cleared
-                && matches!(*p,
-                Shutdown::WaitingForSleep {requested_at} if now.saturating_sub(requested_at)>=5000)
-                || !lights_cleared
-                    && matches!(*p,
-                    Shutdown::ShowingSleep {since} if now.saturating_sub(since)>=SLEEP_VISIBLE_MS);
-            (cut, waiting, clear_waiting)
+            let expired = p.expired(now);
+            let sleep_shown = matches!(*p, Shutdown::ShowingSleep { .. });
+            (
+                p.poll(now, lights_cleared, services_quiet),
+                expired,
+                sleep_shown,
+            )
         });
-        if waiting && !missing_frame_warned {
-            missing_frame_warned = true;
-            warn!("power: no presented Sleep frame; keeping GPIO57 released");
-        }
-        if clear_waiting && !missing_clear_warned {
-            missing_clear_warned = true;
-            warn!("power: no shutdown black TX/latch receipt; keeping GPIO57 released");
-        }
-        normal_cut_pending |= cut;
-        if normal_cut_pending && !radio_stop_requested {
-            radio_stop_requested = true;
-            STOP_RADIO.signal(());
-        }
-        if normal_cut_pending && RADIO_QUIET.load(Ordering::Acquire) {
-            info!("power: Sleep >=1500ms and lights cleared; asserting GPIO57 open-drain low once");
+        if cut {
+            if expired {
+                warn!("power: shutdown deadline; sleep={} lights={} services={}; asserting GPIO57 low", sleep_shown as u8, lights_cleared as u8, services_quiet as u8);
+            } else {
+                info!("power: Sleep >=1500ms, lights and services quiet; asserting GPIO57 low");
+            }
             power.set_low();
-            normal_cut_pending = false;
         }
         Timer::after_millis(5).await;
     }

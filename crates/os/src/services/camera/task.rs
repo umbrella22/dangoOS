@@ -88,7 +88,7 @@ pub async fn execute(command: Command) -> String {
     }
     let _guard = SERIAL.lock().await;
     if command != Command::Stop
-        && (crate::services::update::ota::device::blocks_standby()
+        && (crate::services::update::boot::device::blocks_standby()
             || crate::services::power::button_task::shutdown_requested())
     {
         return format!("@err {} OTA busy", command.verb());
@@ -140,7 +140,7 @@ async fn start(
     if active.is_some() {
         return Ok(());
     }
-    if crate::services::update::ota::device::blocks_standby() {
+    if crate::services::update::boot::device::blocks_standby() {
         return Err("OTA or boot health window");
     }
     if crate::services::power::button_task::shutdown_requested() {
@@ -247,7 +247,7 @@ pub async fn task(hardware: Hardware) {
         if active.is_some()
             && (!slot::present()
                 || crate::services::power::button_task::shutdown_requested()
-                || crate::services::update::ota::device::active())
+                || crate::services::update::boot::device::active())
         {
             stop(&mut controls, &mut dvp, &mut active, &mut s);
         }

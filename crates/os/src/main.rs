@@ -19,3 +19,7 @@ esp_bootloader_esp_idf::esp_app_desc!(
 async fn main(spawner: embassy_executor::Spawner) {
     os::boot::run(spawner).await;
 }
+
+// Boot and installer accept this main-image contract only.
+#[used]
+static MAIN_CONTRACT: &[u8] = boot_contract::image::MAIN_MARKER;

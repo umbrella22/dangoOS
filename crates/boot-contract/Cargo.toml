@@ -1,0 +1,9 @@
+[package]
+name = "boot-contract"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+sha2 = { version = "0.10", default-features = false }
+md-5 = { version = "0.10", default-features = false }

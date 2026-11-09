@@ -56,7 +56,7 @@ pub async fn task() {
     }
     let mut first = true;
     loop {
-        if !crate::services::update::ota::device::active()
+        if !crate::services::update::boot::device::active()
             && !crate::services::settings::device::busy()
             && READY.is_empty()
             && (first || RELOAD.swap(false, Ordering::AcqRel))

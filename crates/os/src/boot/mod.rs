@@ -36,8 +36,6 @@ use {
 };
 
 pub async fn run(spawner: Spawner) {
-    ota_runtime::record_boot_attempt();
-
     console::install_logger();
     crashlog::report_last_boot();
 
@@ -105,7 +103,7 @@ pub async fn run(spawner: Spawner) {
     // The console comes up first so that later boot steps can be seen. After
     // a panic, wait (bounded) for the host so the record is read before the
     // same step can fail again.
-    services.spawn(usb_task(peripherals.USB_HS, flash).unwrap());
+    spawner.spawn(usb_task(peripherals.USB_HS).unwrap());
     // Main I2C0: CST9220 at 0x5A (SDA=56, SCL=3, 400 kHz), async.
     let i2c = I2c::new(
         peripherals.I2C0,
@@ -120,7 +118,7 @@ pub async fn run(spawner: Spawner) {
     spawner.spawn(crate::services::power::battery_task::task().unwrap());
     info!("shared I2C0 installed (async, CST9220 @0x5A)");
     if !crate::services::power::button_task::low_battery_requested() {
-        ota_runtime::early_boot();
+        boot_runtime::early_boot();
     }
 
     let (network, network_runner) = crate::platform::drivers::radio::wifi::network();
@@ -132,6 +130,7 @@ pub async fn run(spawner: Spawner) {
     services.spawn(crate::services::settings::device::task().unwrap());
     services.spawn(crate::services::settings::device::preferences_task().unwrap());
     spawner.spawn(crate::services::update::task::task(network).unwrap());
+    spawner.spawn(crate::services::voice::device::task(network).unwrap());
     services.spawn(crate::companion::skins::device::task().unwrap());
     services.spawn(crate::apps::device::scan_task().unwrap());
     // Dedicated SPI3 + DMA1. Enable QE over SIO before claiming all four data pins.
@@ -145,6 +144,9 @@ pub async fn run(spawner: Spawner) {
         peripherals.GPIO24,
         peripherals.GPIO25,
     );
+    // Both devices and the reserve gate are ready. Mount concurrently with
+    // screen/input startup; USB was already spawned for diagnostics.
+    services.spawn(mount_storage(flash).unwrap());
     // WS2812 retains its last colour across an MCU reset. Clear it before
     // slow panel/storage work or the bounded post-panic USB wait. This only
     // runs after firmware entry; ROM download mode cannot execute this clear.
@@ -341,8 +343,8 @@ pub async fn run(spawner: Spawner) {
 
 /// Mount `/system` and `/data` once the console is up (the UI task scans the
 /// apps when this is done).
+#[embassy_executor::task]
 async fn mount_storage(flash: esp_hal::peripherals::FLASH<'static>) {
-    embassy_time::Timer::after_millis(1500).await;
     if !crate::services::power::battery_task::wait_boot().await {
         crate::platform::storage::nor::mark_ready();
         return;
@@ -372,13 +374,10 @@ macro_rules! make_static {
     }};
 }
 
-/// USB-OTG HS CDC-ACM console on the USB-C port (logs out, app push in), and
-/// the flash file systems once the console is up.
+/// Keep USB control and log delivery preemptible during NAND/codec work.
+/// Command parsing retains its existing services-thread VFS ownership.
 #[embassy_executor::task]
-async fn usb_task(
-    usb_hs: esp_hal::peripherals::USB_HS<'static>,
-    flash: esp_hal::peripherals::FLASH<'static>,
-) {
+async fn usb_task(usb_hs: esp_hal::peripherals::USB_HS<'static>) {
     // The board does not expose USB-Serial-JTAG on that connector, so this
     // is the only log path.
     let usb = Usb::new_hs(usb_hs);
@@ -420,12 +419,10 @@ async fn usb_task(
     #[cfg(feature = "embedscope")]
     let scope_class = CdcAcmClass::new(&mut builder, scope_state, 512);
     let mut usb_device = builder.build();
-    let storage = mount_storage(flash);
     #[cfg(feature = "embedscope")]
-    let background =
-        embassy_futures::join::join(storage, crate::embedscope::transport::run(scope_class));
+    let background = crate::embedscope::transport::run(scope_class);
     #[cfg(not(feature = "embedscope"))]
-    let background = storage;
+    let background = core::future::pending::<()>();
 
     info!("USB-OTG HS CDC console starting (512-byte packets, app push)");
     join4(
@@ -444,6 +441,6 @@ use crate::platform::runtime::executors::services as service_executor;
 #[cfg(feature = "dual-core-ui")]
 use crate::platform::runtime::executors::ui as ui_executor;
 use crate::platform::runtime::resident_budget;
-use crate::services::update::ota::device as ota_runtime;
+use crate::services::update::boot::device as boot_runtime;
 
 pub(crate) mod storage;
