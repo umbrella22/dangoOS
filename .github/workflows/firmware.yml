@@ -33,7 +33,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y build-essential libclang-18-dev pkg-config
-      - name: Install pinned Rust toolchain
+      - name: Install Rust stable toolchain
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
           rustup toolchain install "$version" --profile minimal --component rustfmt --target riscv32imafc-unknown-none-elf
