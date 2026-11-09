@@ -16,7 +16,7 @@
     scripts/device/console.py nand-status | nand-format
     scripts/device/console.py wifi-status | wifi-on | wifi-scan | wifi-disconnect | wifi-off
     scripts/device/console.py wifi-connect <SSID>  # WPA2, local password prompt
-    scripts/device/console.py bt-status | bt-on | bt-off
+    scripts/device/console.py bt-status | bt-on | bt-off | bt-restart
     scripts/device/console.py audio-status | audio-stop
     scripts/device/console.py audio-volume <0..100> | audio-mute <0|1>
     scripts/device/console.py audio-play </data/file.wav>
@@ -475,7 +475,7 @@ def main():
     camera = ("camera-status", "camera-start", "camera-stop", "camera-capture")
     audio = ("audio-status", "audio-stop", "audio-play", "audio-record", "audio-volume", "audio-mute")
     voice = ("voice-status", "voice-toggle", "voice-cancel", "voice-reload", "voice-config-push", "voice-font-push", "voice-ask", "voice-read", "voice-page")
-    wireless = ("wifi-status", "wifi-on", "wifi-scan", "wifi-connect", "wifi-disconnect", "wifi-off", "wifi-saved", "wifi-saved-connect", "wifi-forget", "wifi-auto", "bt-status", "bt-on", "bt-off")
+    wireless = ("wifi-status", "wifi-on", "wifi-scan", "wifi-connect", "wifi-disconnect", "wifi-off", "wifi-saved", "wifi-saved-connect", "wifi-forget", "wifi-auto", "bt-status", "bt-on", "bt-off", "bt-restart")
     updates = ("update-status", "update-check", "update-install", "update-cancel", "update-url")
     updates += ("update-proxy",)
     ap.add_argument("action", choices=["bundle-push", "fonts-push", "fonts-status", "push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "recovery", "boot-status", "nand-info", "nand-status", "nand-format", "power-status", "screen-off", "screen-on", *wireless, *camera, *updates, *audio, *voice])

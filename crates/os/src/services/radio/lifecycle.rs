@@ -6,6 +6,23 @@ use core::sync::atomic::{AtomicU8, Ordering};
 /// the caller, never the still-running native operation or its controller.
 pub const HOST_OPERATION_TIMEOUT_MS: u64 = 60_000;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BluetoothAction {
+    On,
+    Off,
+    Restart,
+}
+
+impl BluetoothAction {
+    pub const fn verb(self) -> &'static str {
+        match self {
+            Self::On => "bt-on",
+            Self::Off => "bt-off",
+            Self::Restart => "bt-restart",
+        }
+    }
+}
+
 pub struct HostOperation {
     since_ms: u64,
     replied: bool,

@@ -240,7 +240,7 @@ impl Session {
             (
                 "wifi-status" | "wifi-on" | "wifi-scan" | "wifi-connect" | "wifi-disconnect"
                 | "wifi-off" | "wifi-saved" | "wifi-saved-connect" | "wifi-forget" | "wifi-auto"
-                | "bt-status" | "bt-on" | "bt-off",
+                | "bt-status" | "bt-on" | "bt-off" | "bt-restart",
                 _,
             ) => {
                 let result = crate::services::radio::Command::parse(verb, &args);

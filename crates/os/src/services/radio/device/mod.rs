@@ -28,8 +28,9 @@ pub async fn execute(command: Command) -> String {
         return "@err wireless voice shutdown pending".into();
     }
     match command {
-        Command::BtOn => classic::execute(true).await,
-        Command::BtOff => classic::execute(false).await,
+        Command::BtOn => classic::execute(super::lifecycle::BluetoothAction::On).await,
+        Command::BtOff => classic::execute(super::lifecycle::BluetoothAction::Off).await,
+        Command::BtRestart => classic::execute(super::lifecycle::BluetoothAction::Restart).await,
         _ => wifi::execute(command).await,
     }
 }
@@ -41,7 +42,7 @@ pub async fn quiesce() -> bool {
         return false;
     }
     let wifi = wifi::execute(Command::WifiSuspend).await;
-    let bluetooth = classic::execute(false).await;
+    let bluetooth = classic::execute(super::lifecycle::BluetoothAction::Off).await;
     let audio = crate::services::audio::task::quiesce().await;
     wifi.starts_with("@ok") && bluetooth.starts_with("@ok") && audio
 }

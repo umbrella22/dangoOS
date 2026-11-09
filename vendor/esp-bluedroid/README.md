@@ -29,6 +29,15 @@ transport, lifecycle, codec and filesystem ownership boundaries remain local
 so an upstream host/controller implementation can replace them without changing
 the PCM service, settings or applications.
 
+The lifecycle worker has its own lazily allocated 8 KiB Internal stack; it never
+runs on the filesystem executor. Host task creation returns an allocation error
+instead of panicking. BTU shutdown skips protocol teardown if its worker failed
+before core initialization. After a recoverable failure, the radio owner releases
+the fully stopped host/controller and retries automatically with 1 to 30 second
+backoff while Bluetooth is desired on. Explicit off cancels retries. A native
+operation that has not returned retains its resources and cannot be forcefully
+replaced; its caller deadline releases the UI without cancelling C objects.
+
 The shim enables `CONFIG_BT_BLUEDROID_ESP_COEX_VSC`. Upstream BTA sends A2DP
 streaming start/stop through the Espressif coexistence HCI command so the
 controller can coordinate airtime with Wi-Fi. Host and UI core affinity does

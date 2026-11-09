@@ -405,6 +405,21 @@ fn update_allows_passive_power_status_without_unlocking_mutations() {
 }
 
 #[test]
+fn bluetooth_restart_uses_radio_ownership_and_obeys_update_exclusion() {
+    let mut v = Vfs::new();
+    let mut session = Session::new();
+    assert_eq!(
+        run(&mut v, &mut session, b"@mosaico bt-restart\n", 1),
+        [Effect::Radio(crate::services::radio::Command::BtRestart)]
+    );
+    session.set_update_active(true);
+    assert_eq!(
+        run(&mut v, &mut session, b"@mosaico bt-restart\n", 1),
+        [Effect::Reply("@err update busy".into())]
+    );
+}
+
+#[test]
 fn photo_delivery_atomically_replaces_only_the_selected_album_file() {
     for chunk in [1, 7, 64, 1024] {
         let mut v = vfs();

@@ -61,7 +61,10 @@ pub async fn run(spawner: Spawner) {
     // and the boot stack top; both thread mode and interrupt executors use it.
     // General allocations prefer PSRAM, while DMA/controller buffers explicitly
     // request Internal capability from this heap plus the reclaimed region.
-    esp_alloc::heap_allocator!(size: 160 * 1024);
+    // Native Bluetooth needs three Internal stacks in addition to its controller
+    // and isolated lifecycle worker. Transfer 16 KiB from the linker main stack
+    // to this heap; the resource gate still requires at least 32 KiB main stack.
+    esp_alloc::heap_allocator!(size: 176 * 1024);
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 64 * 1024);
     #[cfg(feature = "embedscope")]
     crate::embedscope::init();

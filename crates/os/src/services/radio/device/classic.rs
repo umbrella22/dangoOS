@@ -1,6 +1,6 @@
 //! BR/EDR audio service. A native worker owns blocking Bluedroid lifecycle calls;
 //! this task keeps pumping HCI until every host thread has acknowledged stop.
-use crate::services::radio::lifecycle::HostOperation;
+use crate::services::radio::lifecycle::{BluetoothAction, HostOperation};
 use crate::services::radio::BluetoothState;
 use alloc::{collections::VecDeque, format, string::String, vec::Vec};
 use core::{
@@ -34,13 +34,15 @@ async fn pause_ui() -> Result<Pause<'static>, &'static str> {
 }
 static READY: AtomicBool = AtomicBool::new(false);
 static PENDING: AtomicBool = AtomicBool::new(false);
+static DESIRED: AtomicBool = AtomicBool::new(false);
+static RECOVERIES: AtomicU32 = AtomicU32::new(0);
 static STATE: AtomicU8 = AtomicU8::new(0);
 static CONNECTIONS: AtomicU32 = AtomicU32::new(0);
 static RX: AtomicU32 = AtomicU32::new(0);
 static TX: AtomicU32 = AtomicU32::new(0);
 static AUTH: AtomicU32 = AtomicU32::new(0);
 static TRANSPORT_ERROR: AtomicBool = AtomicBool::new(false);
-static REQUEST: Channel<CriticalSectionRawMutex, bool, 1> = Channel::new();
+static REQUEST: Channel<CriticalSectionRawMutex, BluetoothAction, 1> = Channel::new();
 static DONE: Signal<CriticalSectionRawMutex, String> = Signal::new();
 static HCI: Mutex<CriticalSectionRawMutex, RefCell<VecDeque<Vec<u8>>>> =
     Mutex::new(RefCell::new(VecDeque::new()));
@@ -66,7 +68,10 @@ pub fn status() -> String {
     // Static profile/name information is returned by bt-on. Keep this record
     // short enough for full counters and the caller's internal_free field.
     format!(
-        "@ok bt-status state={} connections={} hci_rx={} hci_tx={} auth={}",
+        "@bt-recovery desired={} completed={} native_pending={}\n@ok bt-status state={} connections={} hci_rx={} hci_tx={} auth={}",
+        DESIRED.load(Ordering::Acquire) as u8,
+        RECOVERIES.load(Ordering::Relaxed),
+        HOST_PENDING.load(Ordering::Acquire) as u8,
         state().name(),
         CONNECTIONS.load(Ordering::Relaxed),
         RX.load(Ordering::Relaxed),
@@ -74,14 +79,19 @@ pub fn status() -> String {
         AUTH.load(Ordering::Relaxed)
     )
 }
-pub async fn execute(on: bool) -> String {
+pub async fn execute(action: BluetoothAction) -> String {
     if !READY.load(Ordering::Acquire) {
         return "@err bt service starting".into();
+    }
+    // Even when a native call is still completing, an explicit off cancels
+    // automatic recovery. It never cancels/frees the native operation itself.
+    if action == BluetoothAction::Off {
+        DESIRED.store(false, Ordering::Release);
     }
     if HOST_PENDING.load(Ordering::Acquire) {
         return "@err bt native operation still pending".into();
     }
-    if on
+    if action == BluetoothAction::On
         && matches!(
             state(),
             BluetoothState::Discoverable | BluetoothState::Connected | BluetoothState::Streaming
@@ -89,10 +99,10 @@ pub async fn execute(on: bool) -> String {
     {
         return "@ok bt-on already active".into();
     }
-    if !on && state() == BluetoothState::Off {
+    if action == BluetoothAction::Off && state() == BluetoothState::Off {
         return "@ok bt-off state=off".into();
     }
-    if on && crate::services::audio::task::local_busy() {
+    if action != BluetoothAction::Off && crate::services::audio::task::local_busy() {
         return "@err bt local audio busy".into();
     }
     if PENDING.swap(true, Ordering::AcqRel) {
@@ -105,11 +115,12 @@ pub async fn execute(on: bool) -> String {
         }
     }
     let _pending = Pending;
+    DESIRED.store(action != BluetoothAction::Off, Ordering::Release);
     DONE.reset();
-    REQUEST.send(on).await;
+    REQUEST.send(action).await;
     DONE.wait().await
 }
-// Blocking lifecycle calls run on the preemptible services thread. HCI keeps
+// Blocking lifecycle calls run on their own preemptible thread. HCI keeps
 // running on the priority-1 Core0 executor while these calls sleep/wait.
 #[embassy_executor::task]
 pub async fn host_task() {
@@ -144,6 +155,13 @@ fn host_op(op: u8) {
     HOST_DONE.store(false, Ordering::Release);
     OP.store(op, Ordering::Release);
 }
+fn startup_reply(request: Option<BluetoothAction>, reply: String) {
+    if request.is_some() {
+        DONE.signal(reply);
+    } else {
+        log::warn!("classic: automatic recovery {reply}");
+    }
+}
 #[embassy_executor::task]
 pub async fn task(mut device: esp_hal::peripherals::BT<'static>) {
     if !crate::services::power::battery_task::wait_boot().await {
@@ -151,29 +169,78 @@ pub async fn task(mut device: esp_hal::peripherals::BT<'static>) {
     }
     crate::platform::drivers::radio::classic::init_adapters();
     READY.store(true, Ordering::Release);
+    let mut next = None;
+    let mut retry_start = false;
+    let mut retry = crate::services::radio::Retry::new();
     loop {
-        if !REQUEST.receive().await {
+        // A restart remains one caller-owned operation across complete host
+        // and controller teardown. No other request can interleave its halves.
+        let startup_request = if let Some(action) = next.take() {
+            Some(action)
+        } else {
+            loop {
+                if let Ok(action) = REQUEST.try_receive() {
+                    break Some(action);
+                }
+                if retry_start && DESIRED.load(Ordering::Acquire) {
+                    if retry.due(Instant::now().as_millis()) {
+                        break None;
+                    }
+                    Timer::after_millis(50).await;
+                } else {
+                    break Some(REQUEST.receive().await);
+                }
+            }
+        };
+        let action = startup_request.unwrap_or(BluetoothAction::On);
+        if action == BluetoothAction::Off {
             STATE.store(0, Ordering::Release);
+            retry_start = false;
+            retry.reset();
             DONE.signal("@ok bt-off state=off".into());
             continue;
         }
         if crate::services::power::button_task::shutdown_requested() {
-            DONE.signal("@err bt shutdown pending".into());
+            DESIRED.store(false, Ordering::Release);
+            startup_reply(startup_request, "@err bt shutdown pending".into());
             continue;
         }
-        if !crate::platform::storage::nor::ready() {
-            DONE.signal("@err bt storage starting".into());
+        // Back off between failed recoveries, yielding memory and CPU to the
+        // rest of the system. There is no total retry limit while desired on.
+        retry_start = true;
+        STATE.store(1, Ordering::Release);
+        if !crate::platform::storage::nor::ready()
+            || crate::services::update::boot::device::active()
+            || crate::services::update::task::busy()
+            || crate::services::audio::task::local_busy()
+        {
+            retry.failed(Instant::now().as_millis());
+            startup_reply(
+                startup_request,
+                "@err bt resources busy; recovery deferred".into(),
+            );
+            continue;
+        }
+        if let Err(error) = crate::platform::runtime::executors::bluetooth::start() {
+            retry.failed(Instant::now().as_millis());
+            STATE.store(5, Ordering::Release);
+            startup_reply(
+                startup_request,
+                format!("@err bt {error}; recovery deferred"),
+            );
             continue;
         }
         let mut lifecycle = match pause_ui().await {
             Ok(pause) => Some(pause),
             Err(error) => {
-                DONE.signal(format!("@err bt {error}"));
+                retry.failed(Instant::now().as_millis());
+                startup_reply(startup_request, format!("@err bt {error}"));
                 continue;
             }
         };
         if crate::services::power::button_task::shutdown_requested() {
-            DONE.signal("@err bt shutdown pending".into());
+            DESIRED.store(false, Ordering::Release);
+            startup_reply(startup_request, "@err bt shutdown pending".into());
             continue;
         }
         STATE.store(1, Ordering::Release);
@@ -184,8 +251,9 @@ pub async fn task(mut device: esp_hal::peripherals::BT<'static>) {
             match crate::platform::drivers::radio::classic::controller(device.reborrow()) {
                 Ok(c) => c,
                 Err(e) => {
-                    STATE.store(5, Ordering::Release);
-                    DONE.signal(format!("@err bt {e}"));
+                    retry.failed(Instant::now().as_millis());
+                    STATE.store(1, Ordering::Release);
+                    startup_reply(startup_request, format!("@err bt {e}"));
                     continue;
                 }
             };
@@ -195,6 +263,8 @@ pub async fn task(mut device: esp_hal::peripherals::BT<'static>) {
         let mut host_operation = Some(HostOperation::new(Instant::now().as_millis()));
         let mut starting = true;
         let mut stopping = false;
+        let mut stop_request = None;
+        let mut teardown_reply = None;
         let mut fault = None;
         let mut buffer = alloc::vec![0; 1030];
 
@@ -242,42 +312,78 @@ pub async fn task(mut device: esp_hal::peripherals::BT<'static>) {
                 if starting {
                     starting = false;
                     if result == 0 {
+                        retry_start = false;
+                        retry.reset();
                         STATE.store(if reply { 2 } else { 5 }, Ordering::Release);
                         drop(lifecycle.take());
                         if reply {
-                            DONE.signal(
-                                "@ok bt-on name=ESP-Mosaico_Audio profile=a2dp-sink codec=sbc"
-                                    .into(),
+                            if startup_request.is_none() {
+                                RECOVERIES.fetch_add(1, Ordering::Relaxed);
+                            }
+                            startup_reply(
+                                startup_request,
+                                format!(
+                                    "@ok {} name=ESP-Mosaico_Audio profile=a2dp-sink codec=sbc",
+                                    action.verb()
+                                ),
                             );
+                        } else {
+                            fault = Some("late host start");
                         }
                     } else {
                         STATE.store(5, Ordering::Release);
-                        if reply {
-                            DONE.signal(format!("@err bt host start code={result}"));
-                        }
                         if unsafe { esp_bluedroid::mosaico_classic_host_uninitialized() } {
+                            if reply {
+                                if startup_request.is_some() {
+                                    teardown_reply = Some(format!(
+                                        "@err bt host start code={result}; recovery scheduled"
+                                    ));
+                                } else {
+                                    log::warn!("classic: automatic start failed code={result}");
+                                }
+                            }
                             break;
                         }
+                        if reply {
+                            startup_reply(
+                                startup_request,
+                                format!("@err bt host start code={result}"),
+                            );
+                        }
+                        fault = Some("host start failed");
                         drop(lifecycle.take());
                     }
                 } else if stopping {
+                    let request = stop_request.take();
                     if result == 0 && unsafe { esp_bluedroid::mosaico_classic_host_uninitialized() }
                     {
                         let audio = crate::services::audio::task::quiesce().await;
                         STATE.store(if audio { 0 } else { 5 }, Ordering::Release);
-                        if reply {
-                            DONE.signal(if audio {
-                                format!("@ok bt-off state=off fault={}", fault.unwrap_or("none"))
+                        if reply && request.is_some() {
+                            if audio && request == Some(BluetoothAction::Restart) {
+                                if DESIRED.load(Ordering::Acquire) {
+                                    next = Some(BluetoothAction::Restart);
+                                } else {
+                                    teardown_reply = Some("@ok bt-off state=off".into());
+                                }
                             } else {
-                                "@err bt codec stop failed".into()
-                            });
+                                teardown_reply = Some(if audio {
+                                    format!(
+                                        "@ok bt-off state=off fault={}",
+                                        fault.unwrap_or("none")
+                                    )
+                                } else {
+                                    "@err bt codec stop failed".into()
+                                });
+                            }
                         }
                         break;
                     }
                     stopping = false;
+                    retry.failed(Instant::now().as_millis());
                     drop(lifecycle.take());
                     STATE.store(5, Ordering::Release);
-                    if reply {
+                    if reply && request.is_some() {
                         DONE.signal(format!(
                             "@err bt host stop code={result}; controller retained"
                         ));
@@ -293,15 +399,21 @@ pub async fn task(mut device: esp_hal::peripherals::BT<'static>) {
                 // and HCI pump, refuse new native operations, and release the
                 // UI pause. A stuck native worker can still require RESET.
                 drop(lifecycle.take());
-                DONE.signal("@err bt host lifecycle timeout; controller retained".into());
+                if (starting && startup_request.is_some()) || stop_request.is_some() {
+                    DONE.signal("@err bt host lifecycle timeout; controller retained".into());
+                }
+                stop_request = None;
                 log::warn!("classic: host lifecycle timeout; native operation still pending");
             }
             if TRANSPORT_ERROR.swap(false, Ordering::AcqRel) {
                 fault = Some("HCI queue overflow");
             }
+            if !DESIRED.load(Ordering::Acquire) {
+                fault = Some("disabled");
+            }
             if !starting && !stopping {
-                if let Ok(on) = REQUEST.try_receive() {
-                    if on {
+                if let Ok(request) = REQUEST.try_receive() {
+                    if request == BluetoothAction::On {
                         DONE.signal("@err bt host requires off before retry".into());
                     } else {
                         match pause_ui().await {
@@ -312,11 +424,13 @@ pub async fn task(mut device: esp_hal::peripherals::BT<'static>) {
                             }
                         }
                         crate::services::audio::task::bluetooth_active(false);
+                        stop_request = Some(request);
+                        STATE.store(1, Ordering::Release);
                         host_op(2);
                         host_operation = Some(HostOperation::new(Instant::now().as_millis()));
                         stopping = true;
                     }
-                } else if fault.is_some() {
+                } else if fault.is_some() && retry.due(Instant::now().as_millis()) {
                     match pause_ui().await {
                         Ok(pause) => lifecycle = Some(pause),
                         Err(_) => {
@@ -325,6 +439,7 @@ pub async fn task(mut device: esp_hal::peripherals::BT<'static>) {
                         }
                     }
                     crate::services::audio::task::bluetooth_active(false);
+                    stop_request = None;
                     host_op(2);
                     host_operation = Some(HostOperation::new(Instant::now().as_millis()));
                     stopping = true;
@@ -336,6 +451,14 @@ pub async fn task(mut device: esp_hal::peripherals::BT<'static>) {
         drop(controller);
         drop(lifecycle);
         HCI.lock(|q| q.borrow_mut().clear());
+        if DESIRED.load(Ordering::Acquire) && next.is_none() {
+            retry_start = true;
+            retry.failed(Instant::now().as_millis());
+            STATE.store(1, Ordering::Release);
+        }
+        if let Some(reply) = teardown_reply {
+            DONE.signal(reply);
+        }
     }
 }
 #[unsafe(no_mangle)]

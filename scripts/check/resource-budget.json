@@ -7,7 +7,7 @@
   "minimum_slot_headroom_bytes": 524288,
   "maximum_growth_bytes": {
     "image_bytes": 65536,
-    "internal_allocated_sections_bytes": 4096,
+    "internal_allocated_sections_bytes": 20480,
     "rtc_allocated_sections_bytes": 0
   },
   "baseline": {

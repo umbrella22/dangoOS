@@ -163,6 +163,7 @@ pub enum Command {
     BtStatus,
     BtOn,
     BtOff,
+    BtRestart,
 }
 impl Command {
     pub fn parse(verb: &str, args: &[&str]) -> Result<Self, &'static str> {
@@ -180,6 +181,7 @@ impl Command {
             ("bt-status", []) => Self::BtStatus,
             ("bt-on", []) => Self::BtOn,
             ("bt-off", []) => Self::BtOff,
+            ("bt-restart", []) => Self::BtRestart,
             ("wifi-connect", [ssid, password]) => {
                 let ssid = unhex(ssid, 32)?;
                 let password = unhex(password, 63)?;
@@ -211,6 +213,7 @@ impl Command {
             Self::BtStatus => "bt-status",
             Self::BtOn => "bt-on",
             Self::BtOff => "bt-off",
+            Self::BtRestart => "bt-restart",
         }
     }
 }

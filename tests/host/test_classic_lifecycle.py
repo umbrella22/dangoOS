@@ -47,3 +47,22 @@ class ClassicLifecycleTest(unittest.TestCase):
                     self.assertTrue(changed[name]["reason"])
                     digest = changed[name]["local_sha256"]
                 self.assertEqual(hashlib.sha256((VENDOR / "upstream" / name).read_bytes()).hexdigest(), digest)
+
+    @unittest.skipUnless(shutil.which("patch"), "patch utility required")
+    def test_vendor_patch_reverses_and_replays_recorded_bytes(self):
+        patches = json.loads((VENDOR / "PATCHES.json").read_text())
+        with tempfile.TemporaryDirectory(prefix="mosaico-host-patch-") as tmp:
+            root = pathlib.Path(tmp)
+            for item in patches["files"]:
+                path = root / item["path"]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes((VENDOR / "upstream" / item["path"]).read_bytes())
+            for reverse, digest_key in [(True, "upstream_sha256"), (False, "local_sha256")]:
+                command = ["patch", "--batch", "-p1", "-i", str(VENDOR / patches["patch"])]
+                if reverse:
+                    command.append("--reverse")
+                result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                for item in patches["files"]:
+                    self.assertEqual(hashlib.sha256((root / item["path"]).read_bytes()).hexdigest(),
+                                     item[digest_key], item["path"])

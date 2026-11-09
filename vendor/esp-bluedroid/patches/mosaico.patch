@@ -167,3 +167,17 @@
  
      return status;
  }
+--- a/host/bluedroid/stack/btu/btu_task.c
++++ b/host/bluedroid/stack/btu/btu_task.c
+@@ -542,0 +543,2 @@
++static bool btu_task_initialized;
++
+@@ -549,0 +552 @@
++    btu_task_initialized = true;
+@@ -572,0 +576,6 @@
++    /* BTU_StartUp also calls this after thread/queue allocation failure.
++     * In that case no core protocol state exists to tear down. */
++    if (!btu_task_initialized) {
++        return;
++    }
++    btu_task_initialized = false;

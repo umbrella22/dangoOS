@@ -1,10 +1,11 @@
 //! Native scheduler adapters. Every potentially waiting operation polls without
 //! holding a critical section, then yields to the existing esp-rtos scheduler.
-use alloc::{boxed::Box, ffi::CString, vec::Vec};
+use alloc::{boxed::Box, ffi::CString, sync::Arc, vec::Vec};
 use core::{
     cell::RefCell,
     ffi::{c_char, c_void, CStr},
     ptr::NonNull,
+    sync::atomic::{AtomicPtr, Ordering},
 };
 use critical_section::Mutex;
 use esp_radio_rtos_driver as rtos;
@@ -39,22 +40,45 @@ unsafe extern "C" fn mosaico_bt_task_create(
     _core: i32,
 ) -> i32 {
     unsafe {
+        if !out.is_null() {
+            out.write(core::ptr::null_mut());
+        }
         let name = CStr::from_ptr(name).to_string_lossy();
-        let task = rtos::task_create(
-            &name,
-            f,
-            arg,
-            prio.min(rtos::max_task_priority()),
-            Some(0),
-            stack as usize,
-        );
-
+        // FreeRTOS task creation may fail. The radio driver's task_create uses
+        // ThreadSpawner::new, which panics instead of honouring that contract.
+        // Use the fallible spawner so Bluedroid can unwind a partial init.
+        let Ok(spawner) = esp_rtos::thread::ThreadSpawner::try_new(stack as usize) else {
+            log::warn!("classic: task {name} stack allocation failed");
+            return 0;
+        };
         let owned = CString::new(name.as_bytes()).unwrap();
-        critical_section::with(|cs| {
-            NAMES
-                .borrow_ref_mut(cs)
-                .push((task.as_ptr() as usize, owned))
-        });
+        let started = Arc::new(AtomicPtr::<()>::new(core::ptr::null_mut()));
+        let child = Arc::clone(&started);
+        let arg = arg as usize;
+        spawner
+            .with_name("bluedroid")
+            .with_priority(prio.min(rtos::max_task_priority()) as usize)
+            .with_pinned_to(esp_hal::system::Cpu::ProCpu)
+            .spawn(move || {
+                let task = rtos::current_task();
+                critical_section::with(|cs| {
+                    NAMES
+                        .borrow_ref_mut(cs)
+                        .push((task.as_ptr() as usize, owned));
+                });
+                child.store(task.as_ptr(), Ordering::Release);
+                // vTaskDelete does not unwind Rust locals. Transfer/drop all
+                // owned startup data before entering the native thread body.
+                drop(child);
+                f(arg as *mut c_void);
+            })
+            .detach();
+        let task = loop {
+            if let Some(task) = NonNull::new(started.load(Ordering::Acquire)) {
+                break task;
+            }
+            rtos::usleep(1000);
+        };
         if !out.is_null() {
             out.write(task.as_ptr().cast());
         }

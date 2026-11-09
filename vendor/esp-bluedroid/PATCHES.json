@@ -49,6 +49,12 @@
       "upstream_sha256": "1f83d24227c76891155ba0f90b24750c89f0dd18f88a4d0182ab1471146ddba6",
       "local_sha256": "6d93e25e10c3cc08006e20f79ba7f9468c49e454557f8342c06e26ff0d246d2e",
       "reason": "Publish the dequeue semaphore credit while the list mutex is held so an HCI consumer cannot self-repost on an uncredited list item and starve its producer."
+    },
+    {
+      "path": "host/bluedroid/stack/btu/btu_task.c",
+      "upstream_sha256": "c782611ebfadb1df42bc655e3827c9ff60edaaab24bf6451322f176a941cecc8",
+      "local_sha256": "89188c5b1a0acde04ce173c7e3012b2128cf563ffa323e49bece97cb57621ffd",
+      "reason": "Skip BTU protocol teardown when its worker/queue allocation failed before core initialization; keep repeated cleanup safe for automatic recovery."
     }
   ]
 }

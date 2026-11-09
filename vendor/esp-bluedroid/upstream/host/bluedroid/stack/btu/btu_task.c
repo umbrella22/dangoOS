@@ -540,6 +540,8 @@ void btu_c2h_credit_pause_if_congested(void)
 }
 #endif
 
+static bool btu_task_initialized;
+
 void btu_task_start_up(void *param)
 {
     UNUSED(param);
@@ -547,6 +549,7 @@ void btu_task_start_up(void *param)
        (BTU, BTM, L2CAP, and SDP)
      */
     btu_init_core();
+    btu_task_initialized = true;
 
     /* Initialize any optional stack components */
     if (BTE_InitStack() != BT_STATUS_SUCCESS) {
@@ -570,6 +573,12 @@ void btu_task_start_up(void *param)
 
 void btu_task_shut_down(void)
 {
+    /* BTU_StartUp also calls this after thread/queue allocation failure.
+     * In that case no core protocol state exists to tear down. */
+    if (!btu_task_initialized) {
+        return;
+    }
+    btu_task_initialized = false;
 #if (defined(BTA_INCLUDED) && BTA_INCLUDED == TRUE)
     bta_sys_free();
 #endif

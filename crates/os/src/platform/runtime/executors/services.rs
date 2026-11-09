@@ -7,8 +7,8 @@ use embassy_sync::{
 };
 use esp_hal::system::Cpu;
 
-// Replaces the 8 KiB bt_lifecycle thread as well as hosting storage/encoding.
-// Net internal stack cost is 8 KiB. The UI retains its own 40 KiB on Core1.
+// Storage/encoding retain their own 16 KiB stack. The lazy Bluetooth lifecycle
+// worker is separate, so a vendor wait cannot prevent filesystem progress.
 #[cfg(not(feature = "embedscope"))]
 pub const STACK_BYTES: usize = 16 * 1024;
 // The optional second CDC adds framing and USB calls to this same thread.
@@ -90,7 +90,6 @@ pub async fn start() -> SendSpawner {
         .spawn(|| {
             let executor = Box::leak(Box::new(esp_rtos::embassy::Executor::new()));
             executor.run(|spawner| {
-                spawner.spawn(crate::services::radio::device::classic::host_task().unwrap());
                 spawner.spawn(jobs().unwrap());
                 READY.signal(spawner.make_send());
                 log::info!(
