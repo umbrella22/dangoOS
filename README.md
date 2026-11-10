@@ -52,7 +52,7 @@
 
 支持 **ESP-Mosaico V1.2 / ESP32-S31**，配备 480 × 480 AMOLED 触摸屏、16 MiB NOR 与 128 MiB NAND。左槽相机等功能需要对应扩展模块。
 
-当前源码生成 `S31ONE03` 布局的安装包。已有 [Releases](https://github.com/umbrella22/dangoOS/releases) 的布局以各自 manifest 为准；使用包前核对 `SHA256SUMS` 和布局。
+v0.5.0 使用独立 Recovery 与单个 12 MiB 主应用分区，布局为 `S31ONE03`。**v0.4.4 及更早的 A/B 布局需要使用本版 `full.zip` 全量迁移，不能通过旧版无线 OTA 或本版 `main.bin` 迁移。** 使用包前核对 `SHA256SUMS` 和布局。
 
 | 安装包       | 用途                                                                                 |
 | ------------ | ------------------------------------------------------------------------------------ |
@@ -68,7 +68,7 @@ python3 install.py --flash-port ROM_PORT --port RUNTIME_PORT
 
 将 `ROM_PORT` 换成下载模式端口，将 `RUNTIME_PORT` 换成启动后的 USB 端口，例如 `/dev/cu.usbmodem…`、`/dev/ttyACM0` 或 `COM3`。安装器会依次刷入系统、等待启动、安装四套团子与匹配字体。全量刷写覆盖 NOR 系统内容，独立 NAND 中的照片、存档和偏好保留。全新 NAND 需要显式初始化，具体参数见包内 `INSTALL.md`。
 
-已有设备可以直接使用设置中的无线更新。无线更新保留现有团子资源；需要同步新版团子时，在任一发布 ZIP 的解压目录执行：
+已经采用 `S31ONE03` 的设备可以使用设置中的无线更新。无线更新保留现有团子资源；需要同步新版团子时，在任一发布 ZIP 的解压目录执行：
 
 ```sh
 python3 install.py --port RUNTIME_PORT

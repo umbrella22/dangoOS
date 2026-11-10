@@ -208,7 +208,7 @@ Recovery 默认提供只读导出：
 ```sh
 python3 tools/recovery.py --port RECOVERY_PORT info
 python3 tools/recovery.py --port RECOVERY_PORT nor backup-nor.bin
-python3 tools/recovery.py --port RECOVERY_PORT nand backup-nand.bin --raw
+python3 tools/recovery.py --port RECOVERY_PORT nand backup-nand.bin
 ```
 
 ## 应用与团子资源
