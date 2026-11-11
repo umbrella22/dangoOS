@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolate the existing spiral ink in PhotoCraft and add the missing eye frames."""
+"""Match spiral shapes to the approved fox and isolate their animation layers."""
 import argparse
 import hashlib
 import json
@@ -16,12 +16,92 @@ from refine_image26_art import CLI
 from refresh_companion_expressions import IDS, SIZE
 
 
+def reference_eyes(work, rig=False):
+    path = (work / 'components/default/fall.png' if rig else
+            work / 'art/default/confused-device.png')
+    rgb = np.asarray(Image.open(path).convert('RGB')).astype('float32')
+    ink = ((rgb[:, :, 0] > 40) & (rgb[:, :, 0] > rgb[:, :, 1] * 1.7)
+           & (rgb[:, :, 0] > rgb[:, :, 2] * 1.6)).astype('uint8')
+    ink[:245 if rig else 240] = 0
+    ink[292 if rig else 300:] = 0
+    ink[:, :95 if rig else 75] = 0; ink[:, 260 if rig else 280:] = 0
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
+    eyes = sorted([i for i in range(1, count) if 300 < stats[i, 4] < 700],
+                  key=lambda i: stats[i, 0])
+    if len(eyes) != 2:
+        raise ValueError('Expected two approved fox spiral shapes')
+    result = []
+    for i in eyes:
+        mask = (labels == i).astype('uint8') * 255
+        support = cv2.dilate(mask, np.ones((3, 3), np.uint8))
+        skin = cv2.inpaint(rgb.astype('uint8'), support, 3, cv2.INPAINT_TELEA).astype('float32')
+        dark = float(np.percentile(rgb[:, :, 1][mask > 0], 15))
+        alpha = np.clip((skin[:, :, 1] - rgb[:, :, 1]) /
+                        np.maximum(skin[:, :, 1] - dark, 1), 0, 1)
+        alpha[support == 0] = 0
+        x, y, w, h = stats[i, :4]
+        result.append(Image.fromarray((alpha * 255).astype('uint8')).crop(
+            (int(x - 2), int(y - 2), int(x + w + 2), int(y + h + 2))))
+    return result
+
+
+def place_reference_eyes(work, identity, plate, centers, project, rig=False):
+    out = work / 'components' / identity
+    color = (135, 39, 53) if identity == 'eclipse' else (53, 48, 71)
+    commands = [('layer.renameLayer', {'name': 'clean-face-without-old-eyes'})]
+    for n, (alpha, (cx, cy)) in enumerate(zip(reference_eyes(work, rig), centers)):
+        tile = Image.new('RGBA', alpha.size, (*color, 255)); tile.putalpha(alpha)
+        full = Image.new('RGBA', SIZE)
+        full.alpha_composite(tile, (round(cx - alpha.width / 2), round(cy - alpha.height / 2)))
+        path = out / f'{project}-eye-{n}.png'; full.save(path)
+        commands += [
+            ('file.placeEmbedded', {'path': str(path), 'fit': False, 'smartObject': False, 'center': [176, 168]}),
+            ('layer.renameLayer', {'name': f'fox-style-spiral-{n}'}),
+            ('layer.layerMask.fromTransparency', {}),
+        ]
+    records = execute(CLI, plate, commands, out / (project + '.pcraft'))
+    result = out / (project + '.png')
+    subprocess.run([str(CLI), 'convert', str(out / (project + '.pcraft')), str(result)],
+                   check=True, capture_output=True)
+    (out / (project + '-receipt.json')).write_text(json.dumps({
+        'reference': 'default/fall' if rig else 'default/confused',
+        'eye_centers': centers, 'photocraft': records,
+    }, indent=2) + '\n')
+    return result
+
+
+def normalize_spirals(work, identity):
+    out = work / 'components' / identity
+    source = work / 'art' / identity / 'confused-device.png'
+    original = out / 'confused-style-source.png'
+    if not original.exists():
+        original.write_bytes(source.read_bytes())
+    base = Image.open(original).convert('RGB')
+    eyes = spiral_masks(base, identity)
+    erase = cv2.dilate(np.maximum.reduce([mask for mask, _ in eyes]), np.ones((7, 7), np.uint8))
+    plate = out / 'confused-style-clean.png'
+    Image.fromarray(cv2.inpaint(np.asarray(base), erase, 3, cv2.INPAINT_TELEA)).save(plate)
+    # Preserve the face's tilted eye line, with a little more space from the
+    # bangs and slightly closer-set eyes to match the approved proportions.
+    centers = [(x + (w - 1) / 2 + (2 if n == 0 else -2), y + (h - 1) / 2 + 2)
+               for n, (_, (x, y, w, h)) in enumerate(eyes)]
+    result = place_reference_eyes(work, identity, plate, centers, 'confused-style')
+    Image.open(result).convert('RGB').save(source)
+    Image.open(result).save(source.with_name('confused.png'))
+
+
+def rig_spiral_plate(work, identity):
+    out = work / 'components' / identity
+    return place_reference_eyes(work, identity, out / 'rig-clean-face-registered.png',
+                               [(136, 273), (216, 273)], 'rig-dizzy-corrected', rig=True)
+
+
 def spiral_masks(image, identity):
     rgb = np.asarray(image.convert('RGB')).astype('float32')
     if identity == 'eclipse':
         ink = (rgb[:, :, 0] > 60) & (rgb[:, :, 0] > rgb[:, :, 1] * 1.5) & (rgb[:, :, 0] > rgb[:, :, 2] * 1.35)
     elif identity == 'normal':
-        ink = (rgb[:, :, 2] > 80) & (rgb[:, :, 2] > rgb[:, :, 0] * 1.25) & (rgb[:, :, 1] > rgb[:, :, 0] * 1.1)
+        ink = ((rgb[:, :, 2] > 80) & (rgb[:, :, 2] > rgb[:, :, 0] * 1.25) & (rgb[:, :, 1] > rgb[:, :, 0] * 1.1)) | (rgb.max(2) < 125)
     elif identity == 'black-blue':
         ink = rgb.max(2) < 125
     else:
@@ -30,7 +110,7 @@ def spiral_masks(image, identity):
     ink &= (yy > 230) & (yy < 299) & (xx > 90) & (xx < 273)
     count, labels, stats, centers = cv2.connectedComponentsWithStats(ink.astype('uint8'), 8)
     eyes = [i for i in range(1, count)
-            if 30 <= stats[i, 2] <= 50 and 25 <= stats[i, 3] <= 48 and 400 <= stats[i, 4] <= 1000]
+            if 28 <= stats[i, 2] <= 50 and 23 <= stats[i, 3] <= 48 and 280 <= stats[i, 4] <= 1000]
     eyes.sort(key=lambda i: centers[i, 0])
     if len(eyes) != 2:
         raise ValueError(f'{identity}: expected exactly two isolated spiral strokes, found {len(eyes)}')
@@ -38,21 +118,17 @@ def spiral_masks(image, identity):
 
 
 def build_spiral_groups(work, identity):
+    normalize_spirals(work, identity)
     out = work / 'components' / identity
     source = work / 'art' / identity / 'confused-device.png'
-    base = Image.open(source).convert('RGB')
-    eyes = spiral_masks(base, identity)
-    masks = [cv2.dilate(mask, np.ones((3, 3), np.uint8)) for mask, _ in eyes]
-    # Remove just the isolated ink and its antialias fringe. Brows, hair and
-    # mitten paws are outside these masks and must not rotate with the eyes.
-    erase = cv2.dilate(np.maximum.reduce(masks), np.ones((3, 3), np.uint8))
-    clean = cv2.inpaint(np.asarray(base), erase, 3, cv2.INPAINT_TELEA)
     plate = out / 'confused-clean-eyes.png'
-    Image.fromarray(clean).save(plate)
+    plate.write_bytes((out / 'confused-style-clean.png').read_bytes())
     parts = []
     records = []
-    for n, ((_, (x, y, width, height)), mask) in enumerate(zip(eyes, masks)):
-        tile = base.convert('RGBA'); tile.putalpha(Image.fromarray(mask))
+    for n in range(2):
+        tile = Image.open(out / f'confused-style-eye-{n}.png').convert('RGBA')
+        x, y, right, bottom = tile.getbbox()
+        width, height = right - x, bottom - y
         path = out / f'confused-eye-{n}.png'; tile.save(path)
         parts.append({'file': path, 'center': [x + (width - 1) / 2, y + (height - 1) / 2],
                       'box': [x - 4, y - 4, x + width + 4, y + height + 4],
@@ -125,7 +201,11 @@ def main():
         path = work / 'components' / identity / 'manifest.json'
         spec = json.loads(path.read_text())
         spec['poses'].setdefault('confused', {}).update(groups)
+        spec['skin_version'] = '2026-11-11-image26-v3-dizzy'
         path.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + '\n')
+        # Rebuild the fall plates and editable rig with the same approved ink.
+        from build_image26_components import make_rig
+        make_rig(work, identity)
         print(identity, 'PhotoCraft spiral animation complete', flush=True)
 
 

@@ -2,7 +2,6 @@
 """Register animation edits, refine masks and assemble editable v4 rig parts."""
 import argparse
 import json
-import math
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,10 +12,10 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from refresh_companion_expressions import ROOT, IDS, POSES, MODEL, SIZE
 from refine_image26_art import CLI, foreground, bbox
-from refine_articulated_faces import execute, stroke
+from refine_articulated_faces import execute
 from prepare_articulated_art import paw_path, PAWS
 from pack_image26_skins import read_skin
-from refine_dizzy_animation import build_spiral_groups
+from refine_dizzy_animation import build_spiral_groups, rig_spiral_plate
 
 
 def align(source, reference, identity):
@@ -241,20 +240,7 @@ def make_rig(work, identity):
     regions = [(90, 223, 175, 293), (179, 223, 267, 293), (160, 290, 197, 312)]
     spec['face_regions'] = regions
     if identity != 'default':
-        # Match the approved fox's clean spiral-eye language. Drawing on the
-        # completely blank image26 skin plate cannot retain an old lash/iris.
-        ink = '#762334' if identity == 'eclipse' else '#353047'
-        commands = [('layer.renameLayer', {'name': 'clean-face-and-hair'})]
-        for n, (cx, cy) in enumerate([(136, 270), (216, 270)]):
-            spiral = []
-            for t in np.linspace(0, 1, 161):
-                angle = t * math.tau * 2.1
-                radius = 1 + t * 15
-                spiral.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
-            commands += stroke('clean-dizzy-spiral-' + str(n), spiral, ink, 2.5)
-        receipts += execute(CLI, out / 'rig-clean-face-registered.png', commands, out / 'rig-dizzy-corrected.pcraft')
-        subprocess.run([str(CLI), 'convert', str(out / 'rig-dizzy-corrected.pcraft'),
-                        str(out / 'rig-dizzy-corrected.png')], check=True, capture_output=True)
+        rig_spiral_plate(work, identity)
     face_records = []
     for name, pose in [('strain', 'effort'), ('fall', 'dizzy'), ('land', 'weary'), ('blink', 'blink')]:
         source_path = out / ('rig-' + pose + '-registered.png')
