@@ -7,8 +7,8 @@ mod icons;
 pub const WIDTH: usize = 80;
 pub const HEIGHT: usize = 34;
 pub const PIXELS: usize = WIDTH * HEIGHT;
-/// Band origin relative to the character canvas. Leave 14 px between them.
-pub const OFFSET: (i32, i32) = (((super::render::W - WIDTH) / 2) as i32, -48);
+/// Fixed panel position, independent of the character's motion.
+pub const OFFSET: (i32, i32) = (((super::render::VIEW_W - WIDTH) / 2) as i32, 40);
 const MUTED: u16 = 0x7bef;
 const DIM: u16 = 0x2945;
 const CONNECTED: u16 = 0x8f16;

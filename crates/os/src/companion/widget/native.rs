@@ -63,10 +63,10 @@ impl CustomWidget for FoxWidget {
                 lvgl_sys::lv_obj_flag_t_LV_OBJ_FLAG_OVERFLOW_VISIBLE,
             );
             // LVGL clips visible overflow to the parent's extended draw area.
-            lvgl_sys::lv_obj_set_ext_draw_size(canvas.as_ptr(), -status::OFFSET.1);
+            lvgl_sys::lv_obj_set_ext_draw_size(canvas.as_ptr(), (-status::OFFSET.1).max(0));
             set_canvas_buffer(
                 status_canvas,
-                first_ptr.add(fox::PIXELS),
+                first_ptr.add(fox::VIEW_PIXELS),
                 status::WIDTH,
                 status::HEIGHT,
             );
@@ -172,13 +172,13 @@ impl CustomWidget for FoxWidget {
         // synchronous scope runs on the sole LVGL owner, outside C callbacks;
         // no allocator, LVGL or global lock is held when requesting the clock.
         let mut raster = || {
-            let (character, band) = lease.pixels_mut().split_at_mut(fox::PIXELS);
+            let (character, band) = lease.pixels_mut().split_at_mut(fox::VIEW_PIXELS);
             let pose = if self.control.loading() {
-                fox::loading::render(character);
+                fox::loading::render_panel(character);
                 None
             } else {
                 let scene = self.animator.scene(input);
-                self.renderer.render(&scene, character);
+                self.renderer.render_panel(&scene, character);
                 Some(scene.pose)
             };
             if let Some(status) = self.control.radio_status.get() {

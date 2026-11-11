@@ -31,13 +31,13 @@ use core::ptr::NonNull;
 use rs_lvgl::sys as lvgl_sys;
 use rs_lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
 
-use crate::companion::behavior::Expression;
 use crate::companion::behavior::balance::BalanceVisual;
+use crate::companion::behavior::Expression;
 use crate::companion::status;
 use {
-    crate::companion::render as fox, crate::companion::render::FoxAnimator,
-    crate::companion::render::FoxInput, crate::companion::render::FoxPose,
-    crate::companion::render::FoxRenderer, crate::companion::render::entrance,
+    crate::companion::render as fox, crate::companion::render::entrance,
+    crate::companion::render::FoxAnimator, crate::companion::render::FoxInput,
+    crate::companion::render::FoxPose, crate::companion::render::FoxRenderer,
 };
 use {
     crate::services::display::canvas_pool::CanvasPool,
@@ -45,11 +45,11 @@ use {
 };
 
 /// Canvas width in pixels.
-pub const CANVAS_WIDTH: usize = fox::W;
+pub const CANVAS_WIDTH: usize = fox::VIEW_W;
 /// Canvas height in pixels.
-pub const CANVAS_HEIGHT: usize = fox::H;
+pub const CANVAS_HEIGHT: usize = fox::VIEW_H;
 /// Each slot owns both images until LVGL or the panel finishes reading them.
-pub const FRAME_PIXELS: usize = fox::PIXELS + status::PIXELS;
+pub const FRAME_PIXELS: usize = fox::VIEW_PIXELS + status::PIXELS;
 
 /// Minimum interval between rendered frames: 20 fps.
 ///
@@ -112,7 +112,11 @@ impl Default for FoxVisual {
 }
 
 fn finite_or(value: f32, fallback: f32) -> f32 {
-    if value.is_finite() { value } else { fallback }
+    if value.is_finite() {
+        value
+    } else {
+        fallback
+    }
 }
 
 /// Application-facing handle to the mounted [`FoxWidget`].
@@ -454,7 +458,7 @@ impl FoxWidget {
                 set_canvas_buffer(canvas, pixels, CANVAS_WIDTH, CANVAS_HEIGHT);
                 set_canvas_buffer(
                     status_canvas,
-                    pixels.add(fox::PIXELS),
+                    pixels.add(fox::VIEW_PIXELS),
                     status::WIDTH,
                     status::HEIGHT,
                 );

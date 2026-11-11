@@ -2,11 +2,11 @@
   "schema_version": 1,
   "id": "black-blue",
   "name": "智谱团子",
-  "version": "2026-11-11-image26-v4-clean",
+  "version": "2026-11-11-image26-crawl",
   "canvas": [
     352,
     336
   ],
-  "binary_bytes": 649802,
-  "binary_crc32": 2879049973
+  "binary_bytes": 654960,
+  "binary_crc32": 4261221488
 }

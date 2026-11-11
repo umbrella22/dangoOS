@@ -68,8 +68,8 @@ fn sample_row(
     indices: &[u8],
     source_y: i32,
     colors: &[u32; 256],
-    xlut: &[Sample; W],
-    out: &mut [u32; W],
+    xlut: &[Sample],
+    out: &mut [u32],
 ) -> bool {
     if source_y < 0 || source_y >= H as i32 {
         out.fill(0);
@@ -95,16 +95,33 @@ fn sample_row(
     false
 }
 
+#[cfg(test)]
 fn warp(indices: &[u8], palette: &[u16], transform: Warp, out: &mut [u16]) {
-    if transform == Warp::IDENTITY {
-        for (o, &v) in out[..PIXELS].iter_mut().zip(indices) {
-            *o = palette.get(v as usize).copied().unwrap_or(0);
-        }
+    warp_to(indices, palette, transform, out, (W, H), (0, 0));
+}
+
+fn warp_to(
+    indices: &[u8],
+    palette: &[u16],
+    transform: Warp,
+    out: &mut [u16],
+    size: (usize, usize),
+    origin: (i32, i32),
+) {
+    if transform.angle_deg != 0.0 || transform.fit != 1.0 {
+        warp_rotated(indices, palette, transform, out, size, origin);
         return;
     }
-
-    if transform.angle_deg != 0.0 || transform.fit != 1.0 {
-        warp_rotated(indices, palette, transform, out);
+    let (width, height) = size;
+    let (ox, oy) = (origin.0 as usize, origin.1 as usize);
+    out[..width * height].fill(0);
+    if transform == Warp::IDENTITY {
+        for y in 0..H {
+            let row = &mut out[(oy + y) * width + ox..(oy + y) * width + ox + W];
+            for (o, &v) in row.iter_mut().zip(&indices[y * W..(y + 1) * W]) {
+                *o = palette.get(v as usize).copied().unwrap_or(0);
+            }
+        }
         return;
     }
 
@@ -116,18 +133,20 @@ fn warp(indices: &[u8], palette: &[u16], transform: Warp, out: &mut [u16]) {
     }
     let ax = W as f32 / 2.0;
     let ay = (H - 1) as f32;
-    let mut xlut = [Sample::default(); W];
+    let mut xlut = [Sample::default(); super::VIEW_W];
+    let xlut = &mut xlut[..width];
     for (x, slot) in xlut.iter_mut().enumerate() {
-        *slot = sample(ax + (x as f32 - transform.dx as f32 - ax) / transform.sx);
+        *slot = sample(ax + (x as f32 - origin.0 as f32 - transform.dx as f32 - ax) / transform.sx);
     }
-    let mut row_a = [0; W];
-    let mut row_b = [0; W];
-    let (mut a, mut b) = (&mut row_a, &mut row_b);
+    let mut row_a = [0; super::VIEW_W];
+    let mut row_b = [0; super::VIEW_W];
+    let (mut a, mut b) = (&mut row_a[..width], &mut row_b[..width]);
     let (mut a_blank, mut b_blank) = (true, true);
     let mut previous = None;
-    for y in 0..H {
-        let row = &mut out[y * W..(y + 1) * W];
-        let sy = sample(ay - (ay - (y as f32 - transform.dy as f32)) / transform.sy);
+    for y in 0..height {
+        let row = &mut out[y * width..(y + 1) * width];
+        let sy =
+            sample(ay - (ay - (y as f32 - origin.1 as f32 - transform.dy as f32)) / transform.sy);
         let top = i32::from(sy.left);
         if top < -1 || top >= H as i32 {
             row.fill(0);
@@ -138,11 +157,11 @@ fn warp(indices: &[u8], palette: &[u16], transform: Warp, out: &mut [u16]) {
             Some(p) if p + 1 == top => {
                 core::mem::swap(&mut a, &mut b);
                 core::mem::swap(&mut a_blank, &mut b_blank);
-                b_blank = sample_row(indices, top + 1, &colors, &xlut, b);
+                b_blank = sample_row(indices, top + 1, &colors, xlut, b);
             }
             _ => {
-                a_blank = sample_row(indices, top, &colors, &xlut, a);
-                b_blank = sample_row(indices, top + 1, &colors, &xlut, b);
+                a_blank = sample_row(indices, top, &colors, xlut, a);
+                b_blank = sample_row(indices, top + 1, &colors, xlut, b);
             }
         }
         previous = Some(top);
@@ -163,7 +182,15 @@ fn warp(indices: &[u8], palette: &[u16], transform: Warp, out: &mut [u16]) {
 
 /// Inverse affine sampling. The existing row-cache path remains available for
 /// ordinary breathing; rotation adds no canvas and no per-frame allocation.
-fn warp_rotated(indices: &[u8], palette: &[u16], t: Warp, out: &mut [u16]) {
+fn warp_rotated(
+    indices: &[u8],
+    palette: &[u16],
+    t: Warp,
+    out: &mut [u16],
+    size: (usize, usize),
+    origin: (i32, i32),
+) {
+    let (width, height) = size;
     let mut colors = [0; 256];
     for (slot, &color) in colors.iter_mut().zip(palette) {
         *slot = expanded(color);
@@ -179,11 +206,49 @@ fn warp_rotated(indices: &[u8], palette: &[u16], t: Warp, out: &mut [u16]) {
             colors[indices[y as usize * W + x as usize] as usize]
         }
     };
-    for y in 0..H {
-        let (x0, y0) = (-t.dx as f32 - cx, y as f32 - t.dy as f32 - cy);
+    out[..width * height].fill(0);
+    // The source has large black margins above the ears. Keep the expanded
+    // viewport from doubling affine work on those margins. Two source pixels
+    // around the silhouette retain the complete bilinear filter footprint.
+    let mut occupied = [W, H, 0, 0];
+    for (y, row) in indices.chunks_exact(W).enumerate() {
+        if let Some(left) = row.iter().position(|&v| colors[v as usize] != 0) {
+            let right = row.iter().rposition(|&v| colors[v as usize] != 0).unwrap();
+            occupied[0] = occupied[0].min(left);
+            occupied[1] = occupied[1].min(y);
+            occupied[2] = occupied[2].max(right + 1);
+            occupied[3] = y + 1;
+        }
+    }
+    if occupied[2] == 0 {
+        return;
+    }
+    let (l, source_top, r, b) = (
+        occupied[0] as f32 - 2.0,
+        occupied[1] as f32 - 2.0,
+        occupied[2] as f32 + 2.0,
+        occupied[3] as f32 + 2.0,
+    );
+    let mut bounds = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for (x, y) in [(l, source_top), (r, source_top), (l, b), (r, b)] {
+        let (x, y) = t.forward(x, y);
+        bounds[0] = bounds[0].min(x + origin.0 as f32);
+        bounds[1] = bounds[1].min(y + origin.1 as f32);
+        bounds[2] = bounds[2].max(x + origin.0 as f32);
+        bounds[3] = bounds[3].max(y + origin.1 as f32);
+    }
+    let left = (round(bounds[0]) - 2).clamp(0, width as i32) as usize;
+    let right = (round(bounds[2]) + 2).clamp(0, width as i32) as usize;
+    let top = (round(bounds[1]) - 2).clamp(0, height as i32) as usize;
+    let bottom = (round(bounds[3]) + 2).clamp(0, height as i32) as usize;
+    for y in top..bottom {
+        let (x0, y0) = (
+            left as f32 - origin.0 as f32 - t.dx as f32 - cx,
+            y as f32 - origin.1 as f32 - t.dy as f32 - cy,
+        );
         let mut u = cx + (x0 * c + y0 * s) / t.sx;
         let mut v = ay + (cy - ay - x0 * s + y0 * c) / t.sy;
-        for o in &mut out[y * W..(y + 1) * W] {
+        for o in &mut out[y * width + left..y * width + right] {
             let (px, py) = (sample(u), sample(v));
             let (x, y) = (i32::from(px.left), i32::from(py.left));
             let top = blend(color(x, y), color(x + 1, y), u32::from(px.weight));
@@ -448,7 +513,28 @@ impl FoxRenderer {
 
     /// Draw `scene` into `out` (`W * H` RGB565 pixels).
     pub fn render(&mut self, scene: &Scene, out: &mut [u16]) {
-        assert!(out.len() >= PIXELS, "fox canvas too short");
+        self.render_target(scene, out, (W, H), (0, 0));
+    }
+
+    /// Draw at the original asset size into the full panel, without fitting.
+    pub fn render_panel(&mut self, scene: &Scene, out: &mut [u16]) {
+        self.render_target(
+            scene,
+            out,
+            (super::VIEW_W, super::VIEW_H),
+            (super::VIEW_ORIGIN.0 as i32, super::VIEW_ORIGIN.1 as i32),
+        );
+    }
+
+    fn render_target(
+        &mut self,
+        scene: &Scene,
+        out: &mut [u16],
+        size: (usize, usize),
+        origin: (i32, i32),
+    ) {
+        let (width, height) = size;
+        assert!(out.len() >= width * height, "fox canvas too short");
         self.compose(scene);
         let pal = scene.skin.palette();
         let lookup = |v: u8| -> u16 {
@@ -460,12 +546,12 @@ impl FoxRenderer {
         };
 
         let warp = scene.warp;
-        self::warp(&self.idx, pal, warp, out);
+        warp_to(&self.idx, pal, warp, out, size, origin);
 
         for l in scene.over.iter() {
             let img = &l.img;
             let (fx, fy) = warp.forward(img.x as f32 + l.dx as f32, img.y as f32 + l.dy as f32);
-            let (x0, y0) = (round(fx), round(fy));
+            let (x0, y0) = (round(fx) + origin.0, round(fy) + origin.1);
             self.scratch.clear();
             self.scratch
                 .resize(img.w as usize * img.h as usize, TRANSPARENT);
@@ -481,12 +567,12 @@ impl FoxRenderer {
             );
             for sy in 0..img.h as i32 {
                 let y = y0 + sy;
-                if y < 0 || y >= H as i32 {
+                if y < 0 || y >= height as i32 {
                     continue;
                 }
                 for sx in 0..img.w as i32 {
                     let x = x0 + sx;
-                    if x < 0 || x >= W as i32 {
+                    if x < 0 || x >= width as i32 {
                         continue;
                     }
                     if l.fade < 16 && BAYER[(y & 3) as usize][(x & 3) as usize] >= l.fade {
@@ -494,7 +580,7 @@ impl FoxRenderer {
                     }
                     let v = self.scratch[sy as usize * img.w as usize + sx as usize];
                     if v != TRANSPARENT {
-                        out[y as usize * W + x as usize] = lookup(v);
+                        out[y as usize * width + x as usize] = lookup(v);
                     }
                 }
             }
@@ -511,6 +597,58 @@ impl Default for FoxRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_keeps_original_pixels_and_full_size_rotations_inside_the_viewport() {
+        use crate::companion::render::{VIEW_H, VIEW_ORIGIN, VIEW_PIXELS, VIEW_W};
+        let scene = Scene::still(super::super::FoxPose::Idle);
+        let mut renderer = FoxRenderer::new();
+        let mut source = vec![0; PIXELS];
+        renderer.render(&scene, &mut source);
+        let mut panel = vec![0x1234; VIEW_PIXELS + 4];
+        renderer.render_panel(&scene, &mut panel);
+        for y in 0..H {
+            let at = (VIEW_ORIGIN.1 + y) * VIEW_W + VIEW_ORIGIN.0;
+            assert_eq!(&panel[at..at + W], &source[y * W..(y + 1) * W]);
+        }
+        // Compare every quarter/diagonal with a larger reference render. Any
+        // lost source pixel or clipped silhouette changes the nonblack count.
+        let palette = scene.skin.palette();
+        let mut reference = vec![0; 720 * 720];
+        for angle in (0..360).step_by(15) {
+            let t = Warp {
+                angle_deg: angle as f32,
+                ..Warp::IDENTITY
+            };
+            warp_to(
+                &renderer.idx,
+                palette,
+                t,
+                &mut panel,
+                (VIEW_W, VIEW_H),
+                (VIEW_ORIGIN.0 as i32, VIEW_ORIGIN.1 as i32),
+            );
+            warp_to(
+                &renderer.idx,
+                palette,
+                t,
+                &mut reference,
+                (720, 720),
+                (VIEW_ORIGIN.0 as i32 + 120, VIEW_ORIGIN.1 as i32 + 120),
+            );
+            assert!(
+                reference.chunks_exact(720).enumerate().all(|(y, row)| {
+                    row.iter().enumerate().all(|(x, &pixel)| {
+                        pixel == 0
+                            || ((120..120 + VIEW_W).contains(&x)
+                                && (120..120 + VIEW_H).contains(&y))
+                    })
+                }),
+                "silhouette extends beyond the panel at {angle}"
+            );
+        }
+        assert_eq!(&panel[VIEW_PIXELS..], &[0x1234; 4]);
+    }
 
     #[test]
     fn rgb565_blends_round_each_channel_without_bleeding_between_lanes() {

@@ -1,9 +1,9 @@
 //! The panel plane: uploads the fox canvas at a fixed position.
 //!
-//! The fox never moves across the panel. The fox widget renders its canvas
-//! (expression plus the in-canvas entrance) into a two-slot
+//! The fox widget renders its full panel viewport (expression, entrance and
+//! movement) into a two-slot
 //! [`CanvasPool`](crate::services::display::canvas_pool::CanvasPool), and this task
-//! uploads the newest frame below the panel centre. There is no damage union
+//! uploads the newest frame at the panel origin. There is no damage union
 //! and no old-position clear: the rectangle never changes.
 //!
 //! # Ownership and overlap
@@ -57,10 +57,6 @@ use {
     crate::shell::navigation::transition::Source,
 };
 
-/// Vertical offset of the character canvas below the panel centre. The fox
-/// is bottom-anchored in its canvas with headroom for hops; 16 px down keeps
-/// the visual centre of the face on the panel centre.
-const FOX_DROP_PX: u16 = 16;
 /// Longest wait for a TE edge before transferring anyway.
 const TE_TIMEOUT: Duration = Duration::from_millis(30);
 /// Rows per transfer chunk; 32 rows is the proven CO5300 burst at 80 MHz.
@@ -108,7 +104,7 @@ pub enum Frame {
 impl Frame {
     fn pixels(&self) -> &[u16] {
         match self {
-            Frame::Pool(lease) => &lease.pixels()[..crate::companion::render::PIXELS],
+            Frame::Pool(lease) => &lease.pixels()[..crate::companion::render::VIEW_PIXELS],
             Frame::Screen(lease) => lease.pixels(),
             Frame::Slide { new, .. } => new.pixels(),
         }
@@ -414,7 +410,7 @@ async fn run_plane(
                 // acknowledge a complete frame or restore panel brightness.
                 completed = upload(
                     &mut panel,
-                    &lease.pixels()[render::PIXELS..],
+                    &lease.pixels()[render::VIEW_PIXELS..],
                     (status::WIDTH as u16, status::HEIGHT as u16),
                     at,
                     DirtyRect {
@@ -439,7 +435,7 @@ async fn run_plane(
                 Frame::Pool(lease) => {
                     use crate::companion::{render, status};
                     final_capture.blit(
-                        &lease.pixels()[..render::PIXELS],
+                        &lease.pixels()[..render::VIEW_PIXELS],
                         canvas_w as usize,
                         area,
                         (origin_x + area.x0, origin_y + area.y0),
@@ -449,7 +445,7 @@ async fn run_plane(
                         (i32::from(origin_y) + status::OFFSET.1) as u16,
                     );
                     final_capture.blit(
-                        &lease.pixels()[render::PIXELS..],
+                        &lease.pixels()[render::VIEW_PIXELS..],
                         status::WIDTH,
                         DirtyRect {
                             x0: 0,
@@ -590,11 +586,10 @@ async fn upload(
     true
 }
 
-/// Top-left of the canvas on the panel: centred horizontally, [`FOX_DROP_PX`]
-/// below centre vertically.
+/// Top-left of a centred viewport. Character placement is part of rendering.
 fn origin((w, h): (u16, u16)) -> (u16, u16) {
     let x = (WIDTH as u16 - w) / 2;
-    let y = ((HEIGHT as u16 - h) / 2 + FOX_DROP_PX).min(HEIGHT as u16 - h);
+    let y = (HEIGHT as u16 - h) / 2;
     (x, y)
 }
 

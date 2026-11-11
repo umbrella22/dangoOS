@@ -2,7 +2,7 @@
 //! cargo run -p os --example balance_preview -- OUTPUT [SKIN_ID] [SKIN_ROOT] [CASE]
 use os::companion::{
     behavior::affect::{EventKind, EventSource, SensorEvent},
-    render::{FoxAnimator, FoxInput, FoxPose, FoxRenderer, H, W, skin::Skin},
+    render::{skin::Skin, FoxAnimator, FoxInput, FoxPose, FoxRenderer, VIEW_H as H, VIEW_W as W},
 };
 use os::{Expression, FoxControl, Runtime};
 use std::{
@@ -28,6 +28,12 @@ fn main() {
         ("rescue", 3200, 460, 360.0),
         ("fall", 3800, 800, 360.0),
         ("heavy", 4000, 900, 600.0),
+        ("tolerant70", 4400, 700, 100.0),
+        ("tolerant100", 4400, 1000, 100.0),
+        ("jitter", 4400, 200, 400.0),
+        ("half-fast-stop", 4400, 300, 600.0),
+        ("half-slow", 6000, 3600, 50.0),
+        ("full-slow", 10000, 7200, 50.0),
     ] {
         if selected_case.is_some_and(|selected| selected != case) {
             continue;
@@ -44,7 +50,12 @@ fn main() {
         let mut render_us = Vec::new();
         for at in (10..=duration).step_by(10) {
             let moving = at.saturating_sub(500).min(turn_ms);
-            let angle = moving as f32 * rate / 1000.0;
+            let angle = moving as f32 * rate / 1000.0
+                + if case == "jitter" && at > 500 + turn_ms {
+                    (at as f32 / 71.0).sin() * 12.0
+                } else {
+                    0.0
+                };
             if at % 20 == 0 {
                 let a = angle.to_radians();
                 for kind in [
@@ -82,7 +93,7 @@ fn main() {
                 ..FoxInput::REST
             });
             let start = std::time::Instant::now();
-            renderer.render(&scene, &mut pixels);
+            renderer.render_panel(&scene, &mut pixels);
             render_us.push(start.elapsed().as_micros());
             let mut file =
                 BufWriter::new(fs::File::create(dir.join(format!("{frame:04}.ppm"))).unwrap());
@@ -95,7 +106,7 @@ fn main() {
                 ])
                 .unwrap();
             }
-            trace.push(serde_json::json!({"frame":frame,"at_ms":at,"device_angle":angle,"stage":format!("{:?}",balance.stage),"face":format!("{:?}",balance.face),"rotation_reaction":balance.rotation_reaction,"angle":balance.angle_deg,"x":balance.x,"y":balance.y,"scale":balance.scale,"reach":balance.reach,"step":balance.step,"grip":balance.grip,"drag":balance.drag,"rig":scene.rig.is_some(),"expression":format!("{:?}",control.expression())}));
+            trace.push(serde_json::json!({"frame":frame,"at_ms":at,"device_angle":angle,"stage":format!("{:?}",balance.stage),"face":format!("{:?}",balance.face),"rotation_reaction":balance.rotation_reaction,"angle":balance.angle_deg,"x":balance.x,"y":balance.y,"scale":balance.scale,"squash":balance.squash,"reach":balance.reach,"step":balance.step,"grip":balance.grip,"drag":balance.drag,"rig":scene.rig.is_some(),"expression":format!("{:?}",control.expression())}));
             frame += 1;
         }
         render_us.sort_unstable();

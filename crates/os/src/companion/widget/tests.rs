@@ -174,8 +174,8 @@ fn link_status_reaches_plane_frames_without_waiting_for_animation_cadence() {
             .take_frame()
             .expect("link changes publish an urgent plane frame");
         assert_eq!(
-            &frame.pixels()[..fox::PIXELS],
-            &baseline[..fox::PIXELS],
+            &frame.pixels()[..fox::VIEW_PIXELS],
+            &baseline[..fox::VIEW_PIXELS],
             "status must not move, erase or replace any part of the character"
         );
         if status == Snapshot::new() {
@@ -258,7 +258,7 @@ fn native_status_band_draws_above_the_character_and_leaves_no_pixels_after_unmou
         let out = pixels.borrow();
         let left = (480 - CANVAS_WIDTH) / 2 + status::OFFSET.0 as usize;
         let top = ((480 - CANVAS_HEIGHT) as i32 / 2 + status::OFFSET.1) as usize;
-        for y in 0..(480 - CANVAS_HEIGHT) / 2 {
+        for y in 0..fox::VIEW_ORIGIN.1 {
             for x in 0..480 {
                 let expected = if (left..left + status::WIDTH).contains(&x)
                     && (top..top + status::HEIGHT).contains(&y)
@@ -270,7 +270,7 @@ fn native_status_band_draws_above_the_character_and_leaves_no_pixels_after_unmou
                 assert_eq!(out[y * 480 + x], expected, "status at {x},{y}");
             }
         }
-        let character = out[(480 - CANVAS_HEIGHT) / 2 * 480..].to_vec();
+        let character = out[fox::VIEW_ORIGIN.1 * 480..].to_vec();
         if let Some(previous) = &previous_character {
             assert_eq!(
                 &character, previous,

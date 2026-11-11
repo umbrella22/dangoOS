@@ -2,11 +2,11 @@
   "schema_version": 1,
   "id": "eclipse",
   "name": "玄灵 · 月蚀",
-  "version": "2026-11-11-image26-v4-clean",
+  "version": "2026-11-11-image26-crawl",
   "canvas": [
     352,
     336
   ],
-  "binary_bytes": 672651,
-  "binary_crc32": 3857913984
+  "binary_bytes": 677378,
+  "binary_crc32": 4008575655
 }

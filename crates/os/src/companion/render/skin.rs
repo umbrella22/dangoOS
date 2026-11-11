@@ -30,7 +30,7 @@ pub struct RigHand {
 pub struct BalanceRig {
     pub body: Img,
     pub hands: [RigHand; 2],
-    /// v4: effort, dizzy, weary, relief; transparent face patches.
+    /// v4: effort, dizzy, weary, startled; transparent face patches.
     /// v3 retains its release and landing faces in the middle slots.
     pub faces: [Img; 4],
     pub articulation: Option<RigArticulation>,
