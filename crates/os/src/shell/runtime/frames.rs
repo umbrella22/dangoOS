@@ -102,6 +102,7 @@ impl Frames {
             }
         } else if !port.is_busy() {
             let skin_feedback_on_frame = self.skin_loading_rendered;
+            port.poll_pointer();
             ui.timer_handler();
 
             // Callbacks fired by the timer handler only queue messages.

@@ -42,6 +42,20 @@ impl FinalFrame {
             self.pixels[to..to + w].copy_from_slice(&source[from..from + w]);
         }
     }
+    /// The diagnostic protocol currently exposes RGB565, including RGB888 panels.
+    pub fn blit_source(
+        &mut self,
+        source: board_s31::pixels::PixelSource<'_>,
+        area: DirtyRect,
+        at: (u16, u16),
+    ) {
+        for row in 0..area.height() {
+            for column in 0..area.width() {
+                self.pixels[(at.1 as usize + row) * self.width + at.0 as usize + column] =
+                    source.rgb565_at(area.x0 as usize + column, area.y0 as usize + row);
+            }
+        }
+    }
     pub fn complete(&mut self) {
         self.id = self.id.saturating_add(1);
     }

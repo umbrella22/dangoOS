@@ -11,7 +11,7 @@ pub mod frequency;
 pub(crate) mod heap;
 #[cfg(target_os = "none")]
 pub(crate) mod libc;
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", test, feature = "display-simulator"))]
 pub(crate) mod memory;
 #[cfg(target_os = "none")]
 pub(crate) mod resident_budget;

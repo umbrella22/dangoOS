@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+# Runtime panel input format; bootloader handoff remains RGB565.
+display-rgb888 = []
+display-metrics = []
+
 [dependencies]
 log.workspace = true
 boot-contract = { path = "../boot-contract" }

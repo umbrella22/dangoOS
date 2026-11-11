@@ -18,6 +18,7 @@
 | `device/main_image.py` | 供设备工具共用的 S31ONE03 主镜像校验器 |
 | `device/vendor` | 原样保留的 ESP-IDF 分区生成器及许可证 |
 | `assets/photo-icon.cjs` | 从 SVG 生成 Photo 的启动器图标 |
+| `assets/export_display_replay.py` | 将原生 LVGL 主机回放导出为自包含 HTML、PNG 和 GIF；需要 Pillow |
 
 脚本的离线回归放在 [tests/host](../tests/README.md)。应用镜像打包由 Rust 主机工具
 [app-pack](../tools/app-pack/README.md) 提供。

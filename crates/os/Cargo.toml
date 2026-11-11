@@ -16,6 +16,13 @@ lua-engine = ["dep:lua-engine"]
 ts-engine = ["dep:ts-engine", "app-host/serde", "app-host/graphics"]
 # Device binary only; integration tests build the host library.
 firmware = []
+# RGB888 native controls and BGR888 panel input; RGB565 remains available for A/B.
+display-rgb888 = ["board-s31/display-rgb888"]
+display-metrics = ["board-s31/display-metrics"]
+# A/B experiment: native updates covering at most half the panel bypass TE.
+display-low-latency = []
+# Native LVGL memory-panel simulator, without device HAL or peripherals.
+display-simulator = []
 # Core1 UI/app executor. Single-core builds explicitly select one engine with no defaults.
 dual-core-ui = []
 # Opt-in native UI diagnostics, strict properties and update metrics.
@@ -30,6 +37,10 @@ required-features = ["ui-validation"]
 [[example]]
 name = "screenshots"
 required-features = ["lua-engine"]
+
+[[example]]
+name = "display_pipeline"
+required-features = ["display-simulator"]
 
 [dependencies]
 board-s31 = { path = "../board-s31" }
@@ -49,6 +60,7 @@ log.workspace = true
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 embedded-io = { version = "0.7", default-features = false }
 embedded-io-async = { version = "0.7", default-features = false }
+critical-section.workspace = true
 # Host-buildable UI dependencies: the library and integration tests build
 # with the plain host toolchain; the ESP HAL/RTOS dependencies stay target
 # gated.
@@ -86,7 +98,6 @@ embassy-time.workspace = true
 embassy-usb = { version = "0.6", default-features = false }
 embassy-futures = "0.1"
 embassy-sync = "0.8"
-critical-section.workspace = true
 
 [dev-dependencies]
 # Exercise the production owned TLS engine against an in-memory TLS server.

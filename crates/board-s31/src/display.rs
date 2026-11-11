@@ -1,14 +1,18 @@
 //! 480×480 CO5300 QSPI AMOLED 驱动（ESP-Mosaico v1.2）。
 //!
 //! 初始化（厂商序列、清黑屏）走阻塞 SPI，命令短且要等 SLPOUT/DISPON 的毫秒延时；
-//! 之后 [`Display::into_async`] 切到 DMA 异步，运行期只有一条上传路径：
-//! [`Display::write_canvas_async`]，每次把画布里的一个 ≤32 行窗口打包进内部暂存，
-//! 设置 CASET/RASET，再用 GRAM 写操作码 `0x32` + 四线数据相位发出。
+//! 之后切到 DMA 异步。连续的面板格式像素直接从 PSRAM 上传；
+//! 窄窗口或 RGB565 来源通过独占 PSRAM staging 编码，单块不超过 DMA 上限。
+//! 每块独立设置窗口，使用 GRAM `0x32` 与四线数据，失败重试不会依赖连续写游标。
 //!
 //! 蓝本: 官方 BSP `esp-mosaico/esp-mosaico-bsp` onboard/display.c +
 //! `espressif/esp_lcd_co5300` v2.2.0（线序: 寄存器单线 0x02, GRAM 四线 0x32）。
 
-use crate::{board, geometry::DirtyRect};
+use crate::{
+    board,
+    geometry::DirtyRect,
+    pixels::{PixelSource, RowChunks, MAX_DMA_BYTES, PANEL_FORMAT},
+};
 use core::{
     alloc::{GlobalAlloc, Layout},
     ptr::NonNull,
@@ -25,14 +29,21 @@ use esp_hal::{
     Async, Blocking, DriverMode,
 };
 
-mod packing;
-
 // ---- 传输参数 ----
-/// Worst-case rows in one chunk (full panel width).
-pub const MAX_CHUNK_ROWS: u16 = 32;
-const ROW_BYTES: usize = board::LCD_WIDTH as usize * 2;
-const CHUNK_BYTES: usize = MAX_CHUNK_ROWS as usize * ROW_BYTES;
+const CHUNK_BYTES: usize = MAX_DMA_BYTES;
+// Blocking HAL writes always copy into this TX buffer, including cold clear.
+const BOOT_TX_BYTES: usize = 4096;
+const ROW_BYTES: usize = board::LCD_WIDTH as usize * PANEL_FORMAT.bytes_per_pixel();
 const TRANSFER_TIMEOUT: Duration = Duration::from_millis(100);
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TransferStats {
+    pub bytes: u32,
+    pub direct_bytes: u32,
+    pub windows: u32,
+    pub pack_us: u64,
+    pub transfer_us: u64,
+}
 
 /// Async failures preserve uncertainty about the panel until hardware reset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,16 +76,19 @@ async fn transfer(
     }
 }
 
-/// QSPI clock.
-///
-/// Espressif's esp_lcd_co5300 v2.2.0 CO5300_PANEL_IO_QSPI_CONFIG defaults to
-/// 40 MHz (esp-iot-solution commit 81b343651c23169112829b8d633367c6c15abb64,
-/// components/display/lcd/esp_lcd_co5300/include/esp_lcd_co5300.h).
-/// Use 80 MHz for the project's full-frame pixel bandwidth target. The vendor
-/// default alone does not establish a maximum supported clock. The observed
-/// Album popup remnant at 80 MHz remains an unresolved visual issue;
-/// see docs/troubleshooting/photo-vertical-lines.md for the controlled 40 MHz comparison.
-const SPI_CLOCK_HZ: u32 = 80_000_000;
+/// 40 MHz stays within the CO5300 published quad-write timing.
+/// The locked HAL's 160 MHz default SPI source divides exactly by four.
+const SPI_CLOCK_HZ: u32 = 40_000_000;
+const COLMOD: u8 = if cfg!(feature = "display-rgb888") {
+    0x77
+} else {
+    0x55
+};
+const MADCTL: u8 = if cfg!(feature = "display-rgb888") {
+    0x08
+} else {
+    0x00
+};
 
 // ---- CO5300 命令 ----
 const OP_WRITE_REG: u16 = 0x02; // 单线命令相位
@@ -104,25 +118,22 @@ const VENDOR_INIT: &[(u8, &[u8], u32)] = &[
 const RST_LOW_MS: u32 = 10;
 const RST_SETTLE_MS: u32 = 150;
 
-/// 独占的内部 RAM 暂存（15360B）。HAL 另有同容量的 DMA TX 缓冲；
-/// `half_duplex_write` 会复制到 TX 缓冲，成功返回前已等待传输结束。
-/// 异步路径把暂存只读借给 `half_duplex_write_async`（内部 RAM 可由 DMA
-/// 直接读取，或在 HAL 内部 TX 缓冲中复制），future 持有 `&mut self`，
-/// 传输完成前暂存不会被改写。
-struct InternalStaging {
+/// Driver-owned PSRAM staging for noncontiguous or converted pixel windows.
+/// The mutable driver borrow covers packing and every DMA completion.
+struct DmaStaging {
     ptr: NonNull<u8>,
 }
 
-impl InternalStaging {
+impl DmaStaging {
     fn layout() -> Layout {
-        Layout::from_size_align(CHUNK_BYTES, 4).expect("invalid staging layout")
+        Layout::from_size_align(CHUNK_BYTES, 128).expect("invalid staging layout")
     }
 
     fn try_new() -> Option<Self> {
         let layout = Self::layout();
-        // SAFETY: layout has non-zero size. Internal capability excludes PSRAM.
+        // SAFETY: PSRAM is initialized before panel creation in OS and Recovery.
         let ptr = unsafe {
-            esp_alloc::HEAP.alloc_caps(esp_alloc::MemoryCapability::Internal.into(), layout)
+            esp_alloc::HEAP.alloc_caps(esp_alloc::MemoryCapability::External.into(), layout)
         };
         let ptr = NonNull::new(ptr)?;
         // SAFETY: this allocation uniquely owns layout.size() writable bytes.
@@ -137,10 +148,10 @@ impl InternalStaging {
     }
 }
 
-impl Drop for InternalStaging {
+impl Drop for DmaStaging {
     fn drop(&mut self) {
         // SAFETY: return the allocation exactly once to its original heap with
-        // the same layout. HAL DMA uses its own TX buffer, never this pointer.
+        // the same layout. No transfer can outlive the exclusive driver borrow.
         unsafe { GlobalAlloc::dealloc(&esp_alloc::HEAP, self.ptr.as_ptr(), Self::layout()) };
     }
 }
@@ -151,9 +162,11 @@ impl Drop for InternalStaging {
 /// switches it to the DMA-async variant the plane task uses.
 pub struct Display<Dm: DriverMode = Blocking> {
     spi: SpiDma<'static, Dm>,
-    staging: InternalStaging,
+    staging: DmaStaging,
     _rst: Output<'static>,
     faulted: bool,
+    #[cfg(feature = "display-metrics")]
+    stats: TransferStats,
 }
 
 impl Display<Blocking> {
@@ -174,11 +187,10 @@ impl Display<Blocking> {
     /// `DISPON`. A valid bootloader handoff preserves its completed splash and
     /// skips this clear along with the panel reset and wake sequence.
     ///
-    /// This is a blocking, driver-owned clear: it reuses the 15 KiB staging
-    /// buffer and sends one CASET/RASET per 32-row band, so no extra frame
-    /// buffer is allocated.
+    /// Blocking HAL writes copy into BOOT_TX_BYTES. Bound each clear band by
+    /// that capacity, independently of the larger asynchronous staging buffer.
     pub fn clear_black(&mut self) -> Result<(), esp_hal::spi::Error> {
-        const BAND_ROWS: u16 = MAX_CHUNK_ROWS;
+        const BAND_ROWS: u16 = (BOOT_TX_BYTES / ROW_BYTES) as u16;
         self.write_reg(
             CMD_CASET,
             &[
@@ -191,7 +203,7 @@ impl Display<Blocking> {
 
         // One packed band of zeroes is reused for every row window.
         let pixels_per_band = board::LCD_WIDTH as usize * BAND_ROWS as usize;
-        let bytes_per_band = pixels_per_band * 2;
+        let bytes_per_band = pixels_per_band * PANEL_FORMAT.bytes_per_pixel();
         debug_assert!(bytes_per_band <= CHUNK_BYTES);
         let staging = self.staging.as_mut_slice();
         staging[..bytes_per_band].fill(0);
@@ -204,7 +216,7 @@ impl Display<Blocking> {
                 &[(y >> 8) as u8, y as u8, (y_end >> 8) as u8, y_end as u8],
             )?;
             let rows = (y_end - y + 1) as usize;
-            let bytes = rows * board::LCD_WIDTH as usize * 2;
+            let bytes = rows * ROW_BYTES;
             self.spi.half_duplex_write(
                 DataMode::Quad,
                 Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
@@ -231,17 +243,14 @@ impl Display<Blocking> {
             staging: self.staging,
             _rst: self._rst,
             faulted: self.faulted,
+            #[cfg(feature = "display-metrics")]
+            stats: self.stats,
         }
     }
 }
 
 impl Display<Async> {
-    /// Upload one window from a tightly packed canvas.
-    ///
-    /// The canvas is smaller than the panel, so the source stride is the
-    /// canvas width, not the panel width. `dst` is the panel window and must
-    /// be 4-pixel aligned in x with a 4-multiple width. `src` is the matching window
-    /// inside the canvas. The height must fit [`MAX_CHUNK_ROWS`].
+    /// Upload a numeric RGB565 canvas, encoding it to the configured panel format.
     pub async fn write_canvas_async(
         &mut self,
         dst: DirtyRect,
@@ -249,92 +258,95 @@ impl Display<Async> {
         canvas_size: (u16, u16),
         canvas: &[u16],
     ) -> Result<(), Error> {
-        if self.faulted {
-            return Err(Error::Faulted);
-        }
-        let byte_count = self.prepare_canvas(dst, src, canvas_size, canvas);
-        self.send_prepared(dst, byte_count).await
+        self.write_pixels_async(dst, src, PixelSource::rgb565(canvas, canvas_size))
+            .await
     }
 
-    /// Pack one canvas window into the internal staging buffer and return the
-    /// number of staged bytes.
-    fn prepare_canvas(
+    /// Upload a whole source window. Each bounded row chunk is independently
+    /// addressed, so retrying the rectangle cannot restart at a stale RAMWRC cursor.
+    /// Continuous encoded PSRAM slices use HAL InPlace TX and cache writeback.
+    pub async fn write_pixels_async(
         &mut self,
         dst: DirtyRect,
         src: DirtyRect,
-        canvas_size: (u16, u16),
-        canvas: &[u16],
-    ) -> usize {
-        let (canvas_w, canvas_h) = canvas_size;
-        if dst.is_empty() {
-            return 0;
+        source: PixelSource<'_>,
+    ) -> Result<(), Error> {
+        if self.faulted {
+            return Err(Error::Faulted);
         }
-        assert!(dst.is_valid(), "canvas window outside panel: {dst:?}");
-        assert!(src.is_valid(), "canvas source outside panel: {src:?}");
-        assert_eq!(dst.width(), src.width(), "canvas window/source width");
-        assert_eq!(dst.height(), src.height(), "canvas window/source height");
-        assert!(
-            src.x1 < canvas_w && src.y1 < canvas_h,
-            "canvas source outside canvas"
-        );
-        assert!(
-            canvas.len() >= canvas_w as usize * canvas_h as usize,
-            "canvas buffer too short",
-        );
-        assert!(
-            dst.height() <= MAX_CHUNK_ROWS as usize,
-            "canvas window exceeds row limit",
-        );
-        assert_eq!(dst.x0 % 4, 0, "canvas window x must be 4-aligned");
-        assert_eq!(dst.width() % 4, 0, "canvas window width must be 4-multiple");
-
-        packing::pack_rgb565(
-            canvas,
-            (canvas_w, canvas_h),
-            (src.x0, src.y0, src.x1, src.y1),
-            MAX_CHUNK_ROWS,
-            self.staging.as_mut_slice(),
-        )
-    }
-
-    /// Send a window previously packed by [`Display::prepare_canvas`].
-    async fn send_prepared(&mut self, dst: DirtyRect, byte_count: usize) -> Result<(), Error> {
-        if dst.is_empty() || byte_count == 0 {
+        if dst.is_empty() {
             return Ok(());
         }
-        assert!(dst.is_valid(), "prepared window outside panel: {dst:?}");
-        assert!(byte_count <= CHUNK_BYTES, "prepared window exceeds staging");
-        self.write_reg_async(
-            CMD_CASET,
-            &[
-                (dst.x0 >> 8) as u8,
-                dst.x0 as u8,
-                (dst.x1 >> 8) as u8,
-                dst.x1 as u8,
-            ],
-        )
-        .await?;
-        self.write_reg_async(
-            CMD_RASET,
-            &[
-                (dst.y0 >> 8) as u8,
-                dst.y0 as u8,
-                (dst.y1 >> 8) as u8,
-                dst.y1 as u8,
-            ],
-        )
-        .await?;
-        transfer(
-            &mut self.faulted,
-            self.spi.half_duplex_write_async(
-                DataMode::Quad,
-                Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
-                Address::_24Bit(GRAM_ADDR, DataMode::Single),
-                0,
-                &self.staging.as_mut_slice()[..byte_count],
-            ),
-        )
-        .await
+        assert!(dst.is_valid() && src.is_valid());
+        assert_eq!(dst.width(), src.width());
+        assert_eq!(dst.height(), src.height());
+        assert_eq!(dst.x0 % 4, 0);
+        assert_eq!(dst.width() % 4, 0);
+        assert!(src.x1 < source.size().0 && src.y1 < source.size().1);
+        for part in RowChunks::new(src, PANEL_FORMAT, CHUNK_BYTES) {
+            let window = DirtyRect {
+                y0: dst.y0 + part.y0 - src.y0,
+                y1: dst.y0 + part.y1 - src.y0,
+                ..dst
+            };
+            #[cfg(feature = "display-metrics")]
+            let pack_started = embassy_time::Instant::now();
+            let direct = source.contiguous(part, PANEL_FORMAT);
+            let length = if let Some(bytes) = direct {
+                bytes.len()
+            } else {
+                source.pack(part, PANEL_FORMAT, self.staging.as_mut_slice())
+            };
+            #[cfg(feature = "display-metrics")]
+            {
+                self.stats.pack_us += pack_started.elapsed().as_micros();
+                self.stats.bytes += length as u32;
+                self.stats.direct_bytes += if direct.is_some() { length as u32 } else { 0 };
+                self.stats.windows += 1;
+            }
+            let xs = [
+                (window.x0 >> 8) as u8,
+                window.x0 as u8,
+                (window.x1 >> 8) as u8,
+                window.x1 as u8,
+            ];
+            let ys = [
+                (window.y0 >> 8) as u8,
+                window.y0 as u8,
+                (window.y1 >> 8) as u8,
+                window.y1 as u8,
+            ];
+            #[cfg(feature = "display-metrics")]
+            let transfer_started = embassy_time::Instant::now();
+            self.write_reg_async(CMD_CASET, &xs).await?;
+            self.write_reg_async(CMD_RASET, &ys).await?;
+            let bytes = match direct {
+                Some(bytes) => bytes,
+                None => &self.staging.as_mut_slice()[..length],
+            };
+            let result = transfer(
+                &mut self.faulted,
+                self.spi.half_duplex_write_async(
+                    DataMode::Quad,
+                    Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
+                    Address::_24Bit(GRAM_ADDR, DataMode::Single),
+                    0,
+                    bytes,
+                ),
+            )
+            .await;
+            #[cfg(feature = "display-metrics")]
+            {
+                self.stats.transfer_us += transfer_started.elapsed().as_micros();
+            }
+            result?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "display-metrics")]
+    pub fn take_stats(&mut self) -> TransferStats {
+        core::mem::take(&mut self.stats)
     }
 
     /// 异步寄存器写: 单线 0x02 → 单线地址 reg<<8 → 单线参数。
@@ -371,6 +383,8 @@ impl Display<Async> {
     pub async fn sleep_out(&mut self) -> Result<(), Error> {
         self.write_reg_async(0x11, &[]).await?;
         embassy_time::Timer::after_millis(600).await;
+        self.write_reg_async(0x36, &[MADCTL]).await?;
+        self.write_reg_async(0x3A, &[COLMOD]).await?;
         // Write brightness after Sleep Out has settled, before Display On;
         // do not rely on register writes being accepted while asleep.
         self.set_brightness_async(0).await?;
@@ -380,7 +394,7 @@ impl Display<Async> {
     }
 }
 
-/// 初始化 QSPI 总线、面板和内部 RAM 暂存；不分配帧缓冲。
+/// 初始化 QSPI 总线、面板和 PSRAM 暂存；不分配全屏帧缓冲。
 ///
 /// A committed one-use bootloader handoff transfers an awake RGB565 panel and
 /// a completed splash. The application reclaims SPI/DMA without resetting the
@@ -433,11 +447,12 @@ pub fn try_init(
 
     // ---- QSPI 总线（SPI2 + AXI DMA）----
     let rx_buf = dma_rx_buffer!(256).map_err(|_| InitError::Dma)?;
-    let tx_buf = dma_tx_buffer!(CHUNK_BYTES).map_err(|_| InitError::Dma)?;
+    let tx_buf = dma_tx_buffer!(BOOT_TX_BYTES).map_err(|_| InitError::Dma)?;
     let spi = Spi::new(
         spi2,
         SpiConfig::default()
             .with_frequency(Rate::from_hz(SPI_CLOCK_HZ))
+            .with_min_async_transfer_size(32)
             .with_mode(Mode::_0),
     )
     .map_err(|_| InitError::Spi)?
@@ -452,12 +467,22 @@ pub fn try_init(
 
     let mut display: Display<Blocking> = Display {
         spi,
-        staging: InternalStaging::try_new().ok_or(InitError::Allocation)?,
+        staging: DmaStaging::try_new().ok_or(InitError::Allocation)?,
         _rst: rst,
         faulted: false,
+        #[cfg(feature = "display-metrics")]
+        stats: TransferStats::default(),
     };
 
     if let Some(record) = handoff {
+        // Boot contract is RGB565. Apply the selected wire format before OS
+        // uploads; leave the inherited splash in GRAM until the first OS frame.
+        display
+            .write_reg(0x36, &[MADCTL])
+            .map_err(|_| InitError::Spi)?;
+        display
+            .write_reg(0x3A, &[COLMOD])
+            .map_err(|_| InitError::Spi)?;
         crate::boot_display::inherited(record);
         log::info!(
             "boot-display: inherited CO5300, splash={}us selected={}us (loader clock)",
@@ -476,10 +501,10 @@ pub fn try_init(
         log::warn!("CO5300 boot brightness off failed: {error:?}");
     }
     display
-        .write_reg(0x36, &[0x00])
+        .write_reg(0x36, &[MADCTL])
         .map_err(|_| InitError::Spi)?;
     display
-        .write_reg(0x3A, &[0x55])
+        .write_reg(0x3A, &[COLMOD])
         .map_err(|_| InitError::Spi)?;
     for (reg, params, delay_ms) in VENDOR_INIT {
         if *reg == 0x29 {
@@ -490,6 +515,12 @@ pub fn try_init(
                 log::warn!("CO5300 pre-DISPON brightness off failed: {error:?}");
             }
         }
+        let configured = [COLMOD];
+        let params = if *reg == 0x3A {
+            &configured[..]
+        } else {
+            params
+        };
         if let Err(e) = display.write_reg(*reg, params) {
             log::warn!("CO5300 command {reg:02X}: {e:?}");
             return Err(InitError::Spi);
@@ -504,6 +535,10 @@ pub fn try_init(
         board::LCD_WIDTH,
         board::LCD_HEIGHT,
         SPI_CLOCK_HZ / 1_000_000,
+    );
+    log::info!(
+        "CO5300 input={:?}, staging=PSRAM/{CHUNK_BYTES}B tx={BOOT_TX_BYTES}B",
+        PANEL_FORMAT
     );
     Ok(display)
 }

@@ -42,8 +42,9 @@ RSSI，界面显示 Wi-Fi 图标、信号/状态及蓝牙状态；未知信号�
 
 ## 硬件约束
 
-- CO5300 QSPI AMOLED，480×480，RGB565，SPI2 + AXI DMA；当前固件 QSPI 为
-  80 MHz，官方 BSP 的 40 MHz 配置及历史对照见 [竖线排查](../../docs/troubleshooting/photo-vertical-lines.md)。
+- CO5300 QSPI AMOLED，480×480，40 MHz，SPI2 + AXI DMA；默认 RGB565，
+  `display-rgb888` 提供原生 RGB888 绘制与局部上传。格式、租约、主机回放和设备对照入口见
+  [显示管线](DISPLAY_PIPELINE.md)，历史 80 MHz 对照见 [竖线排查](../../docs/troubleshooting/photo-vertical-lines.md)。
 - QSPI 寄存器操作码为 `0x02`，GRAM 写入操作码为 `0x32`；`CASET` / `RASET`
   窗口包含两端，横坐标必须按 4 像素对齐。
 - CST9220 在 I2C0 上使用 7 位地址 `0x5A`，SDA=56、SCL=3、400 kHz；INT 为 GPIO6。

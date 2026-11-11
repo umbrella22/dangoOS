@@ -32,6 +32,10 @@
 //! The panel brightness follows [`set_brightness`] (Settings); the target is
 //! applied after the next completed upload.
 
+use super::damage::Damage;
+use board_s31::pixels::PixelSource;
+#[cfg(feature = "display-metrics")]
+use board_s31::pixels::PANEL_FORMAT;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::services::display::canvas_pool::ReadLease;
@@ -63,8 +67,6 @@ use {
 const FOX_DROP_PX: u16 = 16;
 /// Longest wait for a TE edge before transferring anyway.
 const TE_TIMEOUT: Duration = Duration::from_millis(30);
-/// Rows per transfer chunk; 32 rows is the proven CO5300 burst at 80 MHz.
-const CHUNK_ROWS: u16 = 32;
 
 /// Rows of the black source used by `clear_outside`.
 const CLEAR_ROWS: u16 = 8;
@@ -106,9 +108,11 @@ pub enum Frame {
 }
 
 impl Frame {
-    fn pixels(&self) -> &[u16] {
+    fn pixels(&self, size: (u16, u16)) -> PixelSource<'_> {
         match self {
-            Frame::Pool(lease) => &lease.pixels()[..crate::companion::render::PIXELS],
+            Frame::Pool(lease) => {
+                PixelSource::rgb565(&lease.pixels()[..crate::companion::render::PIXELS], size)
+            }
             Frame::Screen(lease) => lease.pixels(),
             Frame::Slide { new, .. } => new.pixels(),
         }
@@ -130,7 +134,7 @@ pub struct PlaneJob {
     pub at: Option<(u16, u16)>,
     /// Region of the canvas to upload, in canvas coordinates; `None` uploads
     /// all of it. Widened to the panel's 4-pixel column alignment here.
-    pub damage: Option<DirtyRect>,
+    pub damage: Option<Damage>,
     /// Paint the panel outside the canvas black before the upload.
     pub clear_outside: bool,
     /// Bypass the frame-boundary wait for an immediate touch response.
@@ -176,7 +180,10 @@ impl PlaneUi {
             // A dropped shadow job's damage must still reach the panel.
             if let (Frame::Screen(_), Frame::Screen(_)) = (&stale.canvas, &job.canvas) {
                 job.damage = match (stale.damage, job.damage) {
-                    (Some(a), Some(b)) => Some(union(a, b)),
+                    (Some(mut a), Some(b)) => {
+                        a.merge(b);
+                        Some(a)
+                    }
                     _ => None,
                 };
             }
@@ -251,6 +258,9 @@ async fn run_plane(
     let mut sleeping = false;
     let mut full_after_wake = false;
     let mut restored_cycle = 0;
+    let mut pending_screen = Damage::new();
+    let mut last_status = alloc::vec![0u16; crate::companion::status::PIXELS];
+    let mut status_valid = false;
 
     loop {
         #[cfg(feature = "embedscope")]
@@ -273,6 +283,7 @@ async fn run_plane(
         .await;
         let mut job = match next {
             Either::First(sleep) => {
+                status_valid = false;
                 // Return every queued canvas lease before acknowledging standby.
                 JOBS.reset();
                 let cycle = crate::services::power::coordinator::cycle();
@@ -319,10 +330,25 @@ async fn run_plane(
             job.damage = None;
             job.clear_outside = matches!(job.canvas, Frame::Pool(_));
         }
+        if matches!(job.canvas, Frame::Screen(_)) {
+            if let Some(ref mut damage) = job.damage {
+                damage.merge(pending_screen);
+            }
+        }
 
-        if !job.urgent {
+        #[cfg(feature = "display-metrics")]
+        let frame_started = embassy_time::Instant::now();
+        #[cfg(feature = "display-metrics")]
+        let _ = panel.take_stats();
+        // Native local updates can bypass phase waiting in the opt-in latency
+        // experiment. Whole pages, slides and Home keep their normal TE policy.
+        let local = matches!(job.canvas, Frame::Screen(_))
+            && job.damage.is_some_and(|d| d.pixels() <= WIDTH * HEIGHT / 2);
+        if !job.urgent && !(cfg!(feature = "display-low-latency") && local) {
             let _ = select(te.wait_for_rising_edge(), Timer::after(TE_TIMEOUT)).await;
         }
+        #[cfg(feature = "display-metrics")]
+        let te_us = frame_started.elapsed().as_micros();
         #[cfg(feature = "embedscope")]
         let upload_started = embassy_time::Instant::now();
         let mut completed = true;
@@ -335,7 +361,7 @@ async fn run_plane(
             x1: canvas_w - 1,
             y1: canvas_h - 1,
         };
-        let area = align4(job.damage.map_or(full, |d| clip(d, full)), canvas_w);
+        let damage = job.damage.unwrap_or_else(|| Damage::from(full));
 
         if job.clear_outside {
             let inner = DirtyRect {
@@ -364,47 +390,48 @@ async fn run_plane(
                     Source::New => new.pixels(),
                     Source::Old => old.pixels(),
                 };
-                let mut y = 0u16;
-                while completed && y < HEIGHT as u16 {
-                    let y2 = (y + CHUNK_ROWS - 1).min(HEIGHT as u16 - 1);
-                    let dst = DirtyRect {
-                        x0: band.dst_x,
-                        y0: y,
-                        x1: band.dst_x + band.width - 1,
-                        y1: y2,
-                    };
-                    let src = DirtyRect {
-                        x0: band.src_x,
-                        y0: y,
-                        x1: band.src_x + band.width - 1,
-                        y1: y2,
-                    };
-                    match panel.write_canvas_async(dst, src, job.size, pixels).await {
-                        Ok(()) => {}
-                        Err(error) => {
-                            warn!("plane: slide {dst:?} failed: {error:?}");
-                            completed = false;
-                        }
-                    }
-                    y = y2 + 1;
+                let dst = DirtyRect {
+                    x0: band.dst_x,
+                    y0: 0,
+                    x1: band.dst_x + band.width - 1,
+                    y1: HEIGHT as u16 - 1,
+                };
+                let src = DirtyRect {
+                    x0: band.src_x,
+                    y0: 0,
+                    x1: band.src_x + band.width - 1,
+                    y1: HEIGHT as u16 - 1,
+                };
+                if let Err(error) = panel.write_pixels_async(dst, src, pixels).await {
+                    warn!("plane: slide {dst:?} failed: {error:?}");
+                    completed = false;
+                    break;
                 }
             }
         }
 
         let slide = matches!(job.canvas, Frame::Slide { .. });
         if completed && !slide {
-            completed = upload(
-                &mut panel,
-                job.canvas.pixels(),
-                job.size,
-                (origin_x, origin_y),
-                area,
-            )
-            .await;
+            for region in damage.regions() {
+                let area = align4(clip(*region, full), canvas_w);
+                if !area.is_empty() {
+                    completed = upload(
+                        &mut panel,
+                        job.canvas.pixels(job.size),
+                        (origin_x, origin_y),
+                        area,
+                    )
+                    .await;
+                    if !completed {
+                        break;
+                    }
+                }
+            }
         }
         if completed {
             if let Frame::Pool(lease) = &job.canvas {
                 use crate::companion::{render, status};
+                let band = &lease.pixels()[render::PIXELS..];
                 let at = (
                     (i32::from(origin_x) + status::OFFSET.0) as u16,
                     (i32::from(origin_y) + status::OFFSET.1) as u16,
@@ -412,19 +439,28 @@ async fn run_plane(
                 // Keep the same lease through both uploads, including a full
                 // restore after clear_outside or wake. A failed band must not
                 // acknowledge a complete frame or restore panel brightness.
-                completed = upload(
-                    &mut panel,
-                    &lease.pixels()[render::PIXELS..],
-                    (status::WIDTH as u16, status::HEIGHT as u16),
-                    at,
-                    DirtyRect {
-                        x0: 0,
-                        y0: 0,
-                        x1: status::WIDTH as u16 - 1,
-                        y1: status::HEIGHT as u16 - 1,
-                    },
-                )
-                .await;
+                if !status_valid
+                    || job.clear_outside
+                    || full_after_wake
+                    || band != last_status.as_slice()
+                {
+                    completed = upload(
+                        &mut panel,
+                        PixelSource::rgb565(band, (status::WIDTH as u16, status::HEIGHT as u16)),
+                        at,
+                        DirtyRect {
+                            x0: 0,
+                            y0: 0,
+                            x1: status::WIDTH as u16 - 1,
+                            y1: status::HEIGHT as u16 - 1,
+                        },
+                    )
+                    .await;
+                    if completed {
+                        last_status.copy_from_slice(band);
+                        status_valid = true;
+                    }
+                }
             }
         }
 
@@ -438,12 +474,15 @@ async fn run_plane(
             let source = match &job.canvas {
                 Frame::Pool(lease) => {
                     use crate::companion::{render, status};
-                    final_capture.blit(
-                        &lease.pixels()[..render::PIXELS],
-                        canvas_w as usize,
-                        area,
-                        (origin_x + area.x0, origin_y + area.y0),
-                    );
+                    for region in damage.regions() {
+                        let area = align4(clip(*region, full), canvas_w);
+                        final_capture.blit(
+                            &lease.pixels()[..render::PIXELS],
+                            canvas_w as usize,
+                            area,
+                            (origin_x + area.x0, origin_y + area.y0),
+                        );
+                    }
                     let at = (
                         (i32::from(origin_x) + status::OFFSET.0) as u16,
                         (i32::from(origin_y) + status::OFFSET.1) as u16,
@@ -462,12 +501,14 @@ async fn run_plane(
                     "Home"
                 }
                 Frame::Screen(lease) => {
-                    final_capture.blit(
-                        lease.pixels(),
-                        canvas_w as usize,
-                        area,
-                        (origin_x + area.x0, origin_y + area.y0),
-                    );
+                    for region in damage.regions() {
+                        let area = align4(clip(*region, full), canvas_w);
+                        final_capture.blit_source(
+                            lease.pixels(),
+                            area,
+                            (origin_x + area.x0, origin_y + area.y0),
+                        );
+                    }
                     "Screen"
                 }
                 Frame::Slide {
@@ -482,9 +523,8 @@ async fn run_plane(
                             Source::New => new.pixels(),
                             Source::Old => old.pixels(),
                         };
-                        final_capture.blit(
+                        final_capture.blit_source(
                             pixels,
-                            WIDTH,
                             DirtyRect {
                                 x0: band.src_x,
                                 y0: 0,
@@ -525,7 +565,27 @@ async fn run_plane(
         if completed {
             apply_brightness(&mut panel, &mut applied_brightness, restored_cycle).await;
         }
+        if matches!(job.canvas, Frame::Screen(_)) {
+            if completed {
+                pending_screen = Damage::new();
+            } else {
+                pending_screen.merge(job.damage.unwrap_or_else(Damage::full));
+            }
+        } else if completed {
+            // A cached LVGL page must cover the whole panel after Home or a slide.
+            pending_screen = Damage::full();
+        }
+        if !completed || !matches!(job.canvas, Frame::Pool(_)) {
+            status_valid = false;
+        }
 
+        #[cfg(feature = "display-metrics")]
+        {
+            let stats = panel.take_stats();
+            info!(target: "display.frame", "ok={} rgb888={} total_us={} te_us={} bytes={} direct={} windows={} pack_us={} transfer_us={}",
+                completed, PANEL_FORMAT.bytes_per_pixel() == 3, frame_started.elapsed().as_micros(), te_us,
+                stats.bytes, stats.direct_bytes, stats.windows, stats.pack_us, stats.transfer_us);
+        }
         // Return the slot to the renderer after the completed transfer.
         drop(job);
     }
@@ -555,37 +615,27 @@ async fn apply_brightness(
     }
 }
 
-/// Transfer one rectangle in bounded bursts, retrying a failed burst once.
+/// Transfer a rectangle with independently addressed DMA chunks. A retry
+/// resends the whole rectangle while its immutable source lease remains live.
 async fn upload(
     panel: &mut Display<esp_hal::Async>,
-    pixels: &[u16],
-    size: (u16, u16),
+    source: PixelSource<'_>,
     at: (u16, u16),
     area: DirtyRect,
 ) -> bool {
-    let mut y = area.y0;
-    while y <= area.y1 {
-        let y2 = (y + CHUNK_ROWS - 1).min(area.y1);
-        let dst = DirtyRect {
-            x0: at.0 + area.x0,
-            y0: at.1 + y,
-            x1: at.0 + area.x1,
-            y1: at.1 + y2,
-        };
-        let src = DirtyRect {
-            y0: y,
-            y1: y2,
-            ..area
-        };
-        let mut result = panel.write_canvas_async(dst, src, size, pixels).await;
-        if result.is_err() {
-            result = panel.write_canvas_async(dst, src, size, pixels).await;
-        }
-        if let Err(error) = result {
-            warn!("plane: canvas {dst:?} failed: {error:?}");
-            return false;
-        }
-        y = y2 + 1;
+    let dst = DirtyRect {
+        x0: at.0 + area.x0,
+        y0: at.1 + area.y0,
+        x1: at.0 + area.x1,
+        y1: at.1 + area.y1,
+    };
+    let mut result = panel.write_pixels_async(dst, area, source).await;
+    if result.is_err() {
+        result = panel.write_pixels_async(dst, area, source).await;
+    }
+    if let Err(error) = result {
+        warn!("plane: canvas {dst:?} failed: {error:?}");
+        return false;
     }
     true
 }
@@ -596,16 +646,6 @@ fn origin((w, h): (u16, u16)) -> (u16, u16) {
     let x = (WIDTH as u16 - w) / 2;
     let y = ((HEIGHT as u16 - h) / 2 + FOX_DROP_PX).min(HEIGHT as u16 - h);
     (x, y)
-}
-
-/// Smallest rectangle covering both.
-fn union(a: DirtyRect, b: DirtyRect) -> DirtyRect {
-    DirtyRect {
-        x0: a.x0.min(b.x0),
-        y0: a.y0.min(b.y0),
-        x1: a.x1.max(b.x1),
-        y1: a.y1.max(b.y1),
-    }
 }
 
 /// `rect` limited to `bounds`.

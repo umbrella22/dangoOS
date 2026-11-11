@@ -52,6 +52,14 @@ impl FinalCapture {
     pub fn blit(&mut self, pixels: &[u16], pitch: usize, area: DirtyRect, at: (u16, u16)) {
         self.frame.blit(pixels, pitch, area, at);
     }
+    pub fn blit_source(
+        &mut self,
+        source: board_s31::pixels::PixelSource<'_>,
+        area: DirtyRect,
+        at: (u16, u16),
+    ) {
+        self.frame.blit_source(source, area, at);
+    }
     pub fn complete(&mut self, elapsed_ms: u32, source: &'static str) {
         self.source = source;
         self.frame.complete();

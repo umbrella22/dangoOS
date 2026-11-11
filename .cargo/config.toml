@@ -2,6 +2,9 @@
 [alias]
 # Firmware build: cargo fw  (flash + monitor: cargo fw-run, needs a board)
 fw = "build -p os --bin os-fw --features firmware --release --target riscv32imafc-unknown-none-elf"
+# Device candidate: local RGB888 updates, opt-in TE policy and transfer counters.
+fw-rgb888 = "build -p os --bin os-fw --features firmware,display-rgb888,display-low-latency,display-metrics --release --target riscv32imafc-unknown-none-elf"
+sim-display = "run -p os --example display_pipeline --features display-simulator,display-rgb888"
 fw-run = "run -p os --bin os-fw --features firmware --release --target riscv32imafc-unknown-none-elf"
 fw-ts = "build -p os --bin os-fw --no-default-features --features firmware,dual-core-ui,ts-engine --release --target riscv32imafc-unknown-none-elf"
 

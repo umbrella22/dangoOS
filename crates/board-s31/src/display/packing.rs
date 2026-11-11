@@ -55,7 +55,9 @@ pub(crate) fn pack_rgb565(
 
 #[cfg(test)]
 mod tests {
+    extern crate alloc;
     use super::pack_rgb565;
+    use alloc::{vec, vec::Vec};
 
     const PANEL: (u16, u16) = (480, 480);
     const MAX_ROWS: u16 = 16;
