@@ -41,6 +41,23 @@ pub fn cos(x: f32) -> f32 {
     sin(x + PI / 2.0)
 }
 
+/// atan2 over the full circle; error below 0.3 degrees, including the seam.
+pub fn atan2(y: f32, x: f32) -> f32 {
+    if x == 0.0 && y == 0.0 {
+        return 0.0;
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    let t = ax.min(ay) / ax.max(ay);
+    let a = t * (PI / 4.0) + 0.273 * t * (1.0 - t);
+    let a = if ay > ax { PI / 2.0 - a } else { a };
+    let a = if x < 0.0 { PI - a } else { a };
+    if y < 0.0 {
+        -a
+    } else {
+        a
+    }
+}
+
 /// `exp(-x)` for `x >= 0`: `(1 + x/16)^-16`.
 pub fn exp_neg(x: f32) -> f32 {
     let t = 1.0 + x.max(0.0) / 16.0;

@@ -20,6 +20,7 @@ pub mod entrance;
 pub mod loading;
 
 mod animate;
+mod articulate;
 pub(crate) mod math;
 mod render;
 mod scene;
@@ -363,6 +364,7 @@ mod tests {
                     offset_x: 4,
                     offset_y: -10,
                     look_x: 5.0,
+                    balance: crate::companion::behavior::balance::BalanceVisual::REST,
                 });
                 r.render(&s, &mut out);
             }

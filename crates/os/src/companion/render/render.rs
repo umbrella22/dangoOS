@@ -13,7 +13,8 @@ use alloc::rc::Rc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::companion::render::math::round;
+use super::scene::ArticulatedLayer;
+use crate::companion::render::math::{cos, round, sin, PI};
 use {
     crate::companion::render::scene::Layer, crate::companion::render::scene::Scene,
     crate::companion::render::scene::Warp,
@@ -102,6 +103,11 @@ fn warp(indices: &[u8], palette: &[u16], transform: Warp, out: &mut [u16]) {
         return;
     }
 
+    if transform.angle_deg != 0.0 || transform.fit != 1.0 {
+        warp_rotated(indices, palette, transform, out);
+        return;
+    }
+
     // Small fixed tables on the UI stack, with no per-frame heap allocation
     // and no second RGB canvas. Palette indices were checked at skin load.
     let mut colors = [0; 256];
@@ -151,6 +157,41 @@ fn warp(indices: &[u8], palette: &[u16], transform: Warp, out: &mut [u16]) {
                 blend(top, bottom, u32::from(sy.weight))
             };
             *o = (rgb | rgb >> 16) as u16;
+        }
+    }
+}
+
+/// Inverse affine sampling. The existing row-cache path remains available for
+/// ordinary breathing; rotation adds no canvas and no per-frame allocation.
+fn warp_rotated(indices: &[u8], palette: &[u16], t: Warp, out: &mut [u16]) {
+    let mut colors = [0; 256];
+    for (slot, &color) in colors.iter_mut().zip(palette) {
+        *slot = expanded(color);
+    }
+    let (cx, cy, ay) = (W as f32 / 2.0, H as f32 / 2.0, (H - 1) as f32);
+    let r = t.angle_deg * PI / 180.0;
+    let (c, s) = (cos(r) / t.fit, sin(r) / t.fit);
+    let (du, dv) = (c / t.sx, -s / t.sy);
+    let color = |x: i32, y: i32| {
+        if x < 0 || x >= W as i32 || y < 0 || y >= H as i32 {
+            0
+        } else {
+            colors[indices[y as usize * W + x as usize] as usize]
+        }
+    };
+    for y in 0..H {
+        let (x0, y0) = (-t.dx as f32 - cx, y as f32 - t.dy as f32 - cy);
+        let mut u = cx + (x0 * c + y0 * s) / t.sx;
+        let mut v = ay + (cy - ay - x0 * s + y0 * c) / t.sy;
+        for o in &mut out[y * W..(y + 1) * W] {
+            let (px, py) = (sample(u), sample(v));
+            let (x, y) = (i32::from(px.left), i32::from(py.left));
+            let top = blend(color(x, y), color(x + 1, y), u32::from(px.weight));
+            let bottom = blend(color(x, y + 1), color(x + 1, y + 1), u32::from(px.weight));
+            let rgb = blend(top, bottom, u32::from(py.weight));
+            *o = (rgb | rgb >> 16) as u16;
+            u += du;
+            v += dv;
         }
     }
 }
@@ -238,6 +279,7 @@ impl FoxRenderer {
         let sig = scene
             .under
             .signature(0xcbf2_9ce4_8422_2325 ^ scene.pose as u64);
+        let sig = scene.rig.map_or(sig, |rig| rig.signature(sig));
         let same_skin = self
             .skin
             .as_ref()
@@ -249,24 +291,111 @@ impl FoxRenderer {
         self.signature = sig;
         self.skin = Some(Rc::clone(&scene.skin));
         let pose = scene.skin.pose(scene.pose);
+        let base = scene.rig.map_or(pose.base, |rig| rig.body);
         if scene.skin.indexed_zlib() {
             // Base poses are validated opaque and canvas-sized: inflate
             // directly into the composition buffer, with no second canvas.
-            scene.skin.decode_indexed(&pose.base, &mut self.idx);
+            scene.skin.decode_indexed(&base, &mut self.idx);
         } else {
             stamp(
                 &mut self.idx,
                 W,
                 H,
-                &pose.base,
+                &base,
                 &scene.skin,
                 0,
                 0,
                 &mut self.decoded,
             );
         }
+        if let Some(rig) = scene.rig {
+            let dx = rig.body_dx.unsigned_abs() as usize;
+            if dx > 0 && dx < W {
+                let background = self.idx[0];
+                for row in self.idx.chunks_exact_mut(W) {
+                    if rig.body_dx > 0 {
+                        row.copy_within(..W - dx, dx);
+                        row[..dx].fill(background);
+                    } else {
+                        row.copy_within(dx.., 0);
+                        row[W - dx..].fill(background);
+                    }
+                }
+            }
+            let dy = rig.body_dy.unsigned_abs() as usize;
+            if dy > 0 && dy < H {
+                let background = self.idx[0];
+                if rig.body_dy > 0 {
+                    self.idx.copy_within(..(H - dy) * W, dy * W);
+                    self.idx[..dy * W].fill(background);
+                } else {
+                    self.idx.copy_within(dy * W.., 0);
+                    self.idx[(H - dy) * W..].fill(background);
+                }
+            }
+            for ear in rig.ears.iter().flatten() {
+                self.articulated_into_idx(*ear, &scene.skin, true);
+            }
+        }
         for l in scene.under.iter() {
-            self.layer_into_idx(l, &scene.skin);
+            let mut layer = *l;
+            layer.dx += scene.rig.map_or(0, |rig| rig.body_dx);
+            layer.dy += scene.rig.map_or(0, |rig| rig.body_dy);
+            self.layer_into_idx(&layer, &scene.skin);
+        }
+        if let Some(rig) = scene.rig {
+            for hand in rig.hands {
+                self.articulated_into_idx(hand, &scene.skin, false);
+            }
+        }
+    }
+
+    fn articulated_into_idx(&mut self, hand: ArticulatedLayer, skin: &Skin, behind: bool) {
+        let img = hand.img;
+        let (w, h) = (img.w as usize, img.h as usize);
+        self.scratch.resize(w * h, TRANSPARENT);
+        self.scratch.fill(TRANSPARENT);
+        stamp(&mut self.scratch, w, h, &img, skin, 0, 0, &mut self.decoded);
+        let r = hand.angle_deg * PI / 180.0;
+        let (c, s) = (cos(r), sin(r));
+        let (px, py) = (hand.pivot[0] as f32, hand.pivot[1] as f32);
+        let (cx, cy) = (
+            img.x as f32 + px + hand.dx as f32,
+            img.y as f32 + py + hand.dy as f32,
+        );
+        let mut bounds = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+        for (x, y) in [
+            (0.0, 0.0),
+            (w as f32, 0.0),
+            (0.0, h as f32),
+            (w as f32, h as f32),
+        ] {
+            let (x, y) = (
+                cx + (x - px) * hand.scale_x * c - (y - py) * hand.scale_y * s,
+                cy + (x - px) * hand.scale_x * s + (y - py) * hand.scale_y * c,
+            );
+            bounds[0] = bounds[0].min(x);
+            bounds[1] = bounds[1].min(y);
+            bounds[2] = bounds[2].max(x);
+            bounds[3] = bounds[3].max(y);
+        }
+        for y in (round(bounds[1]) - 1).max(0)..(round(bounds[3]) + 2).min(H as i32) {
+            for x in (round(bounds[0]) - 1).max(0)..(round(bounds[2]) + 2).min(W as i32) {
+                let (dx, dy) = (x as f32 - cx, y as f32 - cy);
+                let (u, v) = (
+                    round(px + (dx * c + dy * s) / hand.scale_x),
+                    round(py + (-dx * s + dy * c) / hand.scale_y),
+                );
+                if u < 0 || v < 0 || u >= w as i32 || v >= h as i32 {
+                    continue;
+                }
+                let index = self.scratch[v as usize * w + u as usize];
+                if index != TRANSPARENT
+                    && (!behind || self.idx[y as usize * W + x as usize] == TRANSPARENT)
+                {
+                    self.idx[y as usize * W + x as usize] = index;
+                }
+            }
         }
     }
 
@@ -460,6 +589,33 @@ mod tests {
         assert_eq!(out[168 * W + 88], 0xf800);
         assert_eq!(out[(H - 1) * W + W / 2], 0xf800);
         assert_eq!(&out[PIXELS..], &[0x1234; 4]);
+    }
+
+    #[test]
+    fn rotated_sampling_matches_forward_placement_and_keeps_output_bounds() {
+        let mut indices = vec![0; PIXELS];
+        for y in 190..211 {
+            indices[y * W + 165..y * W + 186].fill(1);
+        }
+        let mut out = vec![0x1234; PIXELS + 4];
+        for angle in [-180.0, -90.0, -37.0, 0.0, 45.0, 90.0, 180.0] {
+            let transform = Warp {
+                angle_deg: angle,
+                fit: 0.78,
+                dx: 9,
+                dy: -12,
+                sx: 1.03,
+                sy: 0.97,
+            };
+            warp(&indices, &[0, 0xffff], transform, &mut out);
+            let (x, y) = transform.forward(175.0, 200.0);
+            assert_eq!(
+                out[round(y) as usize * W + round(x) as usize],
+                0xffff,
+                "{angle}"
+            );
+            assert_eq!(&out[PIXELS..], &[0x1234; 4]);
+        }
     }
 
     #[test]

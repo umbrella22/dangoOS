@@ -52,10 +52,12 @@ use {crate::companion::widget::FoxControl, crate::companion::widget::FoxVisual};
 /// The runtime state machine that turns sensors plus touch into one fox.
 pub struct Runtime {
     affect: AffectEngine,
+    balance: crate::companion::behavior::balance::Balance,
     personality: PersonalityEngine,
     control: Rc<FoxControl>,
     /// Expression the affect engine currently resolves to.
     affect_expression: Expression,
+    affect_reason: crate::companion::behavior::affect::ReactionReason,
     /// Latest personality output.
     persona: PersonaOutput,
     /// Haptics produced since the last drain, newest last.
@@ -77,9 +79,11 @@ impl Runtime {
     pub fn new(now_ms: u64, control: Rc<FoxControl>) -> Self {
         let mut runtime = Self {
             affect: AffectEngine::new(now_ms),
+            balance: crate::companion::behavior::balance::Balance::new(now_ms),
             personality: PersonalityEngine::new(now_ms),
             control,
             affect_expression: Expression::Idle,
+            affect_reason: crate::companion::behavior::affect::ReactionReason::Idle,
             persona: PersonaOutput::IDLE,
             pending_haptics: [None; 2],
             pending_len: 0,
@@ -142,6 +146,7 @@ impl Runtime {
         if self.shutdown {
             return;
         }
+        self.balance.observe(event);
         if let Some(b) = self.brain.as_mut() {
             b.event(event);
         }
@@ -221,6 +226,7 @@ impl Runtime {
             self.publish();
             return None;
         }
+        self.control.set_balance(self.balance.tick(now_ms));
         let mut persona = self.personality.tick(now_ms);
         if let Some(pattern) = persona.haptic.take() {
             self.push_haptic(pattern);
@@ -229,6 +235,7 @@ impl Runtime {
 
         let affect_tick = self.affect.tick(now_ms);
         self.affect_expression = affect_tick.state.expression;
+        self.affect_reason = affect_tick.state.reason;
         if let Some(pattern) = affect_tick.haptic {
             self.push_haptic(pattern);
         }
@@ -380,7 +387,9 @@ impl Runtime {
     }
 
     fn refresh_affect(&mut self, now_ms: u64) {
-        self.affect_expression = self.affect.snapshot_at(now_ms).expression;
+        let state = self.affect.snapshot_at(now_ms);
+        self.affect_expression = state.expression;
+        self.affect_reason = state.reason;
     }
 
     /// Push the merged expression and pose into the control.
@@ -391,7 +400,15 @@ impl Runtime {
     /// dirty the canvas on every iteration and burn the whole raster budget on
     /// sub-pixel changes nobody can see.
     fn publish(&mut self) {
+        if self.shutdown {
+            self.control
+                .set_balance(crate::companion::behavior::balance::BalanceVisual::REST);
+        }
         let brain = self.brain.as_mut().and_then(|b| b.output());
+        let mut balance = self.control.balance();
+        balance.rotation_reaction = self.affect_expression == Expression::Confused
+            && self.affect_reason == crate::companion::behavior::affect::ReactionReason::ShakeSmall;
+        self.control.set_balance(balance);
         self.control
             .set_play_pose(if self.shutdown || self.native_urgent() {
                 None

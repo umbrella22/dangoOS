@@ -1,13 +1,12 @@
 //! Validated, owned skin resources. No file-backed pointer reaches the renderer.
 use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
 use miniz_oxide::inflate::{
-    core::{decompress, inflate_flags, DecompressorOxide},
     TINFLStatus,
+    core::{DecompressorOxide, decompress, inflate_flags},
 };
 use {
-    crate::companion::render::data, crate::companion::render::FoxPose,
-    crate::companion::render::Img, crate::companion::render::Pose, crate::companion::render::H,
-    crate::companion::render::W,
+    crate::companion::render::FoxPose, crate::companion::render::H, crate::companion::render::Img,
+    crate::companion::render::Pose, crate::companion::render::W, crate::companion::render::data,
 };
 
 pub const MAGIC: &[u8; 8] = b"MSKIN01\0";
@@ -19,6 +18,29 @@ pub const MAX_DECODED_BYTES: usize = MAX_BYTES;
 const COMPRESSED_MAGIC: &[u8; 8] = b"MSKINZ1\0";
 pub const POSES: usize = 25;
 pub const GROUPS: usize = 11;
+
+#[derive(Clone, Copy, Debug)]
+pub struct RigHand {
+    pub img: Img,
+    /// Pivot in the hand image, in source pixels.
+    pub pivot: [i16; 2],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BalanceRig {
+    pub body: Img,
+    pub hands: [RigHand; 2],
+    /// v4: effort, dizzy, weary, relief; transparent face patches.
+    /// v3 retains its release and landing faces in the middle slots.
+    pub faces: [Img; 4],
+    pub articulation: Option<RigArticulation>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RigArticulation {
+    pub ears: [RigHand; 2],
+    pub blink: Img,
+}
 
 // A non-inlined return lets Box::write initialize the large Huffman tables
 // directly in its heap allocation. Box::default() leaves a 10 KiB temporary
@@ -97,12 +119,16 @@ struct Package {
     bytes: Vec<u8>,
     blob_start: usize,
     indexed_zlib: bool,
+    balance: Option<BalanceRig>,
 }
 #[derive(Debug)]
 pub struct Skin {
     package: Option<Package>,
 }
 impl Skin {
+    pub fn balance_rig(&self) -> Option<BalanceRig> {
+        self.package.as_ref().and_then(|p| p.balance)
+    }
     pub(crate) fn same_resources(a: &Rc<Self>, b: &Rc<Self>) -> bool {
         Rc::ptr_eq(a, b) || (a.package.is_none() && b.package.is_none())
     }
@@ -182,7 +208,7 @@ impl Skin {
         }
         let mut r = Reader { b: &bytes, at: 8 };
         let version = r.u32()?;
-        if ![1, 2].contains(&version) || r.u16()? as usize != W || r.u16()? as usize != H {
+        if ![1, 2, 3, 4].contains(&version) || r.u16()? as usize != W || r.u16()? as usize != H {
             return Err("skin binary version/canvas".into());
         }
         let colors = r.u16()? as usize;
@@ -243,7 +269,7 @@ impl Skin {
                 &bytes[end..],
                 colors,
                 true,
-                version == 2,
+                version >= 2,
                 &mut decoder,
             )?;
             for img in groups.iter().flatten() {
@@ -252,12 +278,67 @@ impl Skin {
                     &bytes[end..],
                     colors,
                     false,
-                    version == 2,
+                    version >= 2,
                     &mut decoder,
                 )?;
             }
             table.push(OwnedPose { base, groups });
         }
+        // v3 appends one optional-motion rig after the unchanged pose table.
+        // Existing v1/v2 characters remain usable without articulated paws.
+        let balance = if version >= 3 {
+            let body = r.img()?;
+            if body.x != 0
+                || body.y != 0
+                || body.w as usize != W
+                || body.h as usize != H
+                || body.over_bg
+            {
+                return Err("skin balance body dimensions".into());
+            }
+            validate_img(
+                &body,
+                &bytes[end..],
+                colors,
+                version == 3,
+                true,
+                &mut decoder,
+            )?;
+            let hands = [
+                r.rig_part(&bytes[end..], colors, &mut decoder)?,
+                r.rig_part(&bytes[end..], colors, &mut decoder)?,
+            ];
+            let mut faces = [body; 4];
+            for face in &mut faces {
+                *face = r.img()?;
+                if face.over_bg {
+                    return Err("skin balance face flags".into());
+                }
+                validate_img(face, &bytes[end..], colors, false, true, &mut decoder)?;
+            }
+            let articulation = if version == 4 {
+                let ears = [
+                    r.rig_part(&bytes[end..], colors, &mut decoder)?,
+                    r.rig_part(&bytes[end..], colors, &mut decoder)?,
+                ];
+                let blink = r.img()?;
+                if blink.over_bg {
+                    return Err("skin balance blink flags".into());
+                }
+                validate_img(&blink, &bytes[end..], colors, false, true, &mut decoder)?;
+                Some(RigArticulation { ears, blink })
+            } else {
+                None
+            };
+            Some(BalanceRig {
+                body,
+                hands,
+                faces,
+                articulation,
+            })
+        } else {
+            None
+        };
         if r.at != end {
             return Err("skin trailing metadata".into());
         }
@@ -268,7 +349,8 @@ impl Skin {
                 poses: table,
                 bytes,
                 blob_start: end,
-                indexed_zlib: version == 2,
+                indexed_zlib: version >= 2,
+                balance,
             }),
         }))
     }
@@ -385,7 +467,220 @@ struct Reader<'a> {
     b: &'a [u8],
     at: usize,
 }
+
+#[cfg(test)]
+mod balance_tests {
+    use super::*;
+
+    #[test]
+    fn every_shipped_character_has_a_valid_rig_and_legacy_skins_still_load() {
+        for id in ["default", "eclipse", "normal", "black-blue"] {
+            let path = alloc::format!(
+                "{}/../../resources/skins/{id}/fox.bin",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let skin = Skin::parse(std::fs::read(path).unwrap()).unwrap();
+            let rig = skin.balance_rig().expect(id);
+            assert!(rig.articulation.is_some(), "{id}: articulated skin");
+            assert_eq!((rig.body.w as usize, rig.body.h as usize), (W, H));
+            for hand in rig.hands {
+                assert!(hand.img.w < 80 && hand.img.h < 80);
+                let mut pixels = alloc::vec![0; hand.img.w as usize * hand.img.h as usize];
+                skin.decode_indexed(&hand.img, &mut pixels);
+                assert!(pixels.contains(&255), "{id}: hand needs transparency");
+                assert!(pixels.iter().any(|&v| v != 255));
+            }
+        }
+        assert!(Skin::parse(fixture(0)).unwrap().balance_rig().is_none());
+    }
+
+    #[test]
+    fn corrupt_hand_pivots_are_rejected_before_publishing_a_skin() {
+        let mut bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../resources/skins/default/fox.bin"
+        ))
+        .to_vec();
+        let meta = u32::from_le_bytes(bytes[20..24].try_into().unwrap()) as usize;
+        let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let rig_bytes = if version == 4 { 216 } else { 148 };
+        let last_pivot = HEADER + meta - rig_bytes + 64;
+        bytes[last_pivot..last_pivot + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+        let crc = crate::formats::crc32::crc32(&bytes[HEADER..]);
+        bytes[28..32].copy_from_slice(&crc.to_le_bytes());
+        assert!(Skin::parse(bytes).unwrap_err().contains("hand pivot"));
+    }
+
+    #[test]
+    fn articulated_skins_keep_v2_v3_readable_and_reject_invalid_extra_pivots() {
+        let original = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../resources/skins/default/fox.bin"
+        ))
+        .to_vec();
+        let meta = u32::from_le_bytes(original[20..24].try_into().unwrap()) as usize;
+        let start = HEADER + meta - 216;
+        for offset in [168, 192] {
+            let mut bad = original.clone();
+            bad[start + offset..start + offset + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+            fix_crc(&mut bad);
+            assert!(Skin::parse(bad).unwrap_err().contains("hand pivot"));
+        }
+        for version in [2u32, 3] {
+            let mut legacy = original.clone();
+            let colors = u16::from_le_bytes(legacy[16..18].try_into().unwrap()) as usize;
+            let base = legacy[HEADER + colors * 2 + 2..HEADER + colors * 2 + 22].to_vec();
+            // v3 required an opaque full-canvas body. Use the original idle
+            // body while removing the v4-only metadata; unused blob bytes are
+            // allowed in all three formats.
+            legacy[start..start + 20].copy_from_slice(&base);
+            let removed = if version == 2 { 216 } else { 68 };
+            legacy.drain(HEADER + meta - removed..HEADER + meta);
+            legacy[8..12].copy_from_slice(&version.to_le_bytes());
+            legacy[20..24].copy_from_slice(&((meta - removed) as u32).to_le_bytes());
+            fix_crc(&mut legacy);
+            let skin = Skin::parse(legacy).unwrap();
+            assert_eq!(skin.balance_rig().is_some(), version == 3);
+            assert!(skin.balance_rig().is_none_or(|r| r.articulation.is_none()));
+        }
+    }
+
+    #[test]
+    fn holding_one_side_only_gently_stretches_the_leading_mitten() {
+        use crate::companion::{
+            behavior::balance::{BalanceStage, BalanceVisual},
+            render::{FoxAnimator, FoxInput},
+        };
+        let animator = FoxAnimator::with_skin(FoxPose::Idle, reference());
+        for side in [-1.0, 1.0] {
+            let scene = animator.scene(FoxInput {
+                balance: BalanceVisual {
+                    active: true,
+                    stage: BalanceStage::Struggling,
+                    grip: 1.0,
+                    drag: 1.0,
+                    reach: 1.0,
+                    hold_side: side,
+                    ..BalanceVisual::REST
+                },
+                ..FoxInput::REST
+            });
+            let hands = scene.rig.unwrap().hands;
+            let lead = if side < 0.0 { 0 } else { 1 };
+            assert!(hands[lead].scale_y > hands[1 - lead].scale_y);
+            for hand in hands {
+                assert!(
+                    hand.scale_y / hand.scale_x < 1.32,
+                    "mitten keeps its round silhouette"
+                );
+            }
+            assert!(
+                hands[lead].dy < hands[1 - lead].dy,
+                "one hand catches the side while the other follows"
+            );
+        }
+    }
+
+    #[test]
+    fn completed_rotation_does_not_flash_the_old_confused_pose() {
+        use crate::companion::{
+            behavior::{
+                affect::{EventKind, EventSource, SensorEvent},
+                balance::{BalanceFace, BalanceVisual},
+            },
+            render::{FoxAnimator, FoxInput},
+        };
+        use crate::{Expression, FoxControl, Runtime};
+        for use_brain in [false, true] {
+            let control = FoxControl::new(Expression::Idle);
+            let mut runtime = Runtime::new(0, Rc::clone(&control));
+            if use_brain {
+                runtime
+                    .enable_brain(
+                        crate::companion::brain::DEFAULT_SOURCE,
+                        0,
+                        &app_host::GLOBAL_ALLOCATOR,
+                        None,
+                    )
+                    .unwrap();
+            }
+            let mut animator = FoxAnimator::with_skin(FoxPose::Idle, reference());
+            let mut recovered_while_affect_was_still_dizzy = false;
+            for at in (20u64..=4800).step_by(20) {
+                let moving = at.saturating_sub(500).min(900);
+                let angle = (moving as f32 * 0.6).to_radians();
+                for kind in [
+                    EventKind::Accel {
+                        ax_mg: (angle.sin() * 1000.0) as i16,
+                        ay_mg: (angle.cos() * 1000.0) as i16,
+                        az_mg: 0,
+                    },
+                    EventKind::Gyro {
+                        gx_dps: 0,
+                        gy_dps: 0,
+                        gz_dps: if at > 500 && moving < 900 { 600 } else { 0 },
+                    },
+                ] {
+                    runtime.on_sensor(SensorEvent {
+                        at_ms: at,
+                        source: EventSource::Imu,
+                        kind,
+                    });
+                }
+                runtime.tick(at);
+                animator.set_pose(control.expression().into());
+                animator.advance(20);
+                let balance = control.balance();
+                let scene = animator.scene(FoxInput {
+                    balance,
+                    ..FoxInput::REST
+                });
+                if at > 3200 {
+                    assert_eq!(balance.face, BalanceFace::Neutral);
+                    assert_eq!(scene.pose, FoxPose::Idle);
+                    assert!(
+                        scene.rig.is_some(),
+                        "same layered body through recovery and the Idle handoff"
+                    );
+                    if control.expression() == Expression::Confused {
+                        recovered_while_affect_was_still_dizzy = true;
+                        assert!(balance.rotation_reaction);
+                    }
+                }
+            }
+            assert!(recovered_while_affect_was_still_dizzy);
+        }
+        let unrelated = FoxAnimator::with_skin(FoxPose::Confused, reference()).scene(FoxInput {
+            balance: BalanceVisual {
+                active: true,
+                ..BalanceVisual::REST
+            },
+            ..FoxInput::REST
+        });
+        assert_eq!(unrelated.pose, FoxPose::Confused);
+        assert!(unrelated.rig.is_none());
+    }
+}
 impl Reader<'_> {
+    fn rig_part(
+        &mut self,
+        blob: &[u8],
+        colors: usize,
+        decoder: &mut SkinDecoder,
+    ) -> Result<RigHand, String> {
+        let img = self.img()?;
+        let pivot = [self.u16()? as i16, self.u16()? as i16];
+        if img.over_bg
+            || pivot[0] < 0
+            || pivot[1] < 0
+            || pivot[0] >= img.w as i16
+            || pivot[1] >= img.h as i16
+        {
+            return Err("skin balance hand pivot".into());
+        }
+        validate_img(&img, blob, colors, false, true, decoder)?;
+        Ok(RigHand { img, pivot })
+    }
     fn take<const N: usize>(&mut self) -> Result<[u8; N], String> {
         let b = self
             .b
@@ -440,6 +735,19 @@ pub(crate) fn reference() -> Rc<Skin> {
 pub(crate) fn fixture(xor: u16) -> Vec<u8> {
     fixture_with(xor, |_, _| {})
 }
+// Keep v1 conversion independent of future artwork detail. Its decoded RLE
+// budget is still 1 MiB, whereas current v4 art is stored per-image as zlib.
+#[cfg(test)]
+fn legacy_reference() -> Rc<Skin> {
+    Skin::parse(
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/legacy-default-v4.bin"
+        ))
+        .to_vec(),
+    )
+    .unwrap()
+}
 #[cfg(test)]
 fn fixture_with(xor: u16, mut change: impl FnMut(usize, &mut [Vec<Img>; GROUPS])) -> Vec<u8> {
     fn img(b: &mut Vec<u8>, i: &Img) {
@@ -450,9 +758,9 @@ fn fixture_with(xor: u16, mut change: impl FnMut(usize, &mut [Vec<Img>; GROUPS])
             b.extend(n.to_le_bytes());
         }
     }
-    // Re-encode the shipped per-image zlib package as legacy RLE so both
+    // Re-encode the fixed per-image zlib sample as legacy RLE so both
     // decoders and palette/layer mutations retain coverage after extraction.
-    let source = reference();
+    let source = legacy_reference();
     assert!(source.indexed_zlib());
     let mut blob = Vec::new();
     let mut rle = |original: Img| {
@@ -535,8 +843,8 @@ mod tests {
     use alloc::vec;
     use {
         crate::companion::render::FoxAnimator, crate::companion::render::FoxInput,
-        crate::companion::render::FoxRenderer, crate::companion::render::Scene,
-        crate::companion::render::PIXELS,
+        crate::companion::render::FoxRenderer, crate::companion::render::PIXELS,
+        crate::companion::render::Scene,
     };
     #[test]
     fn validation_decoder_reuses_state_and_enforces_limits_after_failed_streams() {
@@ -547,9 +855,11 @@ mod tests {
         assert_eq!(decoder.decompress(&compressed, plain.len()).unwrap(), plain);
         let state = (&**decoder.0.as_ref().unwrap()) as *const DecompressorOxide;
         assert!(decoder.decompress(&compressed, plain.len() - 1).is_err());
-        assert!(decoder
-            .decompress(&compressed[..compressed.len() - 1], plain.len())
-            .is_err());
+        assert!(
+            decoder
+                .decompress(&compressed[..compressed.len() - 1], plain.len())
+                .is_err()
+        );
         let mut bad_checksum = compressed.clone();
         *bad_checksum.last_mut().unwrap() ^= 1;
         assert!(decoder.decompress(&bad_checksum, plain.len()).is_err());
@@ -669,7 +979,7 @@ mod tests {
         // contain their own blink/animation layers as the artwork evolves.
         let mut table = Reader {
             b: &bytes[..end],
-            at: HEADER + reference().palette().len() * 2,
+            at: HEADER + legacy_reference().palette().len() * 2,
         };
         for _ in 0..20 {
             table.u16().unwrap();
@@ -718,7 +1028,7 @@ mod tests {
         let mut r = FoxRenderer::new();
         let mut a = vec![0; PIXELS];
         let mut b = vec![0; PIXELS];
-        r.render(&Scene::with_skin(FoxPose::Idle, reference()), &mut a);
+        r.render(&Scene::with_skin(FoxPose::Idle, legacy_reference()), &mut a);
         r.render(&Scene::with_skin(FoxPose::Idle, default), &mut b);
         assert_eq!(a, b);
         let mut animator = FoxAnimator::new(FoxPose::Idle);
@@ -727,13 +1037,13 @@ mod tests {
         assert_ne!(a, b);
         r.render(&Scene::with_skin(FoxPose::Idle, recolor), &mut b);
         assert_ne!(a, b);
-        r.render(&Scene::with_skin(FoxPose::Idle, reference()), &mut b);
+        r.render(&Scene::with_skin(FoxPose::Idle, legacy_reference()), &mut b);
         assert_eq!(a, b);
     }
     #[test]
     fn all_external_default_poses_and_active_patches_match_across_formats() {
         let skin = Skin::parse(fixture(0)).unwrap();
-        let source = reference();
+        let source = legacy_reference();
         let mut renderer = FoxRenderer::new();
         let mut a = vec![0; PIXELS];
         let mut b = vec![0; PIXELS];
@@ -777,7 +1087,7 @@ mod tests {
     #[test]
     fn rejects_bad_header_pose_dimensions_offsets_runs_palette_and_metadata() {
         let original = fixture(0);
-        let colors = reference().palette().len();
+        let colors = legacy_reference().palette().len();
         for (offset, bytes) in [
             (8, vec![2]),
             (12, vec![0, 0]),
@@ -827,9 +1137,11 @@ mod tests {
                 g[1].resize(12, mouth);
             }
         });
-        assert!(Skin::parse(invalid)
-            .unwrap_err()
-            .contains("simultaneous layer capacity"));
+        assert!(
+            Skin::parse(invalid)
+                .unwrap_err()
+                .contains("simultaneous layer capacity")
+        );
     }
 
     #[test]
