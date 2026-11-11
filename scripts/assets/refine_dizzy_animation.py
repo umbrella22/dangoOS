@@ -78,9 +78,13 @@ def normalize_spirals(work, identity):
         original.write_bytes(source.read_bytes())
     base = Image.open(original).convert('RGB')
     eyes = spiral_masks(base, identity)
-    erase = cv2.dilate(np.maximum.reduce([mask for mask, _ in eyes]), np.ones((7, 7), np.uint8))
     plate = out / 'confused-style-clean.png'
-    Image.fromarray(cv2.inpaint(np.asarray(base), erase, 3, cv2.INPAINT_TELEA)).save(plate)
+    repair = out / 'confused-eye-cleanup.png'
+    if not repair.exists():
+        raise ValueError('Prepare the image 2.6 clean eye plate with --clean-sheet first')
+    # Diffusion from nearby red/blue/black hair creates triangular stains.
+    # Use the reviewed generated skin plate, with a local PhotoCraft mask.
+    plate.write_bytes(repair.read_bytes())
     # Preserve the face's tilted eye line, with a little more space from the
     # bangs and slightly closer-set eyes to match the approved proportions.
     centers = [(x + (w - 1) / 2 + (2 if n == 0 else -2), y + (h - 1) / 2 + 2)
@@ -94,6 +98,53 @@ def rig_spiral_plate(work, identity):
     out = work / 'components' / identity
     return place_reference_eyes(work, identity, out / 'rig-clean-face-registered.png',
                                [(136, 273), (216, 273)], 'rig-dizzy-corrected', rig=True)
+
+
+def prepare_clean_plates(work, sheet_path):
+    from build_image26_components import align
+    sheet = Image.open(sheet_path).convert('RGB')
+    if sheet.size != (1536, 1024):
+        raise ValueError('Expected the three-sprite cleanup sheet at 1536x1024')
+    for i, identity in enumerate(IDS[1:]):
+        out = work / 'components' / identity
+        original = out / 'confused-style-source.png'
+        base = Image.open(original).convert('RGB')
+        source = sheet.crop((i * 512 + 36, 64, i * 512 + 476, 484)).resize(SIZE, Image.Resampling.LANCZOS)
+        aligned, registration = align(source, base, identity)
+        eyes = spiral_masks(base, identity)
+        # Replace the whole old eye disk, including its pale outer stroke.
+        # Painting only the dark spiral leaves a white spiral-shaped halo.
+        erase = np.zeros((SIZE[1], SIZE[0]), np.uint8)
+        for _, (x, y, width, height) in eyes:
+            cv2.ellipse(erase, (round(x + (width - 1) / 2), round(y + (height - 1) / 2)),
+                        (round(width / 2 + 4), round(height / 2 + 4)), 0, 0, 360, 255, -1)
+        rgb = np.asarray(base).astype('float32'); replacement = np.asarray(aligned).astype('float32')
+        yy, xx = np.mgrid[:SIZE[1], :SIZE[0]]
+        # Match the plate to existing pale peach skin, excluding hair, eye ink,
+        # outlines and the lower cheek shadow from the color samples.
+        samples = ((yy > 238) & (yy < 292) & (xx > 108) & (xx < 253) & (erase == 0)
+                   & (rgb[:, :, 0] - rgb[:, :, 1] > 12)
+                   & (rgb[:, :, 1] - rgb[:, :, 2] > 2) & (rgb[:, :, 2] > 140))
+        if samples.sum() < 100:
+            raise ValueError('Not enough clean skin samples for ' + identity)
+        correction = np.median((rgb - replacement)[samples], axis=0)
+        replacement = np.clip(replacement + correction, 0, 255).astype('uint8')
+        alpha = cv2.GaussianBlur(erase, (5, 5), .8)
+        tile = Image.fromarray(replacement).convert('RGBA'); tile.putalpha(Image.fromarray(alpha))
+        path = out / 'confused-eye-repair-layer.png'; tile.save(path)
+        commands = [
+            ('layer.renameLayer', {'name': 'original-expression'}),
+            ('file.placeEmbedded', {'path': str(path), 'fit': False, 'smartObject': False, 'center': [176, 168]}),
+            ('layer.renameLayer', {'name': 'image26-clean-skin-only'}),
+            ('layer.layerMask.fromTransparency', {}),
+        ]
+        project = out / 'confused-eye-cleanup.pcraft'
+        records = execute(CLI, original, commands, project)
+        subprocess.run([str(CLI), 'convert', str(project), str(out / 'confused-eye-cleanup.png')], check=True, capture_output=True)
+        (out / 'confused-eye-cleanup-receipt.json').write_text(json.dumps({
+            'model': 'gpt-image-2.6-sunburst', 'sheet_sha256': hashlib.sha256(sheet_path.read_bytes()).hexdigest(),
+            'registration': registration, 'skin_color_correction': correction.tolist(), 'photocraft': records,
+        }, indent=2) + '\n')
 
 
 def spiral_masks(image, identity):
@@ -195,13 +246,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--id', choices=IDS[1:])
+    parser.add_argument('--clean-sheet', type=Path, help='Register a reviewed image 2.6 blank eye plate sheet')
     args = parser.parse_args(); work = args.work.resolve()
+    if args.clean_sheet:
+        prepare_clean_plates(work, args.clean_sheet.resolve())
     for identity in [args.id] if args.id else IDS[1:]:
         groups = build_spiral_groups(work, identity)
         path = work / 'components' / identity / 'manifest.json'
         spec = json.loads(path.read_text())
         spec['poses'].setdefault('confused', {}).update(groups)
-        spec['skin_version'] = '2026-11-11-image26-v3-dizzy'
+        spec['skin_version'] = '2026-11-11-image26-v4-clean'
         path.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + '\n')
         # Rebuild the fall plates and editable rig with the same approved ink.
         from build_image26_components import make_rig
