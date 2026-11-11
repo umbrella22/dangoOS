@@ -113,6 +113,10 @@ pub struct Warp {
     pub sy: f32,
     pub dx: i32,
     pub dy: i32,
+    /// Screen-plane rotation about canvas centre, after breathing/squash.
+    pub angle_deg: f32,
+    /// Uniform room for rotation and the moving centre of gravity.
+    pub fit: f32,
 }
 
 impl Warp {
@@ -121,16 +125,66 @@ impl Warp {
         sy: 1.0,
         dx: 0,
         dy: 0,
+        angle_deg: 0.0,
+        fit: 1.0,
     };
 
     /// Where a source point lands on the output canvas.
     pub(super) fn forward(&self, x: f32, y: f32) -> (f32, f32) {
         let ax = W as f32 / 2.0;
         let ay = (H - 1) as f32;
+        let (cx, cy) = (W as f32 / 2.0, H as f32 / 2.0);
+        let (x, y) = (ax + (x - ax) * self.sx - cx, ay - (ay - y) * self.sy - cy);
+        let r = self.angle_deg * super::math::PI / 180.0;
+        let (c, s) = (super::math::cos(r), super::math::sin(r));
         (
-            ax + (x - ax) * self.sx + self.dx as f32,
-            ay - (ay - y) * self.sy + self.dy as f32,
+            cx + (x * c - y * s) * self.fit + self.dx as f32,
+            cy + (x * s + y * c) * self.fit + self.dy as f32,
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ArticulatedLayer {
+    pub img: Img,
+    pub pivot: [i16; 2],
+    pub angle_deg: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub dx: i16,
+    pub dy: i16,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RigFrame {
+    pub body: Img,
+    pub body_dx: i16,
+    pub body_dy: i16,
+    pub hands: [ArticulatedLayer; 2],
+    pub ears: Option<[ArticulatedLayer; 2]>,
+}
+
+impl RigFrame {
+    pub(super) fn signature(&self, mut h: u64) -> u64 {
+        h = (h ^ u64::from(self.body.off)).wrapping_mul(0x100_0000_01b3);
+        h = (h ^ self.body_dx as u64).wrapping_mul(0x100_0000_01b3);
+        h = (h ^ self.body_dy as u64).wrapping_mul(0x100_0000_01b3);
+        for hand in self.hands.iter().chain(self.ears.iter().flatten()) {
+            for v in [
+                hand.img.off as u64,
+                hand.img.len as u64,
+                hand.pivot[0] as u64,
+                hand.pivot[1] as u64,
+                hand.angle_deg.to_bits() as u64,
+                hand.scale_x.to_bits() as u64,
+                hand.scale_y.to_bits() as u64,
+                hand.dx as u64,
+                hand.dy as u64,
+            ] {
+                h = (h ^ v).wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        h
     }
 }
 
@@ -144,6 +198,7 @@ pub struct Scene {
     pub warp: Warp,
     /// Background sprites, stamped after the warp.
     pub over: Layers,
+    pub rig: Option<RigFrame>,
 }
 
 impl Scene {
@@ -157,6 +212,7 @@ impl Scene {
             under: Layers::new(),
             warp: Warp::IDENTITY,
             over: Layers::new(),
+            rig: None,
         }
     }
 }

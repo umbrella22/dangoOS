@@ -2,11 +2,11 @@
   "schema_version": 1,
   "id": "normal",
   "name": "玄灵 · 常态",
-  "version": "2026-11-02-upper-right-fang-v1",
+  "version": "2026-11-11-image26-v2-dizzy",
   "canvas": [
     352,
     336
   ],
-  "binary_bytes": 687755,
-  "binary_crc32": 907664785
+  "binary_bytes": 645709,
+  "binary_crc32": 3385378883
 }

@@ -13,6 +13,7 @@
 //!   fixed priority so a touch reaction is not overwritten by ambient noise.
 
 pub mod affect;
+pub mod balance;
 pub mod business;
 pub mod magnet;
 pub mod mood_light;

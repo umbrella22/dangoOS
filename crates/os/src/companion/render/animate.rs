@@ -4,19 +4,21 @@
 //! The timing per expression follows `assets/fox-dango/tools/fox_anim.py`,
 //! which renders the same animation on the host for review.
 
+use super::scene::{ArticulatedLayer, RigFrame};
+use crate::companion::behavior::balance::BalanceVisual;
 use crate::companion::render::skin::Skin;
 use alloc::rc::Rc;
+use {crate::companion::render::FoxPose, crate::companion::render::H, crate::companion::render::W};
 use {
+    crate::companion::render::math::PI, crate::companion::render::math::TAU,
     crate::companion::render::math::clamp, crate::companion::render::math::cos,
     crate::companion::render::math::exp_neg, crate::companion::render::math::inv_sqrt,
     crate::companion::render::math::round, crate::companion::render::math::sin,
-    crate::companion::render::math::PI, crate::companion::render::math::TAU,
 };
 use {
     crate::companion::render::scene::Layer, crate::companion::render::scene::Scene,
     crate::companion::render::scene::Warp,
 };
-use {crate::companion::render::FoxPose, crate::companion::render::H, crate::companion::render::W};
 
 fn phase(t: u32, period: u32, offset: u32) -> f32 {
     ((t + offset) % period) as f32 / period as f32
@@ -68,6 +70,7 @@ pub struct FoxInput {
     pub offset_y: i32,
     /// Personality gaze toward the finger, source units (about -10..10).
     pub look_x: f32,
+    pub balance: BalanceVisual,
 }
 
 impl FoxInput {
@@ -77,6 +80,7 @@ impl FoxInput {
         offset_x: 0,
         offset_y: 0,
         look_x: 0.0,
+        balance: BalanceVisual::REST,
     };
 }
 
@@ -181,10 +185,25 @@ impl FoxAnimator {
     /// Build the scene for the current time.
     pub fn scene(&self, input: FoxInput) -> Scene {
         let t = self.t;
-        let shown = match self.prev {
+        let mut shown = match self.prev {
             Some(prev) if t < SWAP_MS => prev,
             _ => self.pose,
         };
+        // The upright rotation sequence already supplies its own dizzy face.
+        // Use one body throughout recovery, even while Affect's IMU reaction
+        // is still draining; unrelated Confused reactions retain their pose.
+        let rotation_transition = input.balance.active
+            && matches!(self.pose, FoxPose::Idle | FoxPose::Confused)
+            && matches!(shown, FoxPose::Idle | FoxPose::Confused)
+            && (input.balance.rotation_reaction
+                || (self.pose == FoxPose::Idle && self.prev == Some(FoxPose::Confused)))
+            && self
+                .skin
+                .balance_rig()
+                .is_some_and(|rig| rig.articulation.is_some());
+        if rotation_transition && shown == FoxPose::Confused {
+            shown = FoxPose::Idle;
+        }
         let pose = self.skin.pose(shown);
         let mut s = Scene::with_skin(shown, Rc::clone(&self.skin));
 
@@ -196,7 +215,7 @@ impl FoxAnimator {
         let mut dy = 0i32;
 
         // Switch pop: damped spring squash, pose swaps at the deepest point.
-        if self.prev.is_some() && t < POP_MS {
+        if self.prev.is_some() && t < POP_MS && !rotation_transition {
             let tt = t as f32 / 1000.0;
             let amp = match shown {
                 FoxPose::Surprised => -0.10,
@@ -459,11 +478,73 @@ impl FoxAnimator {
 
         sx *= input.scale_x;
         sy *= input.scale_y;
+        let balance = input.balance;
+        let mut balance_sway = 0.0;
+        sx *= 1.0 + balance.squash * 0.6;
+        sy *= 1.0 - balance.squash;
+        let balance_reaction = !matches!(
+            balance.stage,
+            crate::companion::behavior::balance::BalanceStage::Resting
+                | crate::companion::behavior::balance::BalanceStage::Scooting
+        );
+        if balance.active
+            && (shown == FoxPose::Idle
+                || (shown == FoxPose::Confused && balance_reaction && balance.rotation_reaction))
+        {
+            if let Some(rig) = self.skin.balance_rig() {
+                if let Some(art) = rig.articulation {
+                    balance_sway =
+                        super::articulate::pose(&mut s, rig, art, balance, t, self.blinking());
+                } else if balance.active {
+                    use crate::companion::behavior::balance::BalanceStage;
+                    let face = match balance.stage {
+                        BalanceStage::Struggling => Some(0),
+                        BalanceStage::Falling => Some(1),
+                        BalanceStage::Landing => Some(2),
+                        BalanceStage::Recovering => Some(3),
+                        _ => None,
+                    };
+                    if let Some(face) = face {
+                        // Effort has its own eyes and mouth; an idle blink must
+                        // not repaint the neutral face over the reaction.
+                        s.under = super::scene::Layers::new();
+                        s.under.push(Layer::at(&rig.faces[face]));
+                    }
+                    s.rig = Some(RigFrame {
+                        body: rig.body,
+                        body_dx: 0,
+                        body_dy: round(balance.drag * 35.0) as i16,
+                        hands: core::array::from_fn(|i| {
+                            let side = if i == 0 { -1.0 } else { 1.0 };
+                            let loose_angle = side * balance.reach * 38.0 + balance.step * 13.0;
+                            let held_angle = side * 8.0 + balance.step * 3.0;
+                            let loose_y = balance.drag * 35.0 - balance.reach * 3.0
+                                + side * balance.step * 4.0;
+                            let held_y = -35.0 + side * balance.step * 1.5;
+                            let loose_scale = 1.0 + balance.reach * 0.4;
+                            let held_scale = 1.12 + balance.drag * 0.18;
+                            ArticulatedLayer {
+                                img: rig.hands[i].img,
+                                pivot: rig.hands[i].pivot,
+                                angle_deg: loose_angle + (held_angle - loose_angle) * balance.grip,
+                                scale_x: 1.0 - balance.reach * 0.28,
+                                scale_y: loose_scale + (held_scale - loose_scale) * balance.grip,
+                                dx: round(side * balance.reach * 8.0) as i16,
+                                dy: round(loose_y + (held_y - loose_y) * balance.grip) as i16,
+                            }
+                        }),
+                        ears: None,
+                    });
+                }
+            }
+        }
         s.warp = Warp {
             sx: clamp(sx, 0.5, 1.2),
             sy: clamp(sy, 0.5, 1.2),
-            dx: dx + input.offset_x,
-            dy: dy + input.offset_y,
+            dx: dx + input.offset_x + round(balance.x),
+            dy: dy + input.offset_y + round(balance.y),
+            angle_deg: balance.angle_deg + balance_sway,
+            fit: balance.scale,
         };
         s
     }

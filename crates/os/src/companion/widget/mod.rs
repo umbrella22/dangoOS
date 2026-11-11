@@ -32,11 +32,12 @@ use rs_lvgl::sys as lvgl_sys;
 use rs_lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
 
 use crate::companion::behavior::Expression;
+use crate::companion::behavior::balance::BalanceVisual;
 use crate::companion::status;
 use {
-    crate::companion::render as fox, crate::companion::render::entrance,
-    crate::companion::render::FoxAnimator, crate::companion::render::FoxInput,
-    crate::companion::render::FoxPose, crate::companion::render::FoxRenderer,
+    crate::companion::render as fox, crate::companion::render::FoxAnimator,
+    crate::companion::render::FoxInput, crate::companion::render::FoxPose,
+    crate::companion::render::FoxRenderer, crate::companion::render::entrance,
 };
 use {
     crate::services::display::canvas_pool::CanvasPool,
@@ -111,11 +112,7 @@ impl Default for FoxVisual {
 }
 
 fn finite_or(value: f32, fallback: f32) -> f32 {
-    if value.is_finite() {
-        value
-    } else {
-        fallback
-    }
+    if value.is_finite() { value } else { fallback }
 }
 
 /// Application-facing handle to the mounted [`FoxWidget`].
@@ -129,6 +126,7 @@ pub struct FoxControl {
     loading: Cell<bool>,
     radio_status: Cell<Option<crate::services::radio::Snapshot>>,
     visual: Cell<FoxVisual>,
+    balance: Cell<BalanceVisual>,
     /// Render on the next tick instead of waiting for the 50 ms cadence.
     urgent: Cell<bool>,
     #[cfg(test)]
@@ -149,6 +147,22 @@ pub struct FoxControl {
 }
 
 impl FoxControl {
+    /// Continuous motion follows the normal cadence, rather than requesting
+    /// an urgent frame for each 50 Hz IMU sample.
+    pub fn set_balance(&self, visual: BalanceVisual) {
+        let previous = self.balance.replace(visual);
+        if previous.stage != visual.stage
+            || previous.face != visual.face
+            || previous.active != visual.active
+        {
+            self.mark_urgent();
+        }
+    }
+
+    pub fn balance(&self) -> BalanceVisual {
+        self.balance.get()
+    }
+
     /// Create a control handle showing `expression`.
     pub fn new(expression: Expression) -> Rc<Self> {
         Rc::new(Self {
@@ -158,6 +172,7 @@ impl FoxControl {
             loading: Cell::new(false),
             radio_status: Cell::new(None),
             visual: Cell::new(FoxVisual::IDLE),
+            balance: Cell::new(BalanceVisual::REST),
             urgent: Cell::new(true),
             #[cfg(test)]
             creates: Cell::new(0),
@@ -412,6 +427,15 @@ impl FoxWidget {
             offset_x: visual.lean_x as i32,
             offset_y,
             look_x: visual.look_x,
+            balance: if control.entrance_active()
+                || matches!(
+                    control.expression(),
+                    Expression::Sleep | Expression::Error | Expression::Panic
+                ) {
+                BalanceVisual::REST
+            } else {
+                control.balance()
+            },
         }
     }
 
