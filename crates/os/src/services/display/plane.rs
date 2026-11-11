@@ -1,7 +1,7 @@
 //! The panel plane: uploads the fox canvas at a fixed position.
 //!
-//! The fox widget renders its full panel viewport (expression, entrance and
-//! movement) into a two-slot
+//! The fox widget renders its full panel viewport (expression, entrance,
+//! movement and link icons) into a two-slot
 //! [`CanvasPool`](crate::services::display::canvas_pool::CanvasPool), and this task
 //! uploads the newest frame at the panel origin. There is no damage union
 //! and no old-position clear: the rectangle never changes.
@@ -86,7 +86,7 @@ pub fn set_brightness(percent: u8) {
 
 /// The pixels a job uploads.
 pub enum Frame {
-    /// A Home slot: character pixels followed by its separate status band.
+    /// A complete Home frame with character and link icons already composed.
     Pool(ReadLease),
     /// LVGL's full-screen shadow frame (hub pages).
     Screen(ScreenLease),
@@ -104,7 +104,7 @@ pub enum Frame {
 impl Frame {
     fn pixels(&self) -> &[u16] {
         match self {
-            Frame::Pool(lease) => &lease.pixels()[..crate::companion::render::VIEW_PIXELS],
+            Frame::Pool(lease) => lease.pixels(),
             Frame::Screen(lease) => lease.pixels(),
             Frame::Slide { new, .. } => new.pixels(),
         }
@@ -398,32 +398,6 @@ async fn run_plane(
             )
             .await;
         }
-        if completed {
-            if let Frame::Pool(lease) = &job.canvas {
-                use crate::companion::{render, status};
-                let at = (
-                    (i32::from(origin_x) + status::OFFSET.0) as u16,
-                    (i32::from(origin_y) + status::OFFSET.1) as u16,
-                );
-                // Keep the same lease through both uploads, including a full
-                // restore after clear_outside or wake. A failed band must not
-                // acknowledge a complete frame or restore panel brightness.
-                completed = upload(
-                    &mut panel,
-                    &lease.pixels()[render::VIEW_PIXELS..],
-                    (status::WIDTH as u16, status::HEIGHT as u16),
-                    at,
-                    DirtyRect {
-                        x0: 0,
-                        y0: 0,
-                        x1: status::WIDTH as u16 - 1,
-                        y1: status::HEIGHT as u16 - 1,
-                    },
-                )
-                .await;
-            }
-        }
-
         #[cfg(feature = "embedscope")]
         if completed {
             // Copy while the original leases still protect every source, then
@@ -433,27 +407,11 @@ async fn run_plane(
             }
             let source = match &job.canvas {
                 Frame::Pool(lease) => {
-                    use crate::companion::{render, status};
                     final_capture.blit(
-                        &lease.pixels()[..render::VIEW_PIXELS],
+                        lease.pixels(),
                         canvas_w as usize,
                         area,
                         (origin_x + area.x0, origin_y + area.y0),
-                    );
-                    let at = (
-                        (i32::from(origin_x) + status::OFFSET.0) as u16,
-                        (i32::from(origin_y) + status::OFFSET.1) as u16,
-                    );
-                    final_capture.blit(
-                        &lease.pixels()[render::VIEW_PIXELS..],
-                        status::WIDTH,
-                        DirtyRect {
-                            x0: 0,
-                            y0: 0,
-                            x1: status::WIDTH as u16 - 1,
-                            y1: status::HEIGHT as u16 - 1,
-                        },
-                        at,
                     );
                     "Home"
                 }

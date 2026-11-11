@@ -40,14 +40,6 @@ impl CustomWidget for FoxWidget {
         let Some(canvas) = NonNull::new(canvas) else {
             return Err(UiError::Allocation);
         };
-        // The child follows the character's visibility and native lifetime,
-        // but draws above it; both buffers come from the same read lease.
-        let status_canvas = unsafe { lvgl_sys::lv_canvas_create(canvas.as_ptr()) };
-        let Some(status_canvas) = NonNull::new(status_canvas) else {
-            unsafe { lvgl_sys::lv_obj_delete(canvas.as_ptr()) };
-            return Err(UiError::Allocation);
-        };
-
         // SAFETY: `canvas` was just created as a child of `parent`. The pool
         // buffers are leaked and outlive the canvas. On the LVGL path `shown`
         // holds the read lease for `first_ptr`, so the renderer cannot write
@@ -58,25 +50,6 @@ impl CustomWidget for FoxWidget {
             // The size only settles on the next layout pass otherwise.
             lvgl_sys::lv_obj_set_size(canvas.as_ptr(), CANVAS_WIDTH as i32, CANVAS_HEIGHT as i32);
             lvgl_sys::lv_obj_center(canvas.as_ptr());
-            lvgl_sys::lv_obj_add_flag(
-                canvas.as_ptr(),
-                lvgl_sys::lv_obj_flag_t_LV_OBJ_FLAG_OVERFLOW_VISIBLE,
-            );
-            // LVGL clips visible overflow to the parent's extended draw area.
-            lvgl_sys::lv_obj_set_ext_draw_size(canvas.as_ptr(), (-status::OFFSET.1).max(0));
-            set_canvas_buffer(
-                status_canvas,
-                first_ptr.add(fox::VIEW_PIXELS),
-                status::WIDTH,
-                status::HEIGHT,
-            );
-            lvgl_sys::lv_obj_set_size(
-                status_canvas.as_ptr(),
-                status::WIDTH as i32,
-                status::HEIGHT as i32,
-            );
-            lvgl_sys::lv_obj_set_pos(status_canvas.as_ptr(), status::OFFSET.0, status::OFFSET.1);
-            lvgl_sys::lv_obj_set_clickable(status_canvas.as_ptr(), false);
             // A canvas is not clickable by default; the custom node's
             // on_event handler needs real pointer events.
             lvgl_sys::lv_obj_set_clickable(canvas.as_ptr(), true);
@@ -97,7 +70,6 @@ impl CustomWidget for FoxWidget {
                 self.pool = Some(pool);
                 self.shown = shown;
                 self.canvas = Some(canvas);
-                self.status_canvas = Some(status_canvas);
                 #[cfg(test)]
                 self.control
                     .creates
@@ -172,19 +144,17 @@ impl CustomWidget for FoxWidget {
         // synchronous scope runs on the sole LVGL owner, outside C callbacks;
         // no allocator, LVGL or global lock is held when requesting the clock.
         let mut raster = || {
-            let (character, band) = lease.pixels_mut().split_at_mut(fox::VIEW_PIXELS);
+            let pixels = lease.pixels_mut();
             let pose = if self.control.loading() {
-                fox::loading::render_panel(character);
+                fox::loading::render_panel(pixels);
                 None
             } else {
                 let scene = self.animator.scene(input);
-                self.renderer.render_panel(&scene, character);
+                self.renderer.render_panel(&scene, pixels);
                 Some(scene.pose)
             };
             if let Some(status) = self.control.radio_status.get() {
-                status::render(band, status);
-            } else {
-                band.fill(0);
+                status::render_panel(pixels, status);
             }
             pose
         };
@@ -211,7 +181,6 @@ impl CustomWidget for FoxWidget {
             .deletes
             .set(self.control.deletes.get().saturating_add(1));
         self.canvas = None;
-        self.status_canvas = None;
         // Nothing to free: the pool belongs to the control and is leaked, so
         // the native canvas (deleted by the reconciler after this hook) never
         // references freed pixels. Dropping `self.shown` with the widget

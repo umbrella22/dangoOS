@@ -173,11 +173,20 @@ fn link_status_reaches_plane_frames_without_waiting_for_animation_cadence() {
         let frame = control
             .take_frame()
             .expect("link changes publish an urgent plane frame");
-        assert_eq!(
-            &frame.pixels()[..fox::VIEW_PIXELS],
-            &baseline[..fox::VIEW_PIXELS],
-            "status must not move, erase or replace any part of the character"
-        );
+        for (index, (&pixel, &previous)) in frame.pixels().iter().zip(&baseline).enumerate() {
+            let x = index % CANVAS_WIDTH;
+            let y = index / CANVAS_WIDTH;
+            let left = status::OFFSET.0 as usize;
+            let top = status::OFFSET.1 as usize;
+            if !(left..left + status::WIDTH).contains(&x)
+                || !(top..top + status::HEIGHT).contains(&y)
+            {
+                assert_eq!(
+                    pixel, previous,
+                    "radio change must leave the character untouched at {x},{y}"
+                );
+            }
+        }
         if status == Snapshot::new() {
             assert_eq!(
                 frame.pixels(),
@@ -204,7 +213,75 @@ fn link_status_reaches_plane_frames_without_waiting_for_animation_cadence() {
 }
 
 #[test]
-fn native_status_band_draws_above_the_character_and_leaves_no_pixels_after_unmount() {
+fn animation_uploads_never_erase_connected_link_icons_between_panel_bursts() {
+    use crate::services::radio::{BluetoothState, Snapshot, WifiLink, WifiState};
+    let _guard = test_support::lock();
+    unsafe { rs_lvgl::deinit() };
+    rs_lvgl::init();
+    let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
+    let control = FoxControl::new(Expression::Idle);
+    control.set_plane_mode(true);
+    let connected = Snapshot {
+        wifi: WifiState::Connected,
+        wifi_link: WifiLink::Connected {
+            rssi_dbm: Some(-55),
+        },
+        bluetooth: BluetoothState::Connected,
+        ip: None,
+    };
+    control.set_radio_status(connected);
+    let mut ui = mount(&control, &display);
+    let mut icons = alloc::vec![0; status::PIXELS];
+    status::render(&mut icons, connected);
+    let mut panel = alloc::vec![0; fox::VIEW_PIXELS];
+    let left = status::OFFSET.0 as usize;
+    let top = status::OFFSET.1 as usize;
+    for y in 0..status::HEIGHT {
+        let at = (top + y) * CANVAS_WIDTH + left;
+        panel[at..at + status::WIDTH]
+            .copy_from_slice(&icons[y * status::WIDTH..(y + 1) * status::WIDTH]);
+    }
+    let mut first_frame = None;
+    let mut animated = false;
+    for frame_number in 0..32 {
+        ui.tick(FRAME_INTERVAL_MS).unwrap();
+        let frame = control.take_frame().expect("animation publishes a frame");
+        let pixels = &frame.pixels()[..fox::VIEW_PIXELS];
+        if let Some(first) = &first_frame {
+            animated |= pixels != first;
+        } else {
+            first_frame = Some(pixels.to_vec());
+        }
+        // The CO5300 plane writes the viewport in 32-row bursts. Inspect the
+        // intermediate panel state, rather than only its final screenshot.
+        for row in (0..CANVAS_HEIGHT).step_by(32) {
+            let start = row * CANVAS_WIDTH;
+            let end = ((row + 32).min(CANVAS_HEIGHT)) * CANVAS_WIDTH;
+            panel[start..end].copy_from_slice(&pixels[start..end]);
+            for y in 0..status::HEIGHT {
+                let at = (top + y) * CANVAS_WIDTH + left;
+                assert_eq!(
+                    &panel[at..at + status::WIDTH],
+                    &icons[y * status::WIDTH..(y + 1) * status::WIDTH],
+                    "frame {frame_number}, burst at row {row} erased icon row {y}"
+                );
+            }
+        }
+    }
+    assert!(
+        animated,
+        "the character must actually animate during the check"
+    );
+    ui.unmount();
+    drop(ui);
+    unsafe {
+        display.delete();
+        rs_lvgl::deinit();
+    }
+}
+
+#[test]
+fn native_composed_status_draws_above_the_character_and_clears_after_unmount() {
     use crate::services::radio::{BluetoothState, Snapshot, WifiLink, WifiState};
     use core::cell::RefCell;
     use core::ptr;
@@ -283,7 +360,7 @@ fn native_status_band_draws_above_the_character_and_leaves_no_pixels_after_unmou
     unsafe { lvgl_sys::lv_refr_now(ptr::null_mut()) };
     assert!(
         pixels.borrow().iter().all(|&c| c == 0),
-        "the outlying child must be cleared with its parent"
+        "unmount must clear both the character and the composed icons"
     );
     drop(ui);
     unsafe {
