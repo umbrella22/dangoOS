@@ -5,11 +5,16 @@
 //! Y up: specific force is opposite gravity, hence (-ax, +ay). Confirm that
 //! mounting on the physical board before accepting the direction of movement.
 use super::affect::{EventKind, SensorEvent};
-use crate::companion::render::math::{PI, atan2, cos, inv_sqrt, sin};
+use crate::companion::render::math::{atan2, cos, inv_sqrt, sin, PI};
 
 const STALE_MS: u64 = 300;
 const ORBIT: f32 = 24.0;
 const DEG: f32 = 180.0 / PI;
+const TURN_START_DEG: f32 = 90.0;
+const TURN_CANCEL_DEG: f32 = 80.0;
+const TURN_CONFIRM_MS: u64 = 100;
+const SETTLE_MS: u32 = 300;
+const SETTLE_DRIFT_DEG: f32 = 0.6;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BalanceStage {
@@ -83,6 +88,13 @@ pub struct Balance {
     upright: bool,
     target: f32,
     raw_angle: Option<f32>,
+    /// Signed travel since the last settled pose, including +/-180 crossings.
+    turn_deg: f32,
+    turn_started_at: Option<u64>,
+    turn_side: f32,
+    following: bool,
+    settle_ms: u32,
+    settle_angle: f32,
     accel_speed: f32,
     gyro_speed: f32,
     angle: f32,
@@ -113,6 +125,12 @@ impl Balance {
             upright: false,
             target: 0.0,
             raw_angle: None,
+            turn_deg: 0.0,
+            turn_started_at: None,
+            turn_side: 1.0,
+            following: false,
+            settle_ms: 0,
+            settle_angle: 0.0,
             accel_speed: 0.0,
             gyro_speed: 0.0,
             angle: 0.0,
@@ -157,6 +175,8 @@ impl Balance {
                 let previous_at = self.accel_at.replace(event.at_ms);
                 if !self.upright {
                     self.raw_angle = None;
+                    self.turn_deg = 0.0;
+                    self.turn_started_at = None;
                     self.accel_speed = 0.0;
                     return;
                 }
@@ -167,7 +187,19 @@ impl Balance {
                 self.accel_speed = self
                     .raw_angle
                     .map_or(0.0, |p| wrap(a - p).abs() * 1000.0 / dt as f32);
+                self.turn_deg += wrap(a - self.raw_angle.unwrap_or(0.0));
                 self.raw_angle = Some(a);
+                if !self.following {
+                    if self.turn_started_at.is_some()
+                        && self.turn_deg * self.turn_side < TURN_CANCEL_DEG
+                    {
+                        self.turn_started_at = None;
+                    }
+                    if self.turn_started_at.is_none() && self.turn_deg.abs() >= TURN_START_DEG {
+                        self.turn_started_at = Some(event.at_ms);
+                        self.turn_side = self.turn_deg.signum();
+                    }
+                }
                 // The gyro supplies urgency; gravity supplies the lasting pose.
                 self.target =
                     wrap(self.target + wrap(a - self.target) * dt as f32 / (60.0 + dt as f32));
@@ -245,6 +277,8 @@ impl Balance {
             self.room = approach(self.room, 0.0, dt * 3.0);
             self.enter(BalanceStage::Resting);
             self.fast_ms = 0;
+            self.following = false;
+            self.settle_ms = 0;
             self.face = BalanceFace::Neutral;
             self.face_ms = 0;
             self.face_quiet_ms = 0;
@@ -253,6 +287,22 @@ impl Balance {
                 self.velocity[i] = 0.0;
             }
             return;
+        }
+        if !self.following {
+            // Confirmation uses sensor timestamps, so a delayed UI tick cannot
+            // turn one threshold sample into a confirmed change of direction.
+            let confirmed = self.turn_started_at.is_some_and(|started| {
+                self.accel_at.unwrap_or(started).saturating_sub(started) >= TURN_CONFIRM_MS
+                    && self.turn_deg * self.turn_side >= TURN_START_DEG
+            });
+            if !confirmed {
+                self.fast_ms = 0;
+                self.advance_face(ms, self.motion_rate(now));
+                return;
+            }
+            self.following = true;
+            self.turn_started_at = None;
+            self.settle_ms = 0;
         }
         let room =
             (self.target.abs() / 18.0)
@@ -263,13 +313,7 @@ impl Balance {
                     1.0
                 });
         self.room = approach(self.room, room, dt * 2.5);
-        let rate = self.accel_speed.max(
-            if self.gyro_at.is_some_and(|t| now.saturating_sub(t) < 120) {
-                self.gyro_speed
-            } else {
-                0.0
-            },
-        );
+        let rate = self.motion_rate(now);
         let error = wrap(self.target - self.angle);
         let gravity = [-sin(self.target / DEG), cos(self.target / DEG)];
         let destination = [gravity[0] * ORBIT, gravity[1] * ORBIT];
@@ -348,7 +392,34 @@ impl Balance {
                 }
             }
         }
+        // Finish the whole adjustment before rearming. A stable heading window
+        // prevents a continuous slow roll from rearming between small steps.
+        if self.stage == BalanceStage::Resting && error.abs() < 1.5 && rate < 12.0 {
+            if self.settle_ms == 0 || wrap(self.target - self.settle_angle).abs() > SETTLE_DRIFT_DEG
+            {
+                self.settle_ms = 0;
+                self.settle_angle = self.target;
+            }
+            self.settle_ms = self.settle_ms.saturating_add(ms);
+            if self.settle_ms >= SETTLE_MS {
+                self.following = false;
+                self.turn_deg = 0.0;
+                self.turn_started_at = None;
+            }
+        } else {
+            self.settle_ms = 0;
+        }
         self.advance_face(ms, rate);
+    }
+
+    fn motion_rate(&self, now: u64) -> f32 {
+        self.accel_speed.max(
+            if self.gyro_at.is_some_and(|t| now.saturating_sub(t) < 120) {
+                self.gyro_speed
+            } else {
+                0.0
+            },
+        )
     }
 
     fn advance_face(&mut self, ms: u32, rate: f32) {

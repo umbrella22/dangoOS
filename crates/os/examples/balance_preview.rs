@@ -1,5 +1,5 @@
 //! Export the production runtime/animator/renderer under scripted IMU input.
-//! cargo run -p os --example balance_preview -- OUTPUT [SKIN_ID] [SKIN_ROOT]
+//! cargo run -p os --example balance_preview -- OUTPUT [SKIN_ID] [SKIN_ROOT] [CASE]
 use os::companion::{
     behavior::affect::{EventKind, EventSource, SensorEvent},
     render::{FoxAnimator, FoxInput, FoxPose, FoxRenderer, H, W, skin::Skin},
@@ -17,14 +17,21 @@ fn main() {
     let out = Path::new(args.get(1).expect("output directory"));
     let id = args.get(2).map_or("default", String::as_str);
     let root = args.get(3).map_or("resources/skins", String::as_str);
+    let selected_case = args.get(4).map(String::as_str);
     let skin = Skin::parse(fs::read(format!("{root}/{id}/fox.bin")).unwrap()).unwrap();
     for (case, duration, turn_ms, rate) in [
         ("idle", 3400u64, 0u64, 0.0f32),
+        ("pickup", 2600, 180, 360.0),
+        ("quarter", 4200, 250, 360.0),
+        ("overshoot", 4400, 500, 360.0),
         ("slow", 4600u64, 3400u64, 50.0f32),
-        ("rescue", 2600, 240, 360.0),
+        ("rescue", 3200, 460, 360.0),
         ("fall", 3800, 800, 360.0),
         ("heavy", 4000, 900, 600.0),
     ] {
+        if selected_case.is_some_and(|selected| selected != case) {
+            continue;
+        }
         let dir = out.join(id).join(case);
         fs::create_dir_all(&dir).unwrap();
         let control = FoxControl::new(Expression::Idle);
@@ -88,7 +95,7 @@ fn main() {
                 ])
                 .unwrap();
             }
-            trace.push(serde_json::json!({"frame":frame,"at_ms":at,"device_angle":angle,"stage":format!("{:?}",balance.stage),"face":format!("{:?}",balance.face),"rotation_reaction":balance.rotation_reaction,"angle":balance.angle_deg,"x":balance.x,"y":balance.y,"reach":balance.reach,"grip":balance.grip,"drag":balance.drag,"rig":scene.rig.is_some(),"expression":format!("{:?}",control.expression())}));
+            trace.push(serde_json::json!({"frame":frame,"at_ms":at,"device_angle":angle,"stage":format!("{:?}",balance.stage),"face":format!("{:?}",balance.face),"rotation_reaction":balance.rotation_reaction,"angle":balance.angle_deg,"x":balance.x,"y":balance.y,"scale":balance.scale,"reach":balance.reach,"step":balance.step,"grip":balance.grip,"drag":balance.drag,"rig":scene.rig.is_some(),"expression":format!("{:?}",control.expression())}));
             frame += 1;
         }
         render_us.sort_unstable();
