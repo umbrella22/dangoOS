@@ -1,5 +1,5 @@
 //! Owned native graphics handles. The VM exchanges IDs and copied byte spans.
-use super::ts_host::{arguments, bool_value, count, integer, invalid, output, text};
+use super::host::{arguments, bool_value, count, integer, invalid, output, text};
 use alloc::{collections::BTreeMap, string::ToString, sync::Arc, vec::Vec};
 use app_host::{
     esp_err,

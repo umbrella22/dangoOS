@@ -102,7 +102,8 @@ fn skin_choices(root: &Path) -> Vec<os::companion::skins::Choice> {
     for id in ["default", "eclipse", "normal", "black-blue"] {
         let directory = format!("/data/skins/{id}");
         vfs.create_dir_all(&directory).unwrap();
-        let metadata = host_fs::read(root.join("dango-skin").join(id).join("skin.json")).unwrap();
+        let metadata =
+            host_fs::read(root.join("resources/skins").join(id).join("skin.json")).unwrap();
         vfs.write_file(&format!("{directory}/skin.json"), &metadata)
             .unwrap();
     }
@@ -252,8 +253,10 @@ fn main() {
         control.set_skin(if id == "placeholder" {
             Skin::builtin()
         } else {
-            Skin::parse(host_fs::read(root.join("dango-skin").join(id).join("fox.bin")).unwrap())
-                .unwrap()
+            Skin::parse(
+                host_fs::read(root.join("resources/skins").join(id).join("fox.bin")).unwrap(),
+            )
+            .unwrap()
         });
         run(&mut ui, &mut app, 2500);
         capture(out, id, &pixels);

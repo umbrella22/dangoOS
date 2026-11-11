@@ -23,7 +23,7 @@ def check():
     packages = [p for p in lock["package"] if p["name"] == "embedts-engine"]
     assert len(packages) == 1
     assert packages[0]["source"] == f"git+{engine['git']}?rev={revision}#{revision}"
-    directory = ROOT / "artifacts/embedts"
+    directory = ROOT / "resources/embedts"
     manifest = json.loads((directory / "manifest.json").read_text())
     assert manifest["format"] == "embedts-artifacts-v1"
     listed = {"manifest.json"}

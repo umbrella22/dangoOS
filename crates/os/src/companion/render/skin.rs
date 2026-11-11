@@ -429,7 +429,7 @@ pub(crate) fn reference() -> Rc<Skin> {
     Skin::parse(
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../dango-skin/default/fox.bin"
+            "/../../resources/skins/default/fox.bin"
         ))
         .to_vec(),
     )

@@ -240,7 +240,7 @@ impl BrainVm {
                 interrupt_polls: 200,
                 ..Default::default()
             },
-            &crate::apps::ts_host::allocator(allocator),
+            &crate::apps::ts::host::allocator(allocator),
         )
         .map_err(|e| e.to_string())?;
         // Only packages produced and delivered by the controlled host toolchain enter here.

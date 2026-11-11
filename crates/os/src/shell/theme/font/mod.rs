@@ -172,13 +172,13 @@ unsafe extern "C" fn get_glyph_bitmap(
 }
 
 #[cfg(not(target_os = "none"))]
-static FILE_20: &[u8] = include_bytes!("../../assets/hub-20.bin");
+static FILE_20: &[u8] = include_bytes!("../../../assets/hub-20.bin");
 #[cfg(not(target_os = "none"))]
-static FILE_24: &[u8] = include_bytes!("../../assets/hub-24.bin");
+static FILE_24: &[u8] = include_bytes!("../../../assets/hub-24.bin");
 #[cfg(not(target_os = "none"))]
-static FILE_30: &[u8] = include_bytes!("../../assets/hub-30.bin");
+static FILE_30: &[u8] = include_bytes!("../../../assets/hub-30.bin");
 #[cfg(not(target_os = "none"))]
-static FILE_DIGITS_64: &[u8] = include_bytes!("../../assets/hub-digits-64.bin");
+static FILE_DIGITS_64: &[u8] = include_bytes!("../../../assets/hub-digits-64.bin");
 #[cfg(target_os = "none")]
 static FILE_20: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/recovery-20.bin"));
 #[cfg(target_os = "none")]
@@ -354,43 +354,43 @@ mod tests {
     #[test]
     fn every_hub_string_has_glyphs() {
         let sources = [
-            include_str!("../pages/launcher.rs"),
-            include_str!("../pages/sensors.rs"),
-            include_str!("../pages/timer.rs"),
-            include_str!("../pages/camera.rs"),
-            include_str!("../pages/voice.rs"),
-            include_str!("../pages/lua.rs"),
-            include_str!("../pages/low_battery.rs"),
-            include_str!("../components/page.rs"),
-            include_str!("../pages/settings/update.rs"),
-            include_str!("../pages/settings/view.rs"),
-            include_str!("../pages/settings/view/audio.rs"),
-            include_str!("../pages/settings/view/camera.rs"),
-            include_str!("../pages/settings/view/categories.rs"),
-            include_str!("../pages/settings/view/character.rs"),
-            include_str!("../pages/settings/view/components.rs"),
-            include_str!("../pages/settings/view/display.rs"),
-            include_str!("../pages/settings/view/feedback.rs"),
-            include_str!("../pages/settings/view/password.rs"),
-            include_str!("../pages/settings/view/proxy.rs"),
-            include_str!("../pages/settings/view/storage.rs"),
-            include_str!("../pages/settings/view/system.rs"),
-            include_str!("../pages/settings/view/update.rs"),
-            include_str!("../pages/settings/view/wifi.rs"),
-            include_str!("../pages/settings/view/wireless.rs"),
-            include_str!("../app.rs"),
-            include_str!("../pages/settings/model.rs"),
-            include_str!("../runtime/mod.rs"),
-            include_str!("../runtime/settings.rs"),
-            include_str!("../../services/radio/mod.rs"),
-            include_str!("../../services/voice/config.rs"),
-            include_str!("../../services/voice/device.rs"),
-            include_str!("../../services/resources/voice_font.rs"),
-            include_str!("../../services/camera/mod.rs"),
-            include_str!("../model.rs"),
-            include_str!("../../services/timer.rs"),
-            include_str!("../../services/input/snapshot.rs"),
-            include_str!("../navigation/gesture.rs"),
+            include_str!("../../pages/launcher.rs"),
+            include_str!("../../pages/sensors.rs"),
+            include_str!("../../pages/timer.rs"),
+            include_str!("../../pages/camera.rs"),
+            include_str!("../../pages/voice.rs"),
+            include_str!("../../pages/lua.rs"),
+            include_str!("../../pages/low_battery.rs"),
+            include_str!("../../components/page.rs"),
+            include_str!("../../pages/settings/update.rs"),
+            include_str!("../../pages/settings/view/mod.rs"),
+            include_str!("../../pages/settings/view/audio.rs"),
+            include_str!("../../pages/settings/view/camera.rs"),
+            include_str!("../../pages/settings/view/categories.rs"),
+            include_str!("../../pages/settings/view/character.rs"),
+            include_str!("../../pages/settings/view/components.rs"),
+            include_str!("../../pages/settings/view/display.rs"),
+            include_str!("../../pages/settings/view/feedback.rs"),
+            include_str!("../../pages/settings/view/password.rs"),
+            include_str!("../../pages/settings/view/proxy.rs"),
+            include_str!("../../pages/settings/view/storage.rs"),
+            include_str!("../../pages/settings/view/system.rs"),
+            include_str!("../../pages/settings/view/update.rs"),
+            include_str!("../../pages/settings/view/wifi.rs"),
+            include_str!("../../pages/settings/view/wireless.rs"),
+            include_str!("../../app/mod.rs"),
+            include_str!("../../pages/settings/model.rs"),
+            include_str!("../../runtime/mod.rs"),
+            include_str!("../../runtime/settings.rs"),
+            include_str!("../../../services/radio/mod.rs"),
+            include_str!("../../../services/voice/config.rs"),
+            include_str!("../../../services/voice/device.rs"),
+            include_str!("../../../services/resources/voice_font.rs"),
+            include_str!("../../../services/camera/mod.rs"),
+            include_str!("../../model.rs"),
+            include_str!("../../../services/timer.rs"),
+            include_str!("../../../services/input/snapshot.rs"),
+            include_str!("../../navigation/gesture.rs"),
         ];
         for source in sources {
             for literal in source.split('"').skip(1).step_by(2) {

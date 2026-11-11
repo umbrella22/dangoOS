@@ -58,7 +58,7 @@ fn extended_resident_churn_retains_large_allocation_capacity() {
         .replace("n=0,63 do", "n=0,4095 do")
         .replace("print(n)", "if n%64==63 then print(n) end")
         .replace("print(64)", "print(4096)");
-    let package = include_bytes!("../../../artifacts/embedts/fixtures/memory-resident.etb");
+    let package = include_bytes!("../../../resources/embedts/fixtures/memory-resident.etb");
     let mut reports = Vec::new();
     for (engine, backing) in [
         ("lua", &BACKING),
@@ -96,7 +96,7 @@ fn extended_resident_churn_retains_large_allocation_capacity() {
                     interrupt_polls: 100_000,
                     ..Default::default()
                 },
-                &os::apps::ts_host::allocator(backing),
+                &os::apps::ts::host::allocator(backing),
             )
             .unwrap();
             unsafe { vm.load(ts_engine::Package::parse(package).unwrap()) }.unwrap();
@@ -204,7 +204,7 @@ print(64)
 
 #[test]
 fn paired_churn_and_repeated_vm_lifetimes_restore_the_tlsf_pool() {
-    let package = include_bytes!("../../../artifacts/embedts/fixtures/memory-churn.etb");
+    let package = include_bytes!("../../../resources/embedts/fixtures/memory-churn.etb");
     let mut reports = Vec::new();
     for (engine, backing) in [
         ("lua", &BACKING),
@@ -224,7 +224,7 @@ fn paired_churn_and_repeated_vm_lifetimes_restore_the_tlsf_pool() {
                         interrupt_polls: 100_000,
                         ..Default::default()
                     },
-                    &os::apps::ts_host::allocator(backing),
+                    &os::apps::ts::host::allocator(backing),
                 )
                 .unwrap();
                 unsafe { vm.load(ts_engine::Package::parse(package).unwrap()) }.unwrap();

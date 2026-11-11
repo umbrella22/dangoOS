@@ -1,5 +1,5 @@
 //! Typed TS host operations, shared by firmware and the native integration harness.
-use super::ts_graphics::Graphics;
+use super::graphics::Graphics;
 use alloc::rc::Rc;
 use alloc::{
     format,
@@ -579,7 +579,7 @@ mod tests {
         assert!(heap.get("largest_free_block").is_none());
     }
     fn request(vm: &mut ts_engine::Vm) -> HostRequest {
-        let package = include_bytes!("../../../../artifacts/embedts/fixtures/host-request.etb");
+        let package = include_bytes!("../../../../../resources/embedts/fixtures/host-request.etb");
         unsafe { vm.load(ts_engine::Package::parse(package).unwrap()) }.unwrap();
         vm.call("main", None).unwrap();
         match vm.take_request().unwrap() {

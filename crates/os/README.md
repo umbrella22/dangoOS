@@ -28,7 +28,7 @@ Core0 服务线程处理同步文件与资源工作。显示和音频继续使�
 | --- | --- | --- |
 | `services/display/plane.rs` | Core0 中断，FROM_CPU_INTR1，优先级 2 | 独占 CO5300；352×336 Home 画布位于面板 (64,88)，按既有分块协议执行 QSPI DMA；Screen/Snapshot/Pool 租约保护在途像素 |
 | `shell/runtime/mod.rs` | Core1 UI 线程 | 独占 LVGL；传感器与指针按既有顺序处理；50 ms 动画节奏及紧急变更绘制、导航和帧交接 |
-| `apps/runtime.rs` → `apps/lua/task.rs` 或 `apps/ts.rs` | Core1 UI 线程 | 执行所选前台 VM；停止状态在 VM 析构后发布，原生桥接清理继续由 UI 任务处理 |
+| `apps/runtime.rs` → `apps/lua/task.rs` 或 `apps/ts/device.rs` | Core1 UI 线程 | 执行所选前台 VM；停止状态在 VM 析构后发布，原生桥接清理继续由 UI 任务处理 |
 | `boot::usb_task`、`console` | Core0 服务线程 | USB 栈与 CDC 收发、日志及延迟存储挂载；启动时优先提供控制台 |
 | `services/input/touch.rs`、`sensors.rs` | Core0 主线程 | CST9220、BMI270、BMM150、电量与扩展槽输入，输出有界事件 |
 | `services/feedback/haptic`、`lights` | Core0 主线程 | RMT 马达波形与扩展板 WS2812 心情灯 |
@@ -156,4 +156,4 @@ espflash monitor --chip esp32s31 --port /dev/cu.usbmodemmosaico_s31_r11
 如果 `espflash monitor` 没有输出，可用 pyserial 等串口工具读取。
 运行时端口只在固件运行期间存在，下载模式使用另一个端口名。
 
-TS 构建器、SDK 与应用源码位于独立 EmbedTypescript 仓库。OS 构建与测试消费 `artifacts/embedts`，不包含源码编译依赖。接入流程见 [EmbedTS 接入](EMBEDTS.md)。
+TS 构建器、SDK 与应用源码位于独立 EmbedTypescript 仓库。OS 构建与测试消费 `resources/embedts`，不包含源码编译依赖。接入流程见 [EmbedTS 接入](EMBEDTS.md)。

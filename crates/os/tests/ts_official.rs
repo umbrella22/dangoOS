@@ -2,7 +2,7 @@
 use app_host::{DisplayInfo, TouchPoint};
 use os::apps::{
     native_ui::NativeUiService,
-    ts_host::{self, AppHost, Platform},
+    ts::host::{self, AppHost, Platform},
 };
 use rs_lvgl::{sys as s, Display};
 use std::{cell::Cell, ffi::CStr, ptr, rc::Rc, time::Duration};
@@ -46,7 +46,7 @@ unsafe fn label(p: *mut s::lv_obj_t, text: &str) -> Option<*mut s::lv_obj_t> {
 }
 #[test]
 fn official_games_render_and_photo_navigation_confirmed_delete_runs_on_real_lvgl_vfs() {
-    let package = include_bytes!("../../../artifacts/embedts/fixtures/ts-official.etb");
+    let package = include_bytes!("../../../resources/embedts/fixtures/ts-official.etb");
     rs_lvgl::init();
     let display = Display::register::<_, { 480 * 8 }>(480, 480, |_| {}).unwrap();
     let previous = unsafe { s::lv_screen_active() };
@@ -105,15 +105,15 @@ fn official_games_render_and_photo_navigation_confirmed_delete_runs_on_real_lvgl
             let id = request.id;
             let operation = request.operation.clone();
             let reply = if operation.starts_with("ui.") {
-                ui.execute(ts_host::ui_command(request, root).unwrap())
+                ui.execute(host::ui_command(request, root).unwrap())
                     .map(|r| HostReply {
                         json: r.json,
                         bytes: r.bytes,
                     })
                     .map_err(|e| HostError::new(-1, e))
-            } else if operation.starts_with("storage.") || ts_host::asset_io(&operation) {
+            } else if operation.starts_with("storage.") || host::asset_io(&operation) {
                 graphics.borrow_mut().file_request(&mut request).unwrap();
-                let result = ts_host::storage(&mut vfs, root, &request, limits.host_bytes);
+                let result = host::storage(&mut vfs, root, &request, limits.host_bytes);
                 graphics.borrow_mut().file_reply(&operation, result)
             } else if operation == "display.present" {
                 let f = graphics.borrow_mut().present(&request.args).unwrap();
@@ -123,7 +123,7 @@ fn official_games_render_and_photo_navigation_confirmed_delete_runs_on_real_lvgl
                 graphics.borrow_mut().presented();
                 Ok(HostReply::json("true"))
             } else if operation == "sleep" {
-                let ms = ts_host::sleep_ms(&request).unwrap();
+                let ms = host::sleep_ms(&request).unwrap();
                 now.set(now.get() + u64::from(ms));
                 if ui.object_count() > 0 {
                     unsafe {

@@ -13,4 +13,4 @@ cargo test -p app-host --features graphics
 
 `graphics` feature 构建与 Lua 相同的 raster、bitmap、内置字体、DFN1 与 PNG 内核，
 导出符号加前缀以供两种引擎的主机差分测试同时链接。TS 原生图像配额和编解码
-暂存预算由 OS 的 `ts_graphics` 适配器检查，不属于 QuickJS 分配账本。
+暂存预算由 OS 的 `apps::ts::graphics` 适配器检查，不属于 QuickJS 分配账本。

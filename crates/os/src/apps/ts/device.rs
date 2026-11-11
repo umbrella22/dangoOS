@@ -1,7 +1,7 @@
 //! Foreground bytecode runner with bounded jobs and copied service/UI requests.
-use super::ts_graphics::Publication;
-use super::ts_host::{self, AppHost, Platform};
-use super::ts_scheduling::{RunProfile, TurnBudget, Wait};
+use super::graphics::Publication;
+use super::host::{self, AppHost, Platform};
+use super::scheduling::{RunProfile, TurnBudget, Wait};
 use crate::shell::model::LuaApp;
 use alloc::{
     boxed::Box,
@@ -195,19 +195,19 @@ impl Platform for DevicePlatform {
         embedts_platform_us() / 1000
     }
     fn services(&mut self) -> app_host::ServiceSnapshot {
-        super::host_device::service_snapshot(controls_blocked())
+        crate::apps::host_device::service_snapshot(controls_blocked())
     }
     fn hardware(&mut self) -> app_host::HardwareSnapshot {
-        super::host_device::hardware_snapshot()
+        crate::apps::host_device::hardware_snapshot()
     }
     fn audio_control(&mut self, r: app_host::AudioControl) -> Result<(), i32> {
-        super::host_device::audio_control(r, controls_blocked())
+        crate::apps::host_device::audio_control(r, controls_blocked())
     }
     fn hardware_request(&mut self, r: app_host::HardwareRequest) -> Result<(), i32> {
         if controls_blocked() {
             return Err(app_host::esp_err::INVALID_STATE);
         }
-        super::host_device::hardware_request(r)
+        crate::apps::host_device::hardware_request(r)
     }
     fn display_info(&mut self) -> Result<app_host::DisplayInfo, i32> {
         if controls_blocked() {
@@ -237,7 +237,7 @@ impl Platform for DevicePlatform {
         crate::platform::runtime::heap::snapshot(caps)
     }
     fn heap_probe(&mut self, caps: u32, layout: Layout) -> Result<bool, i32> {
-        super::host_device::heap_probe(caps, layout)
+        crate::apps::host_device::heap_probe(caps, layout)
     }
 }
 type StorageFuture = Pin<Box<dyn Future<Output = Result<HostReply, HostError>>>>;
@@ -321,7 +321,7 @@ async fn run(app: &LuaApp) -> Result<(), String> {
     .map_err(|e| e.message)?
     .with_limits(limits);
     let graphics = host.graphics.clone();
-    let mut vm = Vm::new(Box::new(host), limits, &ts_host::allocator(&PSRAM))
+    let mut vm = Vm::new(Box::new(host), limits, &host::allocator(&PSRAM))
         .map_err(|error| error.to_string())?;
     // Packages enter through the controlled development app-install channel.
     let loading = embedts_platform_us();
@@ -351,7 +351,7 @@ async fn run(app: &LuaApp) -> Result<(), String> {
     let mut main_finished = !entry_pending;
     let mut ticking = None;
     let mut next_tick = 0;
-    let mut workers = ts_engine::workers::Group::new(limits, &ts_host::allocator(&PSRAM));
+    let mut workers = ts_engine::workers::Group::new(limits, &host::allocator(&PSRAM));
     let mut queue = VecDeque::new();
     let mut timers: Vec<(RequestId, u64)> = Vec::new();
     let mut ui: Option<(RequestId, String)> = None;
@@ -436,7 +436,7 @@ async fn run(app: &LuaApp) -> Result<(), String> {
                     {
                         Some((
                             request.id,
-                            ts_host::sleep_ms(request).and_then(|value| {
+                            host::sleep_ms(request).and_then(|value| {
                                 if request.operation == "sleep_us" {
                                     if value > 1_000_000 {
                                         Err(host_error(
@@ -558,7 +558,7 @@ async fn run(app: &LuaApp) -> Result<(), String> {
                         graphics.borrow_mut().ui = true;
                     }
 
-                    match ts_host::ui_command(request, &root) {
+                    match host::ui_command(request, &root) {
                         Ok(command) => {
                             let op = command.op.clone();
                             publish_lvgl(id, command);
@@ -567,7 +567,7 @@ async fn run(app: &LuaApp) -> Result<(), String> {
                         Err(e) => vm.complete(id, Err(e)).map_err(|e| e.to_string())?,
                     }
                 } else if request.operation.starts_with("storage.")
-                    || ts_host::asset_io(&request.operation)
+                    || host::asset_io(&request.operation)
                 {
                     if storage.is_some() {
                         queue.push_back(Request::Host(request));
@@ -592,7 +592,7 @@ async fn run(app: &LuaApp) -> Result<(), String> {
                                     ));
                                 }
                                 ::fs::global::with(|vfs| {
-                                    Ok(ts_host::storage(
+                                    Ok(host::storage(
                                         vfs,
                                         &storage_root,
                                         &request,
@@ -646,7 +646,7 @@ async fn run(app: &LuaApp) -> Result<(), String> {
                     if request.operation.starts_with("ui.") {
                         ui.is_none()
                     } else if request.operation.starts_with("storage.")
-                        || ts_host::asset_io(&request.operation)
+                        || host::asset_io(&request.operation)
                     {
                         storage.is_none()
                     } else {
@@ -755,8 +755,9 @@ fn pump_workers(group: &mut ts_engine::workers::Group, vm: &mut Vm) -> Result<()
 }
 
 pub(crate) fn selftest() -> bool {
-    let Ok(package) = Package::parse(include_bytes!("../../../../artifacts/embedts/selftest.etb"))
-    else {
+    let Ok(package) = Package::parse(include_bytes!(
+        "../../../../../resources/embedts/selftest.etb"
+    )) else {
         return false;
     };
     let Ok(mut vm) = Vm::new(
@@ -766,7 +767,7 @@ pub(crate) fn selftest() -> bool {
             execution_us: 100_000,
             ..Default::default()
         },
-        &ts_host::allocator(&PSRAM),
+        &host::allocator(&PSRAM),
     ) else {
         return false;
     };

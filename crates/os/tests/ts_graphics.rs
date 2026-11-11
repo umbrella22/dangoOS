@@ -1,8 +1,8 @@
 #![cfg(feature = "ts-engine")]
 use app_host::{DisplayInfo, HardwareRequest, HardwareSnapshot};
 use os::apps::{
-    ts_graphics::Graphics,
-    ts_host::{AppHost, Platform},
+    ts::graphics::Graphics,
+    ts::host::{AppHost, Platform},
 };
 use std::{cell::RefCell, path::Path, rc::Rc};
 use ts_engine::{workers::Group, CallState, HostReply, Limits, Package, Vm, GLOBAL_ALLOCATOR};
@@ -62,7 +62,7 @@ fn run(file: &str) -> (Rc<RefCell<State>>, Rc<RefCell<Graphics>>, Vec<Vec<u8>>) 
     let mut vm = Vm::new(Box::new(host), Limits::default(), &GLOBAL_ALLOCATOR).unwrap();
     let bytes = std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../artifacts/embedts/fixtures")
+            .join("../../resources/embedts/fixtures")
             .join(file),
     )
     .unwrap();

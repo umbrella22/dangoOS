@@ -37,7 +37,7 @@ pub use ts_vm::expression;
 pub use ts_vm::BrainVm;
 #[cfg(feature = "ts-engine")]
 pub const DEFAULT_SOURCE: &str =
-    include_str!("../../../../../artifacts/embedts/brain/default.etb.hex");
+    include_str!("../../../../../resources/embedts/brain/default.etb.hex");
 
 #[cfg(all(test, feature = "ts-engine"))]
 #[path = "vm.rs"]

@@ -6,7 +6,7 @@ python3 scripts/assets/gen_hub_font.py --check
 cargo test --workspace --locked --offline
 cargo test -p os --features ui-validation --test ui_reliability --locked --offline -- --test-threads=1
 cargo run -p app-pack --locked --offline -- check apps
-cargo run -p app-pack --locked --offline -- skins dango-skin
+cargo run -p app-pack --locked --offline -- skins resources/skins
 python3 -m unittest discover -s tests/host
 ./scripts/check/drivers.sh
 ./scripts/check/engines.sh

@@ -1,6 +1,6 @@
 //! Character rendering: external palette sprites composed per frame.
 //!
-//! Full characters are validated packages under `dango-skin/`, installed on
+//! Full characters are validated packages under `resources/skins/`, installed on
 //! NAND. [`data`] contains only one static missing-character placeholder.
 //!
 //! - [`FoxAnimator`] (`animate.rs`): expression plus time to a [`Scene`].

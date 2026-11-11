@@ -146,7 +146,7 @@ fn ts_default_matches_lua_outputs_across_sensor_pointer_and_time_transitions() {
 }
 fn compiled(name: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../artifacts/embedts/fixtures")
+        .join("../../resources/embedts/fixtures")
         .join(name);
     ts_vm::encode(&std::fs::read(path).unwrap())
 }

@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn completed_host_requests_resume_without_a_timer_wait() {
         let bytes =
-            include_bytes!("../../../../artifacts/embedts/fixtures/scheduling-zero-sleep.etb");
+            include_bytes!("../../../../../resources/embedts/fixtures/scheduling-zero-sleep.etb");
         let mut vm = Vm::new(
             alloc::boxed::Box::new(()),
             Limits::default(),

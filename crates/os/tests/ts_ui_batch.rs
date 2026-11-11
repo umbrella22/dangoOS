@@ -2,7 +2,7 @@
 //! Precompiled bytecode/VM/LVGL integration and paired host measurements; no device access.
 use os::apps::{
     native_ui::NativeUiService,
-    ts_host::{self, AppHost, Platform},
+    ts::host::{self, AppHost, Platform},
 };
 use rs_lvgl::{sys as s, Display};
 use serde_json::{json, Value};
@@ -52,7 +52,7 @@ fn tick() {
 fn package(name: &str) -> Vec<u8> {
     std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../artifacts/embedts/fixtures")
+            .join("../../resources/embedts/fixtures")
             .join(name),
     )
     .unwrap()
@@ -148,7 +148,7 @@ fn run(package: &[u8], mode: &str, stop_after_batch: bool, inject: bool) -> Valu
                     requests[phase] += 1;
                     let is_batch =
                         request.operation == "ui.batch" || request.operation == "ui.batch_commit";
-                    let command = ts_host::ui_command(request, "/data/ui-batch").unwrap();
+                    let command = host::ui_command(request, "/data/ui-batch").unwrap();
                     let native_start = Instant::now();
                     let result = ui.execute(command);
                     native_us[phase] += native_start.elapsed().as_micros();

@@ -249,9 +249,9 @@ def build(args):
             "bootloader build receipt differs from current source or binary")
     table = partition_table()
     catalog = json.loads(subprocess.check_output(
-        ["cargo", "run", "-p", "app-pack", "--locked", "--offline", "--", "skins", "dango-skin"],
+        ["cargo", "run", "-p", "app-pack", "--locked", "--offline", "--", "skins", "resources/skins"],
         cwd=ROOT, text=True))["skins"]
-    skin_files = {f"dango-skin/{skin['id']}/{name}": (ROOT / "dango-skin" / skin["id"] / name).read_bytes()
+    skin_files = {f"dango-skin/{skin['id']}/{name}": (ROOT / "resources/skins" / skin["id"] / name).read_bytes()
                   for skin in catalog for name in skin["files"]}
     verify_nand_skins(catalog, skin_files)
     args.out.parent.mkdir(parents=True, exist_ok=True)

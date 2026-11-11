@@ -10,7 +10,7 @@ flowchart LR
   Builder --> App[.etb 应用树]
   Builder --> Fixture[带哈希清单的 OS 输入]
   App --> Pack[OS app-pack]
-  Fixture --> OS[OS artifacts/embedts]
+  Fixture --> OS[OS resources/embedts]
   OS --> Firmware[所选引擎的固件与测试]
   Pack --> Device[文件系统安装]
   Firmware --> Device
@@ -22,7 +22,7 @@ flowchart LR
 
 ## 固定输入
 
-`artifacts/embedts/manifest.json` 记录构建器版本、TSRS 提交、引擎 ID、宿主 ABI、每个源码摘要和产物摘要。`brain/default.etb.hex` 提供默认常驻行为，`selftest.etb` 用于设备引擎自检，`fixtures/` 供 OS 宿主集成测试使用。
+`resources/embedts/manifest.json` 记录构建器版本、TSRS 提交、引擎 ID、宿主 ABI、每个源码摘要和产物摘要。`brain/default.etb.hex` 提供默认常驻行为，`selftest.etb` 用于设备引擎自检，`fixtures/` 供 OS 宿主集成测试使用。
 
 在 EmbedTypescript 仓库运行：
 
@@ -30,7 +30,7 @@ flowchart LR
 cargo run -p embedts-builder --locked --example export-dangoos -- target/dangoos-inputs
 ```
 
-审核后整体替换 OS 的 `artifacts/embedts`。OS 运行 `python3 scripts/check/compiled_apps.py` 验证清单、容器、摘要和源码边界，再执行两种引擎选择的测试。TS 测试使用当前引擎解析包，防止构建器和运行时漂移。引擎配方变化时重新导出；不对旧字节码修改魔数后复用。
+审核后整体替换 OS 的 `resources/embedts`。OS 运行 `python3 scripts/check/compiled_apps.py` 验证清单、容器、摘要和源码边界，再执行两种引擎选择的测试。TS 测试使用当前引擎解析包，防止构建器和运行时漂移。引擎配方变化时重新导出；不对旧字节码修改魔数后复用。
 
 ## 文件与状态
 

@@ -27,7 +27,7 @@ def png(ppm):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", type=Path, default=ROOT / "screenshots")
+    parser.add_argument("--out", type=Path, default=ROOT / "resources/screenshots")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="dango-screenshots-") as temporary:
         subprocess.run(["cargo", "run", "-p", "os", "--locked", "--offline", "--example", "screenshots", "--", temporary],

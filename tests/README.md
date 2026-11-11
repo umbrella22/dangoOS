@@ -16,7 +16,7 @@
 `tests/host/support.py` 提供共享的 USB 模拟与 CLI 加载辅助。
 引擎的图像、缩放、线程、显示和硬件测试资料统一放在 [crates/lua-engine/test](../crates/lua-engine/test/README.md)，其中 `reference/` 保存仅供接口对照的上游资料。
 正式应用位于 `apps`；可直接安装的 Lua 示例位于 `examples/apps`，需要先构建的
-TS 源码、构建器测试、设备探针和基准在独立 EmbedTypescript 仓库。OS 集成测试读取 `artifacts/embedts` 预编译夹具。
+TS 源码、构建器测试、设备探针和基准在独立 EmbedTypescript 仓库。OS 集成测试读取 `resources/embedts` 预编译夹具。
 
 统一离线检查入口为 `scripts/check.sh`。实体设备验收使用正式固件、正式应用和
 `scripts/device/session.py` 的有时限会话；构建或主机回归通过与实体操作结果分别记录。

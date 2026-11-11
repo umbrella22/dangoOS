@@ -4,7 +4,7 @@
 Scans the hub sources for the characters they actually display, rasterizes
 them from Noto Sans SC at each size and writes one `hub-<name>.bin` per font
 into crates/os/src/assets/. The firmware reads these with
-`ui::hub_font` (an `lv_font_t` whose callbacks are written in Rust).
+`shell::theme::font` (an `lv_font_t` whose callbacks are written in Rust).
 
 Usage:
     python3 scripts/assets/gen_hub_font.py --regular NotoSansSC-Regular.otf \
@@ -46,7 +46,7 @@ SOURCES = [CRATE / "src"]
 VOICE_FONT_SOURCES = {
     CRATE / "src" / "services" / "voice" / name
     for name in (
-        "network.rs", "protocol.rs", "protocol/responses.rs", "storage.rs",
+        "network.rs", "protocol/mod.rs", "protocol/responses.rs", "storage.rs",
         "websocket.rs", "sse.rs", "capture.rs", "desktop/device.rs",
     )
 }

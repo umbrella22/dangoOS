@@ -11,7 +11,7 @@ debug*.md
 __pycache__/
 /docs/
 # Private artwork, source images and generation prompts. Generated build inputs
-# live in crates/os/src/assets and dango-skin.
+# live in crates/os/src/assets and resources/skins.
 /assets/
 node_modules/
 dist/

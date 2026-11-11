@@ -10,7 +10,7 @@
 
 | 鸣潮 · 心月狐团子 | 玄灵 · 月蚀 | 玄灵 · 常态 | GLM拟人团子 |
 | :---: | :---: | :---: | :---: |
-| <img src="screenshots/default.png" width="210" alt="鸣潮 · 心月狐团子主页"> | <img src="screenshots/eclipse.png" width="210" alt="玄灵 · 月蚀主页"> | <img src="screenshots/normal.png" width="210" alt="玄灵 · 常态主页"> | <img src="screenshots/black-blue.png" width="210" alt="GLM拟人团子主页"> |
+| <img src="resources/screenshots/default.png" width="210" alt="鸣潮 · 心月狐团子主页"> | <img src="resources/screenshots/eclipse.png" width="210" alt="玄灵 · 月蚀主页"> | <img src="resources/screenshots/normal.png" width="210" alt="玄灵 · 常态主页"> | <img src="resources/screenshots/black-blue.png" width="210" alt="GLM拟人团子主页"> |
 
 在 **设置 → 更换团子** 中选择喜欢的形象。设置首页会显示当前团子的名字，选中项以橙色边框和对勾标记；切换时显示加载动画，重启后保留选择。
 
@@ -30,7 +30,7 @@
 
 |                                应用启动器                                 |                                   2048                                    |
 | :-----------------------------------------------------------------------: | :-----------------------------------------------------------------------: |
-| <img src="screenshots/launcher.png" width="360" alt="dangoOS 应用启动器"> | <img src="screenshots/2048.png" width="360" alt="内置 2048 游戏运行画面"> |
+| <img src="resources/screenshots/launcher.png" width="360" alt="dangoOS 应用启动器"> | <img src="resources/screenshots/2048.png" width="360" alt="内置 2048 游戏运行画面"> |
 
 - **随手玩一局**：内置 Snake、2048、Dino 和 Flappy Bird，支持触摸操作。
 - **记录和查看**：连接左侧相机模块拍照，在 Photo 相册中浏览和删除照片。
@@ -42,7 +42,7 @@
 
 |                                     设置首页                                      |                                       团子选择                                        |
 | :-------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------: |
-| <img src="screenshots/settings.png" width="360" alt="显示当前团子名称的设置首页"> | <img src="screenshots/characters.png" width="360" alt="带橙色选中边框的团子选择页面"> |
+| <img src="resources/screenshots/settings.png" width="360" alt="显示当前团子名称的设置首页"> | <img src="resources/screenshots/characters.png" width="360" alt="带橙色选中边框的团子选择页面"> |
 
 亮度、音量、灯光、震动、Wi-Fi、蓝牙、相机和存储集中在原生设置里。偏好自动保存，保存过程中显示转圈，完成后显示绿色对勾。连接 2.4 GHz WPA2 Wi-Fi 后，可以在 **设置 → 系统更新** 中检查并安装新固件。
 
@@ -74,7 +74,7 @@ python3 install.py --flash-port ROM_PORT --port RUNTIME_PORT
 python3 install.py --port RUNTIME_PORT
 ```
 
-安装器会校验并更新随包提供的四套团子与匹配字体，保留当前团子选择和其他用户文件。所有完整角色均为独立资源；缺少资源时显示内置的[狐狸团子虚影与问号](screenshots/placeholder.png)。首次从 system 默认心月狐迁移时，补装 `default` 资源包即可恢复原角色。USB 固件升级步骤同样见包内 `INSTALL.md`。
+安装器会校验并更新随包提供的四套团子与匹配字体，保留当前团子选择和其他用户文件。所有完整角色均为独立资源；缺少资源时显示内置的[狐狸团子虚影与问号](resources/screenshots/placeholder.png)。首次从 system 默认心月狐迁移时，补装 `default` 资源包即可恢复原角色。USB 固件升级步骤同样见包内 `INSTALL.md`。
 
 ## 源码与构建
 
@@ -87,7 +87,7 @@ dangoOS 使用 Rust、LVGL 和构建时选择的 Lua / TS 引擎。应用代码�
 | [crates/app-host](crates/app-host/README.md) | 引擎共享的数据契约与图像编解码 |
 | [crates/fs](crates/fs/)                          | 文件系统与 NAND 存储           |
 | [apps](apps/README.md)                           | 五个内置应用的 Lua 源码        |
-| [dango-skin](dango-skin/)                        | 四套可分发团子的 BIN / JSON    |
+| [resources](resources/README.md)                  | 可分发团子、EmbedTS 字节码和展示截图 |
 | [scripts/release](scripts/release/README.md)     | 固件打包、校验与发布工具       |
 
 构建需要 `rust-toolchain.toml` 指定的 Rust、Espressif RISC-V GCC / newlib 和主机 libclang。其他机器需用环境变量覆盖 [工具链配置](.cargo/config.toml) 中的本机路径；Linux CI 的固定版本与安装过程见 [Firmware 工作流](.github/workflows/firmware.yml)。
@@ -104,6 +104,6 @@ python3 scripts/release/package.py build --out target/release-local \
 
 默认固件使用 Lua。`cargo fw-ts` 关闭默认 features 并接入外部 EmbedTS 引擎；每份固件只链接一个脚本引擎，同时选择或均未选择时构建失败。
 
-TypeScript 构建器、引擎、SDK 和应用源码维护于独立的 [EmbedTypescript](https://github.com/umbrella22/EmbedTypescript) 仓库，按 `builder/`、`engine/`、`sdk/`、`examples/` 组织。本仓库仅保留 Rust 宿主适配及 `artifacts/embedts/` 预编译输入，固件构建和测试不编译 TS。应用入口使用 **EmbedTS Bytecode（`.etb`）**，brain 持久化使用 `etb1:` 信封。接入与更新流程见 [EmbedTS 接入](crates/os/EMBEDTS.md)。
+TypeScript 构建器、引擎、SDK 和应用源码维护于独立的 [EmbedTypescript](https://github.com/umbrella22/EmbedTypescript) 仓库，按 `builder/`、`engine/`、`sdk/`、`examples/` 组织。本仓库仅保留 Rust 宿主适配及 `resources/embedts/` 预编译输入，固件构建和测试不编译 TS。应用入口使用 **EmbedTS Bytecode（`.etb`）**，brain 持久化使用 `etb1:` 信封。接入与更新流程见 [EmbedTS 接入](crates/os/EMBEDTS.md)。
 
 引擎依赖在根 `Cargo.toml` 中固定到 GitHub 的完整 commit SHA，OS 与基准 runner 共用该版本，`Cargo.lock` 记录来源。构建本仓库无需相邻的 EmbedTypescript checkout；首次运行 `cargo fetch --locked` 后可离线检查。CI 直接使用锁定依赖，OS 中不安装 pnpm 或构建 TS 源码。

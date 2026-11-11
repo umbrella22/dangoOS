@@ -9,7 +9,7 @@ TS 应用由外部 EmbedTypescript 构建为 `.etb` 应用树。
 
 ```sh
 cargo run -p app-pack --offline -- check apps
-cargo run -p app-pack --offline -- skins dango-skin
+cargo run -p app-pack --offline -- skins resources/skins
 # size 是设备分区表中的 system 分区字节数；当前布局为 496 个 4 KiB 块
 cargo run -p app-pack --offline -- system apps target/system-release --size 2031616
 cargo run -p app-pack --offline -- extract /absolute/system.bin /absolute/new-extraction

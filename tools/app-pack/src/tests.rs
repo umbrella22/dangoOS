@@ -192,7 +192,7 @@ fn ts_bundle_preserves_binary_payload_and_checks_engine_kind() {
 #[cfg(feature = "ts-engine")]
 #[test]
 fn precompiled_embedts_system_preserves_bytecode_and_registers_a_runnable_application() {
-    let bytes = include_bytes!("../../../artifacts/embedts/selftest.etb");
+    let bytes = include_bytes!("../../../resources/embedts/selftest.etb");
     let package = Package {
         id: "ts-fixture".into(),
         files: Tree::from([

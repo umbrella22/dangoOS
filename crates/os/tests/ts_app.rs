@@ -6,7 +6,7 @@ use app_host::{
 };
 use os::apps::{
     native_ui::{NativeUiService, RedrawBoundary},
-    ts_host::{self, AppHost, Platform},
+    ts::host::{self, AppHost, Platform},
 };
 use rs_lvgl::{sys as s, Display};
 use std::{cell::RefCell, ptr, rc::Rc, time::Duration};
@@ -84,7 +84,7 @@ fn tick() {
 }
 #[test]
 fn ts7_sdk_runs_ui_callbacks_storage_and_output_services_and_releases_resources() {
-    let package = include_bytes!("../../../artifacts/embedts/fixtures/ts-app.etb");
+    let package = include_bytes!("../../../resources/embedts/fixtures/ts-app.etb");
     rs_lvgl::init();
     let flushes = Rc::new(RefCell::new(0));
     let observed = flushes.clone();
@@ -130,7 +130,7 @@ fn ts7_sdk_runs_ui_callbacks_storage_and_output_services_and_releases_resources(
             };
             let id = request.id;
             let reply = if request.operation.starts_with("ui.") {
-                let command = ts_host::ui_command(request, root).unwrap();
+                let command = host::ui_command(request, root).unwrap();
                 let op = command.op.clone();
                 let reply = service.execute(command);
                 redraw.completed(&op, reply.is_ok());
@@ -146,9 +146,9 @@ fn ts7_sdk_runs_ui_callbacks_storage_and_output_services_and_releases_resources(
                     })
                     .map_err(|e| HostError::new(-1, e))
             } else if request.operation.starts_with("storage.") {
-                ts_host::storage(&mut vfs, root, &request, 2 * 1024 * 1024)
+                host::storage(&mut vfs, root, &request, 2 * 1024 * 1024)
             } else if request.operation == "sleep" {
-                assert_eq!(ts_host::sleep_ms(&request).unwrap(), 1);
+                assert_eq!(host::sleep_ms(&request).unwrap(), 1);
                 if let Some(command) = redraw.before_sleep(root) {
                     service.execute(command).unwrap();
                 }
