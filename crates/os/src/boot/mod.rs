@@ -86,6 +86,8 @@ pub async fn run(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
     let services = service_executor::start().await;
+    #[cfg(feature = "display-metrics")]
+    services.spawn(crate::services::display::diagnostics::tone_task().unwrap());
     resident_budget::init();
     info!("esp-rtos scheduler started (TIMG0 timer, FROM_CPU_INTR0)");
 

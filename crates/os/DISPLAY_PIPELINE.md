@@ -76,11 +76,15 @@ Home 状态带缓存最后成功上传的实际像素。相同状态带跳过上
 窗口数与全屏相同，写入顺序也与全屏一致；这条路径总是经 staging 打包。
 新页只绘制一次，每个动画位置仍需传完整屏幕。
 当前实现不额外分配 push 合成帧。
+动画的 280 ms 时钟在新页绘制结束后启动，准备页面的耗时不占用转场时长。
 
 连续且格式匹配的来源字节直接传给锁定 HAL 的 `half_duplex_write_async`。
 该 HAL 对可访问的 DRAM/PSRAM 使用 InPlace TX，负责发送前 cache writeback，
 future 的借用持续到 DMA 完成。窄区域或格式不同的来源先编码到驱动独占的
-32,736 B、128 B 对齐 PSRAM staging。短于 32 B 的异步命令使用 HAL FIFO 路径。
+两块各 32,736 B、128 B 对齐的 PSRAM staging。第一块准备完成后，先轮询本块
+DMA future 使其开始传输，再在另一块准备下一批像素；两个 future 完成后才交换
+缓冲角色。直接来源仍借用原始像素，不会为轮换而额外拷贝。短于 32 B 的异步命令
+使用 HAL FIFO 路径。
 每个像素块独立设置 CASET/RASET 并使用 RAMWR，未采用依赖连续写游标的 RAMWRC。
 
 阻塞启动写入仍经 HAL 内部 TX 缓冲。TX 缓冲为 4,096 B，因此冷启动清黑按容量
@@ -94,7 +98,7 @@ bootloader handoff 协议仍为 RGB565。已有 GRAM 内容、颜色顺序和唤
 原内部 staging 30,720 B 和 TX 30,720 B 共占 61,440 B；当前 TX 4,096 B，
 staging 移到 PSRAM，相关内部缓冲减少 57,344 B（56 KiB）。双核构建的 RGB888
 24 行 draw buffer 比 RGB565 多 11,520 B；shadow 与 snapshot 合计增加
-460,800 B（450 KiB）PSRAM，另分配 32,736 B PSRAM staging 和普通堆中的
+460,800 B（450 KiB）PSRAM，另分配 65,472 B PSRAM staging 和普通堆中的
 5,440 B Home 状态缓存。
 堆元数据、线程栈、最大连续块和无线/音频争用后的实际余量以设备记录为准。
 
@@ -103,6 +107,8 @@ staging 移到 PSRAM，相关内部缓冲减少 57,344 B（56 KiB）。双核构
 阈值仅控制等待策略，不使较大的 damage 回退成整屏。
 `display-metrics` 在每个 job 记录 `display.frame`：完成状态、格式、总耗时、
 TE 等待、提交字节、直接来源字节、窗口数、编码时间和传输时间。
+`pack_us` 是实际 CPU 打包时间之和；`transfer_us` 包括窗口命令、DMA 等待和
+调度，轮换后也覆盖与本次 DMA 重叠的下一块打包，不能再将两者相加作为串行总耗时。
 `bytes`/`windows` 记录尝试提交的工作量，失败或重试不能当作成功到达面板的净像素量。
 
 ## 主机复现与证据
@@ -159,6 +165,8 @@ TE、调度、PSRAM 争用和屏幕光学响应。
 生命周期；`pattern colors|gradient|off` 由 UI 线程管理原生 LVGL 测试图；
 `swipe x0 y0 x1 y1 duration_ms` 经普通输入队列注入有界轨迹。
 `tone prepare|play|clean` 管理独立临时 WAV，并使用正常音频服务播放。
+`play` 仅排入独立诊断任务；采样工具确认音频状态已达到 `playing` 后才开始并发
+测量，正常 `audio-play` 命令的完成回复不用于启动并发测试。
 这些入口仅存在于测量构建，测试完成后清理 WAV。
 
 每帧的 `display.frame`、`display.cost`、`display.input` 以 `id` 关联，另记录
@@ -171,6 +179,14 @@ BUSY 占比只计算输入到 LVGL 读取期间与先前 lease 的交集，不�
 `scripts/device/display_probe.py capture` 保存原始控制台记录并产生分布摘要，
 `analyze` 可离线重算；摘要显式列出截断记录和未配对帧。最终画面的 EmbedScope
 截图仍是 RGB565，不能据此验收 RGB888 低位精度或扫描过程中的撕裂。
+EmbedScope 的最终画面镜像会在每帧上传后量化／复制，尤其会延长 push 的租约。
+性能 A/B 统一使用 `display-metrics` 且关闭 `embedscope`；带 EmbedScope 的截图构建
+单独记录身份和证据，不能将两种构建的耗时混为一组。
+
+上游 R-11 已在 `lv_binding_rust` 本地提交
+`066f96b583e1e3dd83d6492fae961b48dd4eb8d9` 实现
+`.invalidation_alignment(4, 1)`，在 LVGL invalidation 阶段统一绘制与 DIRECT 同步区。
+当前 PARTIAL 的持久 shadow 保证扩展列已初始化，本轮未更改依赖来源，未迁移 DIRECT。
 
 以下命令只构建。配对比较先保持 TE 策略相同，再独立比较局部低延迟实验：
 

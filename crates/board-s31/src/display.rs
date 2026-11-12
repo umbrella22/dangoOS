@@ -160,13 +160,41 @@ impl Drop for DmaStaging {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ChunkSource<'a> {
+    Pixels(PixelSource<'a>, DirtyRect),
+    Rows(SplitRows<'a>, DirtyRect),
+}
+struct Prepared<'a> {
+    direct: Option<&'a [u8]>,
+    length: usize,
+}
+impl<'a> ChunkSource<'a> {
+    fn prepare(self, output: &mut [u8]) -> Prepared<'a> {
+        match self {
+            Self::Pixels(source, area) => {
+                let direct = source.contiguous(area, PANEL_FORMAT);
+                let length = direct.map_or_else(
+                    || source.pack(area, PANEL_FORMAT, output),
+                    |bytes| bytes.len(),
+                );
+                Prepared { direct, length }
+            }
+            Self::Rows(rows, area) => Prepared {
+                direct: None,
+                length: rows.pack(area.y0, area.y1, PANEL_FORMAT, output),
+            },
+        }
+    }
+}
+
 /// CO5300 panel driver.
 ///
 /// [`init`] returns the blocking variant used for bring-up; [`init_async`]
 /// switches it to the DMA-async variant the plane task uses.
 pub struct Display<Dm: DriverMode = Blocking> {
     spi: SpiDma<'static, Dm>,
-    staging: DmaStaging,
+    staging: [DmaStaging; 2],
     _rst: Output<'static>,
     faulted: bool,
     #[cfg(feature = "display-metrics")]
@@ -209,7 +237,7 @@ impl Display<Blocking> {
         let pixels_per_band = board::LCD_WIDTH as usize * BAND_ROWS as usize;
         let bytes_per_band = pixels_per_band * PANEL_FORMAT.bytes_per_pixel();
         debug_assert!(bytes_per_band <= CHUNK_BYTES);
-        let staging = self.staging.as_mut_slice();
+        let staging = self.staging[0].as_mut_slice();
         staging[..bytes_per_band].fill(0);
 
         let mut y = 0u16;
@@ -226,7 +254,7 @@ impl Display<Blocking> {
                 Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
                 Address::_24Bit(GRAM_ADDR, DataMode::Single),
                 0,
-                &self.staging.as_mut_slice()[..bytes],
+                &self.staging[0].as_mut_slice()[..bytes],
             )?;
             y = y_end + 1;
         }
@@ -287,32 +315,18 @@ impl Display<Async> {
         assert_eq!(dst.x0 % 4, 0);
         assert_eq!(dst.width() % 4, 0);
         assert!(src.x1 < source.size().0 && src.y1 < source.size().1);
-        for part in RowChunks::new(src, PANEL_FORMAT, CHUNK_BYTES) {
+        let chunks = RowChunks::new(src, PANEL_FORMAT, CHUNK_BYTES).map(|part| {
             let window = DirtyRect {
                 y0: dst.y0 + part.y0 - src.y0,
                 y1: dst.y0 + part.y1 - src.y0,
                 ..dst
             };
-            #[cfg(feature = "display-metrics")]
-            let pack_started = embassy_time::Instant::now();
-            let direct = source.contiguous(part, PANEL_FORMAT);
-            let length = if let Some(bytes) = direct {
-                bytes.len()
-            } else {
-                source.pack(part, PANEL_FORMAT, self.staging.as_mut_slice())
-            };
-            #[cfg(feature = "display-metrics")]
-            {
-                self.stats.pack_us += pack_started.elapsed().as_micros();
-                self.stats.direct_bytes += if direct.is_some() { length as u32 } else { 0 };
-            }
-            self.send_window(window, direct, length).await?;
-        }
-        Ok(())
+            (window, ChunkSource::Pixels(source, part))
+        });
+        self.write_chunks(chunks).await
     }
 
     /// Upload composed full rows (a page push) as row-major whole-width chunks.
-    /// The panel sees one window per chunk, top to bottom, like a full frame.
     pub async fn write_rows_async(&mut self, rows: SplitRows<'_>) -> Result<(), Error> {
         if self.faulted {
             return Err(Error::Faulted);
@@ -321,31 +335,114 @@ impl Display<Async> {
         assert!(area.is_valid());
         assert_eq!(area.x0 % 4, 0);
         assert_eq!(area.width() % 4, 0);
-        for part in RowChunks::new(area, PANEL_FORMAT, CHUNK_BYTES) {
-            #[cfg(feature = "display-metrics")]
-            let pack_started = embassy_time::Instant::now();
-            let length = rows.pack(part.y0, part.y1, PANEL_FORMAT, self.staging.as_mut_slice());
+        self.write_chunks(
+            RowChunks::new(area, PANEL_FORMAT, CHUNK_BYTES)
+                .map(|part| (part, ChunkSource::Rows(rows, part))),
+        )
+        .await
+    }
+
+    /// Pack the next chunk in the other allocation while the current DMA runs.
+    /// Both allocations remain owned by this driver through DMA completion.
+    async fn write_chunks<'a>(
+        &mut self,
+        mut chunks: impl Iterator<Item = (DirtyRect, ChunkSource<'a>)>,
+    ) -> Result<(), Error> {
+        let Some((mut window, first)) = chunks.next() else {
+            return Ok(());
+        };
+        let (left, right) = self.staging.split_at_mut(1);
+        let (mut current, mut spare) = (&mut left[0], &mut right[0]);
+        #[cfg(feature = "display-metrics")]
+        let started = embassy_time::Instant::now();
+        let mut prepared = first.prepare(current.as_mut_slice());
+        #[cfg(feature = "display-metrics")]
+        {
+            self.stats.pack_us += started.elapsed().as_micros();
+        }
+        loop {
+            let next = chunks.next();
+            let bytes = prepared
+                .direct
+                .unwrap_or_else(|| &current.as_mut_slice()[..prepared.length]);
             #[cfg(feature = "display-metrics")]
             {
-                self.stats.pack_us += pack_started.elapsed().as_micros();
+                self.stats.direct_bytes += if prepared.direct.is_some() {
+                    prepared.length as u32
+                } else {
+                    0
+                };
             }
-            self.send_window(part, None, length).await?;
+            let pack_next = async {
+                #[cfg(feature = "display-metrics")]
+                let started = embassy_time::Instant::now();
+                let packed =
+                    next.map(|(window, source)| (window, source.prepare(spare.as_mut_slice())));
+                #[cfg(feature = "display-metrics")]
+                let elapsed = started.elapsed().as_micros();
+                #[cfg(not(feature = "display-metrics"))]
+                let elapsed = 0u64;
+                (packed, elapsed)
+            };
+            let (next, pack_us) = Self::send_window(
+                &mut self.spi,
+                &mut self.faulted,
+                #[cfg(feature = "display-metrics")]
+                &mut self.stats,
+                window,
+                bytes,
+                pack_next,
+            )
+            .await?;
+            #[cfg(feature = "display-metrics")]
+            {
+                self.stats.pack_us += pack_us;
+            }
+            #[cfg(not(feature = "display-metrics"))]
+            let _ = pack_us;
+            let Some((next_window, next_prepared)) = next else {
+                break;
+            };
+            // DMA has released current. Only now can it become the next spare.
+            core::mem::swap(&mut current, &mut spare);
+            window = next_window;
+            prepared = next_prepared;
         }
         Ok(())
     }
 
-    /// Address one window and send its pixels: `direct` source bytes, or the
-    /// first `length` staging bytes when `direct` is `None`.
-    async fn send_window(
-        &mut self,
-        window: DirtyRect,
-        direct: Option<&[u8]>,
-        length: usize,
+    async fn write_reg_on(
+        spi: &mut SpiDma<'static, Async>,
+        faulted: &mut bool,
+        reg: u8,
+        params: &[u8],
     ) -> Result<(), Error> {
+        transfer(
+            faulted,
+            spi.half_duplex_write_async(
+                DataMode::Single,
+                Command::_8Bit(OP_WRITE_REG, DataMode::Single),
+                Address::_24Bit((reg as u32) << 8, DataMode::Single),
+                0,
+                params,
+            ),
+        )
+        .await
+    }
+
+    /// The transfer future is polled first to start DMA, then next-packing work.
+    async fn send_window<T>(
+        spi: &mut SpiDma<'static, Async>,
+        faulted: &mut bool,
+        #[cfg(feature = "display-metrics")] stats: &mut TransferStats,
+        window: DirtyRect,
+        bytes: &[u8],
+        pack_next: impl core::future::Future<Output = T>,
+    ) -> Result<T, Error> {
         #[cfg(feature = "display-metrics")]
         {
-            self.stats.bytes += length as u32;
-            self.stats.windows += 1;
+            stats.bytes += bytes.len() as u32;
+            stats.windows += 1;
         }
         let xs = [
             (window.x0 >> 8) as u8,
@@ -361,34 +458,33 @@ impl Display<Async> {
         ];
         #[cfg(feature = "display-metrics")]
         let transfer_started = embassy_time::Instant::now();
-        self.write_reg_async(CMD_CASET, &xs).await?;
-        self.write_reg_async(CMD_RASET, &ys).await?;
-        let bytes = match direct {
-            Some(bytes) => bytes,
-            None => &self.staging.as_mut_slice()[..length],
-        };
+        Self::write_reg_on(spi, faulted, CMD_CASET, &xs).await?;
+        Self::write_reg_on(spi, faulted, CMD_RASET, &ys).await?;
         #[cfg(feature = "display-metrics")]
-        if self.stats.first_submit_us == 0 {
-            self.stats.first_submit_us = esp_hal::time::Instant::now()
+        if stats.first_submit_us == 0 {
+            stats.first_submit_us = esp_hal::time::Instant::now()
                 .duration_since_epoch()
                 .as_micros();
         }
-        let result = transfer(
-            &mut self.faulted,
-            self.spi.half_duplex_write_async(
-                DataMode::Quad,
-                Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
-                Address::_24Bit(GRAM_ADDR, DataMode::Single),
-                0,
-                bytes,
+        let (result, next) = embassy_futures::join::join(
+            transfer(
+                faulted,
+                spi.half_duplex_write_async(
+                    DataMode::Quad,
+                    Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
+                    Address::_24Bit(GRAM_ADDR, DataMode::Single),
+                    0,
+                    bytes,
+                ),
             ),
+            pack_next,
         )
         .await;
         #[cfg(feature = "display-metrics")]
         {
-            self.stats.transfer_us += transfer_started.elapsed().as_micros();
+            stats.transfer_us += transfer_started.elapsed().as_micros();
         }
-        result
+        result.map(|()| next)
     }
 
     #[cfg(feature = "display-metrics")]
@@ -398,17 +494,7 @@ impl Display<Async> {
 
     /// 异步寄存器写: 单线 0x02 → 单线地址 reg<<8 → 单线参数。
     async fn write_reg_async(&mut self, reg: u8, params: &[u8]) -> Result<(), Error> {
-        transfer(
-            &mut self.faulted,
-            self.spi.half_duplex_write_async(
-                DataMode::Single,
-                Command::_8Bit(OP_WRITE_REG, DataMode::Single),
-                Address::_24Bit((reg as u32) << 8, DataMode::Single),
-                0,
-                params,
-            ),
-        )
-        .await
+        Self::write_reg_on(&mut self.spi, &mut self.faulted, reg, params).await
     }
 
     /// 亮度百分比；初始化必须已写 0x53=0x20 打开 BCTRL。
@@ -514,7 +600,10 @@ pub fn try_init(
 
     let mut display: Display<Blocking> = Display {
         spi,
-        staging: DmaStaging::try_new().ok_or(InitError::Allocation)?,
+        staging: [
+            DmaStaging::try_new().ok_or(InitError::Allocation)?,
+            DmaStaging::try_new().ok_or(InitError::Allocation)?,
+        ],
         _rst: rst,
         faulted: false,
         #[cfg(feature = "display-metrics")]

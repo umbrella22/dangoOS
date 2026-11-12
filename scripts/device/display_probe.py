@@ -31,12 +31,24 @@ def capture(args):
             log.write(f"HOST command={text}\n")
             response = device.command(text)
             print(response, flush=True)
+            return response
         def observe(seconds):
             for _ in device.lines(time.monotonic() + seconds):
                 pass
         try:
             command("boot-status")
             command("display-test status")
+            if args.audio:
+                command("audio-volume 100")
+                command("display-test tone play")
+                for _ in range(20):
+                    observe(.5)
+                    if "state=playing" in command("audio-status"):
+                        break
+                else:
+                    raise RuntimeError("test tone did not reach playing; no concurrent run recorded")
+            log.write("HOST measure_begin\n")
+            log.flush()
             if args.scenario == "home":
                 command("display-test page home")
                 observe(args.seconds)
@@ -60,6 +72,8 @@ def capture(args):
                     observe(.8)
                 observe(args.seconds)
             command("audio-status")
+            if args.audio:
+                command("audio-stop")
             command("wifi-status")
             command("bt-status")
             command("boot-status")
@@ -82,7 +96,17 @@ def distribution(values):
 def analyze(path, output):
     frames, costs, inputs, busy, renders = {}, {}, {}, [], []
     incomplete = []
-    for line in path.read_text().splitlines():
+    lines = path.read_text().splitlines()
+    if "HOST measure_begin" in lines:
+        lines = lines[lines.index("HOST measure_begin")+1:]
+    # Older captures predate the explicit marker; their first scenario command
+    # follows the identity/status ACKs, which drain preserved USB log backlog.
+    else:
+        for index,line in enumerate(lines):
+            if line.startswith("HOST command=display-test ") and not line.endswith(" status"):
+                lines = lines[index:]
+                break
+    for line in lines:
         match = re.search(r"display\.(frame|cost|input|busy|render) (.*)",line)
         if not match:
             continue
@@ -105,9 +129,11 @@ def analyze(path, output):
         for frame,cost in data:
             for key,value in (("total_us",frame["end"]-frame["start"]),("te_us",frame["te"]),("pack_us",cost["pack"]),("transfer_us",cost["transfer"]),("bytes",cost["bytes"]),("direct_bytes",cost.get("direct",0)),("windows",cost.get("windows",0))): series[key].append(value)
             if cost["transfer"]: series["pack_transfer_ratio"].append(cost["pack"]/cost["transfer"])
-            if previous is not None and 0 < frame["end"]-previous < 200_000:
-                series["completion_interval_us"].append(frame["end"]-previous)
-            previous = frame["end"]
+            # Consecutive frame IDs exclude idle/navigation gaps without cutting
+            # off slow frames at an arbitrary duration (which would bias p95).
+            if previous is not None and frame["id"] == previous["id"]+1:
+                series["completion_interval_us"].append(frame["end"]-previous["end"])
+            previous = frame
             trace = inputs.get(frame["id"])
             if trace and trace["first"] <= trace["read"] <= cost["pixel"]:
                 oldest,latest = cost["pixel"]-trace["first"],cost["pixel"]-trace["last"]
@@ -134,6 +160,7 @@ def main():
     run.add_argument("--seconds",type=float,default=10)
     run.add_argument("--command",action="append",default=[])
     run.add_argument("--bounds",type=int,nargs=4)
+    run.add_argument("--audio",action="store_true",help="play the prepared test WAV during this run")
     report = sub.add_parser("analyze")
     report.add_argument("log",type=Path)
     report.add_argument("--output",type=Path,required=True)

@@ -196,7 +196,9 @@ fn step_slide(slide: Slide, port: &mut DisplayPort, plane: &mut PlaneUi, now_ms:
             port.render_now();
             Slide::Running {
                 direction,
-                start_ms: now_ms,
+                // Preparing a native page can exceed a frame interval. Start
+                // the animation after that work so it retains its full duration.
+                start_ms: now_us() / 1000,
             }
         }
         Slide::Running {

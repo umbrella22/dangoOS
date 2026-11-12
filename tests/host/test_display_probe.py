@@ -12,6 +12,25 @@ spec.loader.exec_module(probe)
 
 
 class DisplayProbeTests(unittest.TestCase):
+    def test_slow_consecutive_frames_are_retained_and_usb_backlog_is_excluded(self):
+        text = "\n".join([
+            "display.frame id=99 kind=slide start=1 end=999999 te=0",
+            "display.cost id=99 bytes=1 pack=1 transfer=1 pixel=2 offset=0",
+            "HOST measure_begin",
+            "display.frame id=1 kind=slide start=100 end=300100 te=0",
+            "display.cost id=1 bytes=1 pack=1 transfer=1 pixel=200 offset=0",
+            "display.frame id=2 kind=slide start=300200 end=650100 te=0",
+            "display.cost id=2 bytes=1 pack=1 transfer=1 pixel=300300 offset=0",
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            log, output = Path(directory)/"run.log", Path(directory)/"run.json"
+            log.write_text(text)
+            probe.analyze(log,output)
+            result = json.loads(output.read_text())
+        slide = result["scenarios"]["slide"]
+        self.assertEqual(slide["total_us"]["n"],2)
+        self.assertEqual(slide["completion_interval_us"]["p50"],350000)
+
     def test_busy_share_excludes_current_upload_and_reports_missing_records(self):
         text = "\n".join([
             "[INFO] display.busy begin=100 end=200",

@@ -78,6 +78,26 @@ mod device {
     static REQUEST: Mutex<Cell<Option<Command>>> = Mutex::new(Cell::new(None));
     // count, min, mean, max, timeouts. GPIO edge observation includes scheduling.
     static TE: Mutex<Cell<[u64; 5]>> = Mutex::new(Cell::new([0; 5]));
+    static TONE_REQUEST: embassy_sync::signal::Signal<
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        (),
+    > = embassy_sync::signal::Signal::new();
+    static TONE_BUSY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    const TONE_PATH: &str = "/data/.display-test-20261112.wav";
+
+    #[embassy_executor::task]
+    pub async fn tone_task() {
+        use core::sync::atomic::Ordering;
+        loop {
+            TONE_REQUEST.wait().await;
+            let result = crate::services::audio::task::execute(
+                crate::services::audio::Command::Play(TONE_PATH.into()),
+            )
+            .await;
+            log::info!("display.tone result={}", result);
+            TONE_BUSY.store(false, Ordering::Release);
+        }
+    }
 
     pub async fn sample_te(te: &mut Input<'static>) {
         let mut last = None;
@@ -121,9 +141,13 @@ mod device {
         match command {
             Command::Tone(action) => {
                 use crate::services::audio::{self, Command as Audio};
-                const PATH: &str = "/data/.display-test-20261112.wav";
                 if action == 1 {
-                    return audio::task::execute(Audio::Play(PATH.into())).await;
+                    use core::sync::atomic::Ordering;
+                    if TONE_BUSY.swap(true, Ordering::AcqRel) {
+                        return "@err display-test tone busy".into();
+                    }
+                    TONE_REQUEST.signal(());
+                    return "@ok display-test tone queued".into();
                 }
                 if action == 2 {
                     let _ = audio::task::execute(Audio::Stop).await;
@@ -131,9 +155,9 @@ mod device {
                 let result = crate::platform::runtime::executors::services::run(move || {
                     fs::global::with(|vfs| {
                         if action == 2 {
-                            return vfs.unlink(PATH);
+                            return vfs.unlink(TONE_PATH);
                         }
-                        if vfs.stat(PATH).is_ok() {
+                        if vfs.stat(TONE_PATH).is_ok() {
                             return Err(fs::Errno::EXIST);
                         }
                         let frames = 16_000usize * 30;
@@ -152,7 +176,7 @@ mod device {
                             };
                             wave.extend_from_slice(&sample.to_le_bytes());
                         }
-                        vfs.write_file(PATH, &wave)
+                        vfs.write_file(TONE_PATH, &wave)
                     })
                 })
                 .await;

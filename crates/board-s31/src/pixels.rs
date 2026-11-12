@@ -123,6 +123,38 @@ impl<'a> PixelSource<'a> {
         for row in 0..area.height() {
             let y = area.y0 as usize + row;
             let target = &mut output[row * row_bytes..(row + 1) * row_bytes];
+            // Select storage and output representation once per row, rather
+            // than rechecking layout and expanding/quantizing each pixel.
+            if format == PixelFormat::Bgr888 {
+                match self.storage {
+                    Storage::Native565(pixels) => {
+                        let start = y * self.size.0 as usize + area.x0 as usize;
+                        expand565(target, pixels[start..start + area.width()].iter().copied());
+                        continue;
+                    }
+                    Storage::Bytes(bytes, PixelFormat::Rgb565Le) => {
+                        let start = y * self.stride + area.x0 as usize * 2;
+                        expand565(
+                            target,
+                            bytes[start..start + area.width() * 2]
+                                .chunks_exact(2)
+                                .map(|p| u16::from_le_bytes([p[0], p[1]])),
+                        );
+                        continue;
+                    }
+                    Storage::Bytes(bytes, PixelFormat::Rgb565Be) => {
+                        let start = y * self.stride + area.x0 as usize * 2;
+                        expand565(
+                            target,
+                            bytes[start..start + area.width() * 2]
+                                .chunks_exact(2)
+                                .map(|p| u16::from_be_bytes([p[0], p[1]])),
+                        );
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             if let Storage::Bytes(bytes, stored) = self.storage {
                 if stored == format {
                     let start = y * self.stride + area.x0 as usize * format.bytes_per_pixel();
@@ -195,6 +227,19 @@ impl<'a> PixelSource<'a> {
         assert!(x < self.size.0 as usize && y < self.size.1 as usize);
         let (r, g, b) = self.rgb(x, y);
         ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3)
+    }
+}
+
+fn expand565(output: &mut [u8], pixels: impl Iterator<Item = u16>) {
+    for (target, value) in output.chunks_exact_mut(3).zip(pixels) {
+        let r = (value >> 11) as u8;
+        let g = ((value >> 5) & 63) as u8;
+        let b = (value & 31) as u8;
+        target.copy_from_slice(&[
+            (b << 3) | (b >> 2),
+            (g << 2) | (g >> 4),
+            (r << 3) | (r >> 2),
+        ]);
     }
 }
 
@@ -441,10 +486,51 @@ mod tests {
         let mut bytes = vec![0; values.len() * 3];
         source.pack(rect(0, 0, 255, 255), PixelFormat::Bgr888, &mut bytes);
         let expanded = PixelSource::bytes(&bytes, (256, 256), 768, PixelFormat::Bgr888);
+        for (value, actual) in values.iter().copied().zip(bytes.chunks_exact(3)) {
+            let r = u32::from((value >> 11) & 31);
+            let g = u32::from((value >> 5) & 63);
+            let b = u32::from(value & 31);
+            assert_eq!(
+                actual,
+                [
+                    (b * 8 + b / 4) as u8,
+                    (g * 4 + g / 16) as u8,
+                    (r * 8 + r / 4) as u8
+                ]
+            );
+        }
         for y in 0..256 {
             for x in 0..256 {
                 assert_eq!(expanded.rgb565_at(x, y), values[y * 256 + x]);
             }
+        }
+    }
+
+    #[test]
+    fn rgb565_byte_sources_expand_partial_padded_rows_in_both_orders() {
+        let values = [0xf801u16, 0x07e1, 0x001f, 0x1234, 0xffff, 0];
+        for format in [PixelFormat::Rgb565Le, PixelFormat::Rgb565Be] {
+            let mut bytes = vec![0xee; 16];
+            for (index, value) in values.iter().enumerate() {
+                let offset = index / 3 * 8 + index % 3 * 2;
+                bytes[offset..offset + 2].copy_from_slice(&if format == PixelFormat::Rgb565Le {
+                    value.to_le_bytes()
+                } else {
+                    value.to_be_bytes()
+                });
+            }
+            let source = PixelSource::bytes(&bytes, (3, 2), 8, format);
+            let mut result = [0xaa; 16];
+            assert_eq!(
+                source.pack(rect(1, 0, 2, 1), PixelFormat::Bgr888, &mut result),
+                12
+            );
+            let native = PixelSource::rgb565(&values, (3, 2));
+            for (at, (x, y)) in [(1, 0), (2, 0), (1, 1), (2, 1)].into_iter().enumerate() {
+                let [r, g, b] = native.rgb888_at(x, y);
+                assert_eq!(&result[at * 3..at * 3 + 3], &[b, g, r]);
+            }
+            assert_eq!(&result[12..], &[0xaa; 4]);
         }
     }
 }
