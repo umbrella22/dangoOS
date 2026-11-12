@@ -198,6 +198,93 @@ impl<'a> PixelSource<'a> {
     }
 }
 
+/// One horizontal span of a composed row: `width` source columns from `src_x`.
+#[derive(Clone, Copy)]
+pub struct RowSegment<'a> {
+    pub source: PixelSource<'a>,
+    pub src_x: u16,
+    pub width: u16,
+}
+
+/// Full rows composed left to right from up to two adjacent source spans.
+///
+/// A page push shows the end of one page beside the start of the other. Packing
+/// both spans into each row lets the panel receive one window per row chunk in
+/// top-to-bottom order, instead of two full-height column bands.
+#[derive(Clone, Copy)]
+pub struct SplitRows<'a> {
+    segments: [Option<RowSegment<'a>>; 2],
+    x0: u16,
+    width: u16,
+    height: u16,
+}
+
+impl<'a> SplitRows<'a> {
+    /// `segments` are placed left to right starting at panel column `x0`.
+    /// Zero-width segments are skipped. Rows `0..height` of every source are used.
+    pub fn new(x0: u16, height: u16, segments: [Option<RowSegment<'a>>; 2]) -> Self {
+        assert!(height > 0);
+        let mut width = 0u16;
+        for segment in segments.iter().flatten() {
+            let (w, h) = segment.source.size();
+            assert!(h >= height, "segment source shorter than the rows");
+            assert!(
+                u32::from(segment.src_x) + u32::from(segment.width) <= u32::from(w),
+                "segment outside its source"
+            );
+            width = width
+                .checked_add(segment.width)
+                .expect("row width overflow");
+        }
+        assert!(width > 0, "composed rows need at least one pixel");
+        Self {
+            segments,
+            x0,
+            width,
+            height,
+        }
+    }
+
+    /// Panel window covering composed rows `y0..=y1`.
+    pub fn window(&self, y0: u16, y1: u16) -> DirtyRect {
+        DirtyRect {
+            x0: self.x0,
+            y0,
+            x1: self.x0 + self.width - 1,
+            y1,
+        }
+    }
+
+    /// Panel window covering every composed row.
+    pub fn area(&self) -> DirtyRect {
+        self.window(0, self.height - 1)
+    }
+
+    /// Encode rows `y0..=y1` into `output`, row-major, returning the byte count.
+    pub fn pack(&self, y0: u16, y1: u16, format: PixelFormat, output: &mut [u8]) -> usize {
+        assert!(y0 <= y1 && y1 < self.height);
+        let mut at = 0;
+        for y in y0..=y1 {
+            for segment in self.segments.iter().flatten() {
+                if segment.width == 0 {
+                    continue;
+                }
+                at += segment.source.pack(
+                    DirtyRect {
+                        x0: segment.src_x,
+                        y0: y,
+                        x1: segment.src_x + segment.width - 1,
+                        y1: y,
+                    },
+                    format,
+                    &mut output[at..],
+                );
+            }
+        }
+        at
+    }
+}
+
 /// Split a rectangle into whole rows within the DMA payload and staging budget.
 pub struct RowChunks {
     area: DirtyRect,
@@ -309,6 +396,42 @@ mod tests {
                 .all(|c| c.width() * c.height() * format.bytes_per_pixel() <= MAX_DMA_BYTES));
             assert_eq!(chunks.last().unwrap().y1, 479);
         }
+    }
+
+    #[test]
+    fn split_rows_place_both_spans_in_each_row_without_padding() {
+        // Two 4x2 BGR sources with padded rows (stride 15 bytes).
+        let left: Vec<u8> = (0..30).collect();
+        let right: Vec<u8> = (100..130).collect();
+        let left = PixelSource::bytes(&left, (4, 2), 15, PixelFormat::Bgr888);
+        let right = PixelSource::bytes(&right, (4, 2), 15, PixelFormat::Bgr888);
+        let rows = SplitRows::new(
+            0,
+            2,
+            [
+                Some(RowSegment {
+                    source: left,
+                    src_x: 2,
+                    width: 2,
+                }),
+                Some(RowSegment {
+                    source: right,
+                    src_x: 0,
+                    width: 2,
+                }),
+            ],
+        );
+        assert_eq!(rows.area(), rect(0, 0, 3, 1));
+        let mut out = [0; 24];
+        assert_eq!(rows.pack(0, 1, PixelFormat::Bgr888, &mut out), 24);
+        assert_eq!(
+            &out[..12],
+            &[6, 7, 8, 9, 10, 11, 100, 101, 102, 103, 104, 105]
+        );
+        assert_eq!(
+            &out[12..],
+            &[21, 22, 23, 24, 25, 26, 115, 116, 117, 118, 119, 120]
+        );
     }
 
     #[test]

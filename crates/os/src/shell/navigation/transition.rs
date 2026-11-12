@@ -126,6 +126,32 @@ pub fn bands(direction: Direction, offset: u16, width: u16) -> ([Option<Band>; 2
     (out, count)
 }
 
+/// The full-width rows of one slide frame: each row holds both pages' bands
+/// side by side, so the panel receives the frame top to bottom.
+pub fn rows<'a>(
+    new: board_s31::pixels::PixelSource<'a>,
+    old: board_s31::pixels::PixelSource<'a>,
+    direction: Direction,
+    offset: u16,
+) -> board_s31::pixels::SplitRows<'a> {
+    use board_s31::pixels::{RowSegment, SplitRows};
+    let (width, height) = new.size();
+    assert_eq!(old.size(), (width, height), "slide pages differ in size");
+    let (bands, _) = bands(direction, offset, width);
+    let segment = |band: Option<Band>| {
+        band.map(|band| RowSegment {
+            source: match band.source {
+                Source::New => new,
+                Source::Old => old,
+            },
+            src_x: band.src_x,
+            width: band.width,
+        })
+    };
+    // `bands` lists the left band first and the second starts where it ends.
+    SplitRows::new(0, height, [segment(bands[0]), segment(bands[1])])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

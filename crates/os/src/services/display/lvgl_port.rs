@@ -63,6 +63,48 @@ static POINTER_PENDING: AtomicBool = AtomicBool::new(false);
 /// Set on every press; cleared once LVGL has read a pressed state.
 static POINTER_LATCH: AtomicBool = AtomicBool::new(false);
 
+#[cfg(all(feature = "display-metrics", target_os = "none"))]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct InputTrace {
+    pub first: u64,
+    pub last: u64,
+    pub read: u64,
+    pub count: u32,
+}
+#[cfg(all(feature = "display-metrics", target_os = "none"))]
+static POINTER_TRACE: Mutex<Cell<InputTrace>> = Mutex::new(Cell::new(InputTrace {
+    first: 0,
+    last: 0,
+    read: 0,
+    count: 0,
+}));
+#[cfg(all(feature = "display-metrics", target_os = "none"))]
+static READ_TRACE: Mutex<Cell<InputTrace>> = Mutex::new(Cell::new(InputTrace {
+    first: 0,
+    last: 0,
+    read: 0,
+    count: 0,
+}));
+
+/// Preserve the controller report timestamp before the UI's gesture clock clamp.
+#[cfg(target_os = "none")]
+pub fn set_pointer_at(x: i32, y: i32, pressed: bool, at_us: u64) {
+    #[cfg(feature = "display-metrics")]
+    critical_section::with(|cs| {
+        let trace = POINTER_TRACE.borrow(cs);
+        let mut value = trace.get();
+        if value.count == 0 {
+            value.first = at_us;
+        }
+        value.last = at_us;
+        value.count = value.count.saturating_add(1);
+        trace.set(value);
+    });
+    #[cfg(not(feature = "display-metrics"))]
+    let _ = at_us;
+    set_pointer(x, y, pressed);
+}
+
 /// Report the latest touch sample to LVGL's pointer device.
 pub fn set_pointer(x: i32, y: i32, pressed: bool) {
     POINTER_X.store(x, Ordering::Relaxed);
@@ -78,6 +120,10 @@ pub fn set_pointer(x: i32, y: i32, pressed: bool) {
 /// render again.
 pub struct ScreenLease {
     pixels: &'static [u8],
+    #[cfg(all(feature = "display-metrics", target_os = "none"))]
+    acquired_us: u64,
+    #[cfg(all(feature = "display-metrics", target_os = "none"))]
+    pub(crate) input: InputTrace,
 }
 
 // SAFETY: the shadow is written only by LVGL's flush on the UI task, and the
@@ -85,6 +131,17 @@ pub struct ScreenLease {
 unsafe impl Send for ScreenLease {}
 
 impl ScreenLease {
+    fn new(pixels: &'static [u8]) -> Self {
+        Self {
+            pixels,
+            #[cfg(all(feature = "display-metrics", target_os = "none"))]
+            acquired_us: crate::platform::runtime::time::now_us(),
+            #[cfg(all(feature = "display-metrics", target_os = "none"))]
+            input: critical_section::with(|cs| {
+                READ_TRACE.borrow(cs).replace(InputTrace::default())
+            }),
+        }
+    }
     pub fn pixels(&self) -> PixelSource<'_> {
         PixelSource::bytes(
             self.pixels,
@@ -97,6 +154,12 @@ impl ScreenLease {
 
 impl Drop for ScreenLease {
     fn drop(&mut self) {
+        #[cfg(all(feature = "display-metrics", target_os = "none"))]
+        log::info!(
+            "display.busy begin={} end={}",
+            self.acquired_us,
+            crate::platform::runtime::time::now_us()
+        );
         BUSY.store(false, Ordering::Release);
     }
 }
@@ -239,7 +302,7 @@ impl DisplayPort {
         // by `self._shadow`; LVGL does not write it while `BUSY` is set.
         let pixels = unsafe { core::slice::from_raw_parts(base, FRAME_BYTES) };
 
-        Some((ScreenLease { pixels }, damage))
+        Some((ScreenLease::new(pixels), damage))
     }
 
     /// Copy the page on screen into the snapshot. Refuses (returns `false`)
@@ -278,10 +341,7 @@ impl DisplayPort {
             unsafe { core::slice::from_raw_parts(SHADOW.load(Ordering::Acquire), FRAME_BYTES) };
         let old =
             unsafe { core::slice::from_raw_parts(SNAPSHOT.load(Ordering::Acquire), FRAME_BYTES) };
-        Some((
-            ScreenLease { pixels: screen },
-            SnapshotLease { pixels: old },
-        ))
+        Some((ScreenLease::new(screen), SnapshotLease { pixels: old }))
     }
 
     /// Hand the whole shadow to the plane (the last frame of a slide).
@@ -294,7 +354,7 @@ impl DisplayPort {
         // SAFETY: as in `take_frame`.
         let pixels =
             unsafe { core::slice::from_raw_parts(SHADOW.load(Ordering::Acquire), FRAME_BYTES) };
-        Some((ScreenLease { pixels }, Damage::full()))
+        Some((ScreenLease::new(pixels), Damage::full()))
     }
 
     /// Forget a press LVGL has not seen yet (touches during a slide).
@@ -456,6 +516,14 @@ unsafe extern "C" fn read_pointer(_indev: *mut sys::lv_indev_t, data: *mut sys::
     if data.is_null() {
         return;
     }
+    #[cfg(all(feature = "display-metrics", target_os = "none"))]
+    critical_section::with(|cs| {
+        let mut trace = POINTER_TRACE.borrow(cs).replace(InputTrace::default());
+        if trace.count != 0 {
+            trace.read = crate::platform::runtime::time::now_us();
+            READ_TRACE.borrow(cs).set(trace);
+        }
+    });
     let latched = POINTER_LATCH.swap(false, Ordering::Relaxed);
     let down = POINTER_DOWN.load(Ordering::Relaxed);
     let pressed = down || latched;

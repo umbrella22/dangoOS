@@ -223,6 +223,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
     let mut standby = crate::services::power::coordinator::Coordinator::new();
     #[cfg(feature = "embedscope")]
     let mut diagnostics = crate::embedscope::UiAgent::new();
+    #[cfg(feature = "display-metrics")]
+    let mut display_tests = crate::services::display::diagnostics::UiHarness::new();
     #[cfg(feature = "embedscope")]
     ui.set_diagnostic_sink(Some(Rc::new(|event| {
         if matches!(
@@ -630,6 +632,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
         }
         crate::companion::brain::control::poll(&mut runtime, now_ms, buttons::shutdown_requested())
             .await;
+        #[cfg(feature = "display-metrics")]
+        display_tests.poll(&mut app, &mut ui, &mut port, frames.slide != Slide::Idle);
         if app.page() != last_page {
             crate::shell::lifecycle::device::apply(
                 last_page,

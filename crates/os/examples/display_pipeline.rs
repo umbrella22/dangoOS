@@ -12,7 +12,7 @@ use os::{
         components::splash::SplashControl,
         navigation::{
             route::{AppId, Page},
-            transition::{self, Direction, Source},
+            transition::{self, Direction},
         },
         pages::settings::model::Page as SettingsPage,
     },
@@ -197,32 +197,13 @@ fn run(out: &Path) {
     let (new, old) = port.take_slide().unwrap();
     for ms in (0..=280).step_by(20) {
         let offset = transition::offset(ms, 480);
-        let (bands, count) = transition::bands(Direction::Back, offset, 480);
-        let mut stats = Upload::default();
-        for band in bands.iter().take(count).flatten() {
-            let source = match band.source {
-                Source::New => new.pixels(),
-                Source::Old => old.pixels(),
-            };
-            let s = replay.panel.upload(
-                DirtyRect {
-                    x0: band.dst_x,
-                    y0: 0,
-                    x1: band.dst_x + band.width - 1,
-                    y1: 479,
-                },
-                DirtyRect {
-                    x0: band.src_x,
-                    y0: 0,
-                    x1: band.src_x + band.width - 1,
-                    y1: 479,
-                },
-                source,
-            );
-            stats.bytes += s.bytes;
-            stats.direct_bytes += s.direct_bytes;
-            stats.windows += s.windows;
-        }
+        // Same row-major composition the plane uploads on the device.
+        let stats = replay.panel.upload_rows(transition::rows(
+            new.pixels(),
+            old.pixels(),
+            Direction::Back,
+            offset,
+        ));
         assert_eq!(stats.bytes, 480 * 480 * PANEL_FORMAT.bytes_per_pixel());
         // Independent pixel oracle for every intermediate push frame. It does
         // not use transition::bands or the transport's row-chunk iterator.

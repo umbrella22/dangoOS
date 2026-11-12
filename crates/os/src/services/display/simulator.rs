@@ -3,7 +3,7 @@
 use alloc::{vec, vec::Vec};
 use board_s31::{
     geometry::DirtyRect,
-    pixels::{PixelFormat, PixelSource, RowChunks, MAX_DMA_BYTES},
+    pixels::{PixelFormat, PixelSource, RowChunks, SplitRows, MAX_DMA_BYTES},
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -82,6 +82,28 @@ impl MemoryPanel {
         stats
     }
 
+    /// Apply composed full rows (a page push) with the driver's row-major chunks.
+    pub fn upload_rows(&mut self, rows: SplitRows<'_>) -> Upload {
+        let area = rows.area();
+        assert!(area.x1 < self.size.0 && area.y1 < self.size.1);
+        let mut staging = vec![0; MAX_DMA_BYTES];
+        let mut stats = Upload::default();
+        for part in RowChunks::new(area, self.format, MAX_DMA_BYTES) {
+            let length = rows.pack(part.y0, part.y1, self.format, &mut staging);
+            let row_bytes = part.width() * self.format.bytes_per_pixel();
+            for row in 0..part.height() {
+                let y = part.y0 as usize + row;
+                let offset =
+                    (y * self.size.0 as usize + part.x0 as usize) * self.format.bytes_per_pixel();
+                self.pixels[offset..offset + row_bytes]
+                    .copy_from_slice(&staging[row * row_bytes..(row + 1) * row_bytes]);
+            }
+            stats.bytes += length;
+            stats.windows += 1;
+        }
+        stats
+    }
+
     pub fn ppm(&self) -> Vec<u8> {
         let mut out = alloc::format!("P6\n{} {}\n255\n", self.size.0, self.size.1).into_bytes();
         let source = self.pixels();
@@ -97,10 +119,7 @@ impl MemoryPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        services::display::damage::FULL,
-        shell::navigation::transition::{self, Direction, Source},
-    };
+    use crate::shell::navigation::transition::{self, Direction, Source};
 
     #[test]
     fn partial_window_preserves_surrounding_pixels_and_padded_source_rows() {
@@ -133,46 +152,43 @@ mod tests {
     }
 
     #[test]
-    fn push_bands_use_old_and_new_sources_at_each_offset_without_a_compose_frame() {
-        let old_bytes = vec![7; 480 * 480 * 3];
-        let new_bytes = vec![19; 480 * 480 * 3];
+    fn push_rows_compose_both_pages_full_width_without_a_compose_frame() {
+        // Column-coded pages so a misplaced band is visible at every pixel.
+        let page = |tag: u8| {
+            let mut bytes = vec![0; 480 * 480 * 3];
+            for (i, px) in bytes.chunks_exact_mut(3).enumerate() {
+                let x = (i % 480) as u16;
+                px.copy_from_slice(&[tag, x as u8, (x >> 8) as u8]);
+            }
+            bytes
+        };
+        let (old_bytes, new_bytes) = (page(7), page(19));
         let old = PixelSource::bytes(&old_bytes, (480, 480), 1440, PixelFormat::Bgr888);
         let new = PixelSource::bytes(&new_bytes, (480, 480), 1440, PixelFormat::Bgr888);
         let mut panel = MemoryPanel::new((480, 480), PixelFormat::Bgr888);
         for direction in [Direction::Forward, Direction::Back] {
             for offset in [0, 4, 128, 476, 480] {
+                let stats = panel.upload_rows(transition::rows(new, old, direction, offset));
+                assert_eq!(stats.bytes, 480 * 480 * 3);
+                // Whole-width chunks only: no per-band windows.
+                assert_eq!(stats.windows, 22);
                 let (bands, count) = transition::bands(direction, offset, 480);
-                let mut bytes = 0;
                 for band in bands.iter().take(count).flatten() {
-                    let source = match band.source {
-                        Source::New => new,
-                        Source::Old => old,
+                    let (source, tag) = match band.source {
+                        Source::New => (new, 19),
+                        Source::Old => (old, 7),
                     };
-                    bytes += panel
-                        .upload(
-                            DirtyRect {
-                                x0: band.dst_x,
-                                x1: band.dst_x + band.width - 1,
-                                ..FULL
-                            },
-                            DirtyRect {
-                                x0: band.src_x,
-                                x1: band.src_x + band.width - 1,
-                                ..FULL
-                            },
-                            source,
-                        )
-                        .bytes;
-                    assert_eq!(
-                        panel.pixels().rgb888_at(band.dst_x as usize, 479),
-                        if matches!(band.source, Source::New) {
-                            [19; 3]
-                        } else {
-                            [7; 3]
+                    for x in [band.dst_x, band.dst_x + band.width - 1] {
+                        let src_x = (band.src_x + x - band.dst_x) as usize;
+                        for y in [0, 239, 479] {
+                            assert_eq!(
+                                panel.pixels().rgb888_at(x as usize, y),
+                                source.rgb888_at(src_x, y)
+                            );
+                            assert_eq!(panel.pixels().rgb888_at(x as usize, y)[2], tag);
                         }
-                    );
+                    }
                 }
-                assert_eq!(bytes, 480 * 480 * 3);
             }
         }
     }

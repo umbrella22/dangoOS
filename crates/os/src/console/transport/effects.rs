@@ -31,6 +31,10 @@ pub(super) async fn apply(effects: Vec<Effect>) {
             crate::services::power::coordinator::wake();
         }
         match effect {
+            #[cfg(feature = "display-metrics")]
+            Effect::DisplayTest(command) => {
+                reply(&crate::services::display::diagnostics::execute(command).await).await
+            }
             Effect::Voice(command) => {
                 reply(&crate::services::voice::device::execute(command).await).await
             }

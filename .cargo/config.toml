@@ -3,6 +3,8 @@
 # Firmware build: cargo fw  (flash + monitor: cargo fw-run, needs a board)
 fw = "build -p os --bin os-fw --features firmware --release --target riscv32imafc-unknown-none-elf"
 # Device candidate: local RGB888 updates, opt-in TE policy and transfer counters.
+# It enables three switches at once; do not use it for single-variable A/B runs
+# (see docs/plans/display-decisions-20261112.md, section 3).
 fw-rgb888 = "build -p os --bin os-fw --features firmware,display-rgb888,display-low-latency,display-metrics --release --target riscv32imafc-unknown-none-elf"
 sim-display = "run -p os --example display_pipeline --features display-simulator,display-rgb888"
 fw-run = "run -p os --bin os-fw --features firmware --release --target riscv32imafc-unknown-none-elf"

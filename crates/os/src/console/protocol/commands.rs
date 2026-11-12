@@ -46,6 +46,14 @@ impl Session {
             return;
         }
         let result = match (verb, args.as_slice()) {
+            #[cfg(feature = "display-metrics")]
+            ("display-test", args) => {
+                match crate::services::display::diagnostics::Command::parse(args) {
+                    Ok(command) => out(Effect::DisplayTest(command)),
+                    Err(error) => out(Effect::Reply(format!("@err {error}"))),
+                }
+                return;
+            }
             ("boot-status", []) => {
                 out(Effect::BootStatus);
                 return;

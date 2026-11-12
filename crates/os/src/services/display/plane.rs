@@ -48,6 +48,8 @@ use log::{info, warn};
 use crate::services::display::status::{BRIGHTNESS_RESTORED, FIRST_FRAME};
 
 use crate::platform::drivers::display::Display;
+#[cfg(feature = "embedscope")]
+use crate::shell::navigation::transition::Source;
 use {
     crate::services::display::geometry::DirtyRect, crate::services::display::geometry::HEIGHT,
     crate::services::display::geometry::WIDTH,
@@ -56,10 +58,7 @@ use {
     crate::services::display::lvgl_port::ScreenLease,
     crate::services::display::lvgl_port::SnapshotLease,
 };
-use {
-    crate::shell::navigation::transition, crate::shell::navigation::transition::Direction,
-    crate::shell::navigation::transition::Source,
-};
+use {crate::shell::navigation::transition, crate::shell::navigation::transition::Direction};
 
 /// Vertical offset of the character canvas below the panel centre. The fox
 /// is bottom-anchored in its canvas with headroom for hops; 16 px down keeps
@@ -261,6 +260,10 @@ async fn run_plane(
     let mut pending_screen = Damage::new();
     let mut last_status = alloc::vec![0u16; crate::companion::status::PIXELS];
     let mut status_valid = false;
+    #[cfg(feature = "display-metrics")]
+    super::diagnostics::sample_te(&mut te).await;
+    #[cfg(feature = "display-metrics")]
+    let mut frame_id = 0u32;
 
     loop {
         #[cfg(feature = "embedscope")]
@@ -339,6 +342,8 @@ async fn run_plane(
         #[cfg(feature = "display-metrics")]
         let frame_started = embassy_time::Instant::now();
         #[cfg(feature = "display-metrics")]
+        let started_us = crate::platform::runtime::time::now_us();
+        #[cfg(feature = "display-metrics")]
         let _ = panel.take_stats();
         // Native local updates can bypass phase waiting in the opt-in latency
         // experiment. Whole pages, slides and Home keep their normal TE policy.
@@ -384,29 +389,12 @@ async fn run_plane(
             offset,
         } = &job.canvas
         {
-            let (bands, count) = transition::bands(*direction, *offset, WIDTH as u16);
-            for band in bands.iter().take(count).flatten() {
-                let pixels = match band.source {
-                    Source::New => new.pixels(),
-                    Source::Old => old.pixels(),
-                };
-                let dst = DirtyRect {
-                    x0: band.dst_x,
-                    y0: 0,
-                    x1: band.dst_x + band.width - 1,
-                    y1: HEIGHT as u16 - 1,
-                };
-                let src = DirtyRect {
-                    x0: band.src_x,
-                    y0: 0,
-                    x1: band.src_x + band.width - 1,
-                    y1: HEIGHT as u16 - 1,
-                };
-                if let Err(error) = panel.write_pixels_async(dst, src, pixels).await {
-                    warn!("plane: slide {dst:?} failed: {error:?}");
-                    completed = false;
-                    break;
-                }
+            // Compose each row from both pages so chunks reach the panel top to
+            // bottom at full width, instead of as two full-height column bands.
+            let rows = transition::rows(new.pixels(), old.pixels(), *direction, *offset);
+            if let Err(error) = panel.write_rows_async(rows).await {
+                warn!("plane: slide offset={offset} failed: {error:?}");
+                completed = false;
             }
         }
 
@@ -582,9 +570,32 @@ async fn run_plane(
         #[cfg(feature = "display-metrics")]
         {
             let stats = panel.take_stats();
-            info!(target: "display.frame", "ok={} rgb888={} total_us={} te_us={} bytes={} direct={} windows={} pack_us={} transfer_us={}",
-                completed, PANEL_FORMAT.bytes_per_pixel() == 3, frame_started.elapsed().as_micros(), te_us,
-                stats.bytes, stats.direct_bytes, stats.windows, stats.pack_us, stats.transfer_us);
+            frame_id = frame_id.wrapping_add(1);
+            let (kind, offset, input) = match &job.canvas {
+                Frame::Pool(_) => ("home", 0, None),
+                Frame::Screen(lease) => ("screen", 0, Some(lease.input)),
+                Frame::Slide { new, offset, .. } => ("slide", *offset, Some(new.input)),
+            };
+            // Each line fits the console's 158-byte text budget at device uptime.
+            info!(
+                "display.frame id={} kind={} rgb888={} ok={} start={} end={} te={}",
+                frame_id,
+                kind,
+                PANEL_FORMAT.bytes_per_pixel() == 3,
+                completed,
+                started_us,
+                crate::platform::runtime::time::now_us(),
+                te_us
+            );
+            info!("display.cost id={} bytes={} direct={} windows={} pack={} transfer={} pixel={} offset={}",
+                frame_id, stats.bytes, stats.direct_bytes, stats.windows, stats.pack_us,
+                stats.transfer_us, stats.first_submit_us, offset);
+            if let Some(input) = input.filter(|trace| trace.count != 0) {
+                info!(
+                    "display.input id={} first={} last={} read={} count={}",
+                    frame_id, input.first, input.last, input.read, input.count
+                );
+            }
         }
         // Return the slot to the renderer after the completed transfer.
         drop(job);

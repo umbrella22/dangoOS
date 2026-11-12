@@ -118,12 +118,12 @@ pub(super) async fn pointer(
                 *press_state = event.pressed;
                 if is_lua_page(app.page()) {
                     if native_active {
-                        lvgl_port::set_pointer(sample.x, sample.y, sample.pressed);
+                        lvgl_port::set_pointer_at(sample.x, sample.y, sample.pressed, event.at_us);
                     } else {
                         lua::set_pointer(sample.x, sample.y, sample.pressed);
                     }
                 } else {
-                    lvgl_port::set_pointer(sample.x, sample.y, sample.pressed);
+                    lvgl_port::set_pointer_at(sample.x, sample.y, sample.pressed, event.at_us);
                 }
             }
         }

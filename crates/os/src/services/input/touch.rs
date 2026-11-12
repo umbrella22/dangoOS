@@ -65,6 +65,11 @@ fn publish(event: TouchEvent) {
     }
 }
 
+#[cfg(feature = "display-metrics")]
+pub(crate) fn inject_test(event: TouchEvent) {
+    publish(event);
+}
+
 /// Reset must deliver release even when the physical-input queue is full.
 #[cfg(feature = "embedscope")]
 pub(crate) fn inject_release(event: TouchEvent) {

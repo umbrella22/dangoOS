@@ -11,7 +11,7 @@
 use crate::{
     board,
     geometry::DirtyRect,
-    pixels::{PixelSource, RowChunks, MAX_DMA_BYTES, PANEL_FORMAT},
+    pixels::{PixelSource, RowChunks, SplitRows, MAX_DMA_BYTES, PANEL_FORMAT},
 };
 use core::{
     alloc::{GlobalAlloc, Layout},
@@ -43,6 +43,9 @@ pub struct TransferStats {
     pub windows: u32,
     pub pack_us: u64,
     pub transfer_us: u64,
+    /// Software timestamp immediately before submitting the first pixel DMA.
+    /// This precedes the actual wire byte; an analyzer is needed for that edge.
+    pub first_submit_us: u64,
 }
 
 /// Async failures preserve uncertainty about the panel until hardware reset.
@@ -105,7 +108,8 @@ const VENDOR_INIT: &[(u8, &[u8], u32)] = &[
     (0x1C, &[0xA0], 0),
     (0xFE, &[0x00], 0), // 页切回
     (0xC4, &[0x80], 0),
-    (0x3A, &[0x55], 0), // RGB565
+    (0x36, &[0x00], 0), // MADCTL: replaced by the selected format's channel order
+    (0x3A, &[0x55], 0), // COLMOD: replaced by the selected wire format
     (0x35, &[0x00], 0), // TE on
     (0x53, &[0x20], 0), // BCTRL: 打开亮度控制
     (0x51, &[0xFF], 0), // 亮度 255
@@ -300,48 +304,91 @@ impl Display<Async> {
             #[cfg(feature = "display-metrics")]
             {
                 self.stats.pack_us += pack_started.elapsed().as_micros();
-                self.stats.bytes += length as u32;
                 self.stats.direct_bytes += if direct.is_some() { length as u32 } else { 0 };
-                self.stats.windows += 1;
             }
-            let xs = [
-                (window.x0 >> 8) as u8,
-                window.x0 as u8,
-                (window.x1 >> 8) as u8,
-                window.x1 as u8,
-            ];
-            let ys = [
-                (window.y0 >> 8) as u8,
-                window.y0 as u8,
-                (window.y1 >> 8) as u8,
-                window.y1 as u8,
-            ];
-            #[cfg(feature = "display-metrics")]
-            let transfer_started = embassy_time::Instant::now();
-            self.write_reg_async(CMD_CASET, &xs).await?;
-            self.write_reg_async(CMD_RASET, &ys).await?;
-            let bytes = match direct {
-                Some(bytes) => bytes,
-                None => &self.staging.as_mut_slice()[..length],
-            };
-            let result = transfer(
-                &mut self.faulted,
-                self.spi.half_duplex_write_async(
-                    DataMode::Quad,
-                    Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
-                    Address::_24Bit(GRAM_ADDR, DataMode::Single),
-                    0,
-                    bytes,
-                ),
-            )
-            .await;
-            #[cfg(feature = "display-metrics")]
-            {
-                self.stats.transfer_us += transfer_started.elapsed().as_micros();
-            }
-            result?;
+            self.send_window(window, direct, length).await?;
         }
         Ok(())
+    }
+
+    /// Upload composed full rows (a page push) as row-major whole-width chunks.
+    /// The panel sees one window per chunk, top to bottom, like a full frame.
+    pub async fn write_rows_async(&mut self, rows: SplitRows<'_>) -> Result<(), Error> {
+        if self.faulted {
+            return Err(Error::Faulted);
+        }
+        let area = rows.area();
+        assert!(area.is_valid());
+        assert_eq!(area.x0 % 4, 0);
+        assert_eq!(area.width() % 4, 0);
+        for part in RowChunks::new(area, PANEL_FORMAT, CHUNK_BYTES) {
+            #[cfg(feature = "display-metrics")]
+            let pack_started = embassy_time::Instant::now();
+            let length = rows.pack(part.y0, part.y1, PANEL_FORMAT, self.staging.as_mut_slice());
+            #[cfg(feature = "display-metrics")]
+            {
+                self.stats.pack_us += pack_started.elapsed().as_micros();
+            }
+            self.send_window(part, None, length).await?;
+        }
+        Ok(())
+    }
+
+    /// Address one window and send its pixels: `direct` source bytes, or the
+    /// first `length` staging bytes when `direct` is `None`.
+    async fn send_window(
+        &mut self,
+        window: DirtyRect,
+        direct: Option<&[u8]>,
+        length: usize,
+    ) -> Result<(), Error> {
+        #[cfg(feature = "display-metrics")]
+        {
+            self.stats.bytes += length as u32;
+            self.stats.windows += 1;
+        }
+        let xs = [
+            (window.x0 >> 8) as u8,
+            window.x0 as u8,
+            (window.x1 >> 8) as u8,
+            window.x1 as u8,
+        ];
+        let ys = [
+            (window.y0 >> 8) as u8,
+            window.y0 as u8,
+            (window.y1 >> 8) as u8,
+            window.y1 as u8,
+        ];
+        #[cfg(feature = "display-metrics")]
+        let transfer_started = embassy_time::Instant::now();
+        self.write_reg_async(CMD_CASET, &xs).await?;
+        self.write_reg_async(CMD_RASET, &ys).await?;
+        let bytes = match direct {
+            Some(bytes) => bytes,
+            None => &self.staging.as_mut_slice()[..length],
+        };
+        #[cfg(feature = "display-metrics")]
+        if self.stats.first_submit_us == 0 {
+            self.stats.first_submit_us = esp_hal::time::Instant::now()
+                .duration_since_epoch()
+                .as_micros();
+        }
+        let result = transfer(
+            &mut self.faulted,
+            self.spi.half_duplex_write_async(
+                DataMode::Quad,
+                Command::_8Bit(OP_WRITE_COLOR, DataMode::Single),
+                Address::_24Bit(GRAM_ADDR, DataMode::Single),
+                0,
+                bytes,
+            ),
+        )
+        .await;
+        #[cfg(feature = "display-metrics")]
+        {
+            self.stats.transfer_us += transfer_started.elapsed().as_micros();
+        }
+        result
     }
 
     #[cfg(feature = "display-metrics")]
@@ -500,12 +547,8 @@ pub fn try_init(
     if let Err(error) = display.write_reg(0x51, &[0x00]) {
         log::warn!("CO5300 boot brightness off failed: {error:?}");
     }
-    display
-        .write_reg(0x36, &[MADCTL])
-        .map_err(|_| InitError::Spi)?;
-    display
-        .write_reg(0x3A, &[COLMOD])
-        .map_err(|_| InitError::Spi)?;
+    // MADCTL/COLMOD are written from the table after Sleep Out has settled,
+    // matching the bootloader and `sleep_out`; writes while asleep may be lost.
     for (reg, params, delay_ms) in VENDOR_INIT {
         if *reg == 0x29 {
             if let Err(error) = display.clear_black() {
@@ -515,11 +558,12 @@ pub fn try_init(
                 log::warn!("CO5300 pre-DISPON brightness off failed: {error:?}");
             }
         }
-        let configured = [COLMOD];
-        let params = if *reg == 0x3A {
-            &configured[..]
-        } else {
-            params
+        let colmod = [COLMOD];
+        let madctl = [MADCTL];
+        let params = match *reg {
+            0x3A => &colmod[..],
+            0x36 => &madctl[..],
+            _ => params,
         };
         if let Err(e) = display.write_reg(*reg, params) {
             log::warn!("CO5300 command {reg:02X}: {e:?}");

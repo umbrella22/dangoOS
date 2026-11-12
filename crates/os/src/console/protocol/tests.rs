@@ -29,6 +29,43 @@ const MANIFEST_TEXT: &str =
     r#"{"schema_version":1,"id":"hello","entry":"scripts/main.lua","display_name":"Hi"}"#;
 const MAIN: &[u8] = b"local x = 1\nreturn x\n";
 
+#[cfg(feature = "display-metrics")]
+#[test]
+fn display_trajectory_stops_at_deferred_boundary_and_rejects_out_of_panel_input() {
+    use crate::services::display::diagnostics::Command;
+    let first = b"@mosaico display-test swipe 0 479 479 0 500\n";
+    let tail = b"@mosaico hello\n";
+    for split in 0..first.len() {
+        let mut v = vfs();
+        let mut session = Session::new();
+        let mut effects = Vec::new();
+        session.feed_until_deferred(&mut v, &first[..split], &mut |e| effects.push(e));
+        assert!(effects.is_empty());
+        let mut rest = first[split..].to_vec();
+        rest.extend_from_slice(tail);
+        let consumed = session.feed_until_deferred(&mut v, &rest, &mut |e| effects.push(e));
+        assert_eq!(consumed, first.len() - split);
+        assert_eq!(
+            effects,
+            [Effect::DisplayTest(Command::Swipe {
+                from: (0, 479),
+                to: (479, 0),
+                ms: 500
+            })]
+        );
+    }
+    let mut v = vfs();
+    let mut session = Session::new();
+    let effects = run(
+        &mut v,
+        &mut session,
+        b"@mosaico display-test swipe 480 0 0 0 500\n",
+        1,
+    );
+    assert!(replies(&effects)[0].starts_with("@err"));
+    assert!(!effects.iter().any(|e| matches!(e, Effect::DisplayTest(_))));
+}
+
 #[test]
 fn voice_configuration_crc_validation_and_atomic_commit_preserve_previous_credentials() {
     let mut v = vfs();

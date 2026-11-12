@@ -71,8 +71,10 @@ Home 状态带缓存最后成功上传的实际像素。相同状态带跳过上
 ## 上传、面板配置与内存
 
 `board-s31/src/pixels.rs::RowChunks` 按整行分块，单块上限 32,736 B。
-480×480 全屏 RGB565 / RGB888 分别需要 15 / 22 块。push 的两个页面横带分别分块，
-可能多出一块；新页只绘制一次，每个动画位置仍需传完整屏幕。
+480×480 全屏 RGB565 / RGB888 分别需要 15 / 22 块。push 每帧由
+`transition::rows` 把旧页与新页的对应列段拼成整行，按整宽行块自上而下发送，
+窗口数与全屏相同，写入顺序也与全屏一致；这条路径总是经 staging 打包。
+新页只绘制一次，每个动画位置仍需传完整屏幕。
 当前实现不额外分配 push 合成帧。
 
 连续且格式匹配的来源字节直接传给锁定 HAL 的 `half_duplex_write_async`。
@@ -85,7 +87,8 @@ future 的借用持续到 DMA 完成。窄区域或格式不同的来源先编�
 选择 RGB565 四行或 RGB888 两行的小带，不能直接套用异步 DMA 分块尺寸。
 默认 RGB565 配置为 `COLMOD=0x55, MADCTL=0x00`；RGB888 为
 `COLMOD=0x77, MADCTL=0x08`，匹配 BGR888 字节顺序。
-冷启动、RGB565 bootloader handoff 接管和 sleep-out 均应用运行时格式。
+冷启动、RGB565 bootloader handoff 接管和 sleep-out 均应用运行时格式；冷启动与
+sleep-out 都在 SLPOUT 稳定后写 MADCTL/COLMOD，与 bootloader 顺序一致。
 bootloader handoff 协议仍为 RGB565。已有 GRAM 内容、颜色顺序和唤醒效果需要面板验收。
 
 原内部 staging 30,720 B 和 TX 30,720 B 共占 61,440 B；当前 TX 4,096 B，
@@ -150,6 +153,24 @@ TE、调度、PSRAM 争用和屏幕光学响应。
 这些主机证据未覆盖真实 DMA 完成、面板扫描、设备内存余量和光学效果。
 
 ## 设备对照入口
+
+`display-metrics` 同时提供 `display-test` 控制台实验入口：`status` 返回启动时
+17 次连续 GPIO TE 边沿观察的周期摘要；`page home|launcher|settings` 走正常页面
+生命周期；`pattern colors|gradient|off` 由 UI 线程管理原生 LVGL 测试图；
+`swipe x0 y0 x1 y1 duration_ms` 经普通输入队列注入有界轨迹。
+`tone prepare|play|clean` 管理独立临时 WAV，并使用正常音频服务播放。
+这些入口仅存在于测量构建，测试完成后清理 WAV。
+
+每帧的 `display.frame`、`display.cost`、`display.input` 以 `id` 关联，另记录
+shadow lease 的 `display.busy` 起止和 CPU 绘制时长。每行保持在控制台 158 字节
+文本预算内。`pixel` 是首个像素 DMA 调用前的软件时间戳，**不是逻辑分析仪测得
+的首个线上字节**；TE 周期同样包含 GPIO 唤醒与调度误差。物理输入时间从 CST9220
+报告读取完成算起；合成轨迹从注入队列算起。输入合并时同时报告最早、最新样本，
+BUSY 占比只计算输入到 LVGL 读取期间与先前 lease 的交集，不计本帧上传占用。
+
+`scripts/device/display_probe.py capture` 保存原始控制台记录并产生分布摘要，
+`analyze` 可离线重算；摘要显式列出截断记录和未配对帧。最终画面的 EmbedScope
+截图仍是 RGB565，不能据此验收 RGB888 低位精度或扫描过程中的撕裂。
 
 以下命令只构建。配对比较先保持 TE 策略相同，再独立比较局部低延迟实验：
 

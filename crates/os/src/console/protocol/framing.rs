@@ -66,6 +66,10 @@ impl Session {
                                         | Effect::Camera(_)
                                         | Effect::Power(_)
                                 );
+                                #[cfg(feature = "display-metrics")]
+                                {
+                                    deferred |= matches!(effect, Effect::DisplayTest(_));
+                                }
                                 out(effect);
                             });
                             if deferred {

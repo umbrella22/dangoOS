@@ -83,6 +83,8 @@ pub enum Effect {
     Camera(crate::services::camera::Command),
     Power(crate::services::power::standby::Command),
     Voice(crate::services::voice::Command),
+    #[cfg(feature = "display-metrics")]
+    DisplayTest(crate::services::display::diagnostics::Command),
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

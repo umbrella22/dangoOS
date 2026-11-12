@@ -54,11 +54,19 @@ impl Frames {
     ) {
         // ---- render into a free slot, then hand the frame to the plane ----
         let rendered_before_tick = control.rendered_frames();
+        #[cfg(feature = "display-metrics")]
+        let tick_started = now_us();
         if let Err(error) = ui.tick(elapsed_ms) {
             warn!("ui_task: Ui::tick rejected: {error}");
         }
         if app.page() == Page::Home {
             if let Some(canvas) = control.take_frame() {
+                #[cfg(feature = "display-metrics")]
+                info!(
+                    "display.render kind=home end={} us={}",
+                    now_us(),
+                    now_us().saturating_sub(tick_started)
+                );
                 plane.submit(PlaneJob {
                     shutdown_low_battery: false,
                     shutdown_sleep: buttons::shutdown_requested()
@@ -102,8 +110,12 @@ impl Frames {
             }
         } else if !port.is_busy() {
             let skin_feedback_on_frame = self.skin_loading_rendered;
+            #[cfg(feature = "display-metrics")]
+            let render_started = now_us();
             port.poll_pointer();
             ui.timer_handler();
+            #[cfg(feature = "display-metrics")]
+            let render_us = now_us().saturating_sub(render_started);
 
             // Callbacks fired by the timer handler only queue messages.
             match ui.drain(app, DRAIN_MAX) {
@@ -134,6 +146,12 @@ impl Frames {
                 }
             }
             if let Some((screen, damage)) = port.take_frame() {
+                #[cfg(feature = "display-metrics")]
+                info!(
+                    "display.render kind=screen end={} us={}",
+                    now_us(),
+                    render_us
+                );
                 if skin_feedback_on_frame {
                     self.skin_loading_frame_submitted = true;
                 }
