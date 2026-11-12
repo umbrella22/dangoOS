@@ -80,7 +80,7 @@ impl Frames {
                 });
             }
         } else if self.slide != Slide::Idle {
-            self.slide = step_slide(self.slide, port, plane, now_ms);
+            self.slide = step_slide(self.slide, ui, app, port, plane, now_ms);
         } else if is_lua_page(app.page()) && lua::screen_open() {
             // The script owns the screen: copy its presented frame into the
             // shadow and upload the damage; LVGL stays paused.
@@ -186,11 +186,26 @@ impl Frames {
 }
 /// Advance a page slide by one UI loop. LVGL is paused throughout: the new
 /// page is rendered once up front and stays in the shadow.
-fn step_slide(slide: Slide, port: &mut DisplayPort, plane: &mut PlaneUi, now_ms: u64) -> Slide {
+fn step_slide(
+    slide: Slide,
+    ui: &mut Ui<AppMsg>,
+    app: &mut MosaicoApp,
+    port: &mut DisplayPort,
+    plane: &mut PlaneUi,
+    now_ms: u64,
+) -> Slide {
     match slide {
         Slide::Idle => Slide::Idle,
         Slide::Pending(direction) => {
             if !port.snapshot() {
+                return slide;
+            }
+            // Navigation can mark the view dirty after this loop's regular
+            // drain (diagnostics and brain commands do this). Reconcile before
+            // rendering the target, while the snapshot still holds the old
+            // pixels. Otherwise that work consumes the next animation step.
+            if let Err(error) = ui.drain(app, DRAIN_MAX) {
+                warn!("ui_task: slide preparation rejected: {error}");
                 return slide;
             }
             port.render_now();
@@ -207,7 +222,7 @@ fn step_slide(slide: Slide, port: &mut DisplayPort, plane: &mut PlaneUi, now_ms:
         } => {
             let elapsed = now_ms.saturating_sub(start_ms);
             if elapsed >= transition::SLIDE_MS {
-                return step_slide(Slide::Finishing, port, plane, now_ms);
+                return step_slide(Slide::Finishing, ui, app, port, plane, now_ms);
             }
             if let Some((new, old)) = port.take_slide() {
                 plane.submit(PlaneJob {
