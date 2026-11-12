@@ -56,9 +56,8 @@ impl Damage {
             return;
         }
         assert!(rect.is_valid(), "damage outside display");
-        // CO5300's four-column windows may include initialized unchanged shadow pixels.
-        rect.x0 &= !3;
-        rect.x1 = (rect.x1 | 3).min(WIDTH as u16 - 1);
+        // Include initialized unchanged shadow pixels for legal panel windows.
+        rect = rect.covering_panel_window();
         let mut i = 0;
         while i < self.len {
             let previous = self.regions[i];
@@ -127,12 +126,12 @@ mod tests {
         let mut d = Damage::from(point(1, 1));
         d.add(point(479, 479));
         assert_eq!(d.regions().len(), 2);
-        assert_eq!(d.pixels(), 8);
+        assert_eq!(d.pixels(), 16);
         assert_eq!(
             d.regions()[0],
             DirtyRect {
                 x0: 0,
-                y0: 1,
+                y0: 0,
                 x1: 3,
                 y1: 1
             }
@@ -141,7 +140,7 @@ mod tests {
             d.regions()[1],
             DirtyRect {
                 x0: 476,
-                y0: 479,
+                y0: 478,
                 x1: 479,
                 y1: 479
             }

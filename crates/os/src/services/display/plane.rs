@@ -26,8 +26,8 @@
 //! Off the home page the frame is LVGL's full-screen shadow
 //! ([`Frame::Screen`]) placed at the panel origin, and only its damaged
 //! rectangle is uploaded. Coming back home, the first fox job asks for
-//! `clear_outside`, which paints the panel around the fox canvas black so
-//! nothing of the previous page stays visible.
+//! `clear_outside`, which restores the black background, character and status
+//! band together as full-width rows from the same Home lease.
 //!
 //! The panel brightness follows [`set_brightness`] (Settings); the target is
 //! applied after the next completed upload.
@@ -66,11 +66,6 @@ use {crate::shell::navigation::transition, crate::shell::navigation::transition:
 const FOX_DROP_PX: u16 = 16;
 /// Longest wait for a TE edge before transferring anyway.
 const TE_TIMEOUT: Duration = Duration::from_millis(30);
-
-/// Rows of the black source used by `clear_outside`.
-const CLEAR_ROWS: u16 = 8;
-/// A black `WIDTH x CLEAR_ROWS` canvas (7.5 KiB of internal RAM).
-static BLACK: [u16; WIDTH * CLEAR_ROWS as usize] = [0; WIDTH * CLEAR_ROWS as usize];
 
 /// Panel brightness target in percent (Settings).
 static BRIGHTNESS_TARGET: AtomicU8 = AtomicU8::new(100);
@@ -132,9 +127,9 @@ pub struct PlaneJob {
     /// canvas (see [`origin`]).
     pub at: Option<(u16, u16)>,
     /// Region of the canvas to upload, in canvas coordinates; `None` uploads
-    /// all of it. Widened to the panel's 4-pixel column alignment here.
+    /// all of it. Expanded to the panel's four-column, two-row windows here.
     pub damage: Option<Damage>,
-    /// Paint the panel outside the canvas black before the upload.
+    /// Restore the complete Home, including its black background and status.
     pub clear_outside: bool,
     /// Bypass the frame-boundary wait for an immediate touch response.
     pub urgent: bool,
@@ -256,6 +251,9 @@ async fn run_plane(
     let mut applied_brightness: Option<u8> = None;
     let mut sleeping = false;
     let mut full_after_wake = false;
+    // The panel starts with inherited boot content. A non-Home upload or an
+    // incomplete Home restore requires another complete Home before local jobs.
+    let mut restore_home = true;
     let mut restored_cycle = 0;
     let mut pending_screen = Damage::new();
     let mut last_status = alloc::vec![0u16; crate::companion::status::PIXELS];
@@ -329,6 +327,12 @@ async fn run_plane(
         if sleeping {
             continue;
         }
+        let home = matches!(job.canvas, Frame::Pool(_));
+        if home {
+            job.clear_outside |= restore_home;
+        } else {
+            restore_home = true;
+        }
         if full_after_wake {
             job.damage = None;
             job.clear_outside = matches!(job.canvas, Frame::Pool(_));
@@ -368,17 +372,33 @@ async fn run_plane(
         };
         let damage = job.damage.unwrap_or_else(|| Damage::from(full));
 
-        if job.clear_outside {
-            let inner = DirtyRect {
-                x0: origin_x,
-                y0: origin_y,
-                x1: origin_x + canvas_w - 1,
-                y1: origin_y + canvas_h - 1,
-            };
-            for band in outside(inner) {
-                if !clear(&mut panel, band).await {
-                    completed = false;
+        // Restore black background, body and status in one top-to-bottom row
+        // stream, reducing window commands without a full-screen copy.
+        // Ordinary Home frames remain local.
+        let home_restore = job.clear_outside && matches!(job.canvas, Frame::Pool(_));
+        if home_restore {
+            if let Frame::Pool(lease) = &job.canvas {
+                let mut result = panel
+                    .write_rows_async(super::home_rows::HomeRows::new(
+                        lease.pixels(),
+                        (origin_x, origin_y),
+                    ))
+                    .await;
+                if result.is_err() {
+                    result = panel
+                        .write_rows_async(super::home_rows::HomeRows::new(
+                            lease.pixels(),
+                            (origin_x, origin_y),
+                        ))
+                        .await;
                 }
+                completed = match result {
+                    Ok(()) => true,
+                    Err(error) => {
+                        warn!("plane: Home restore failed: {error:?}");
+                        false
+                    }
+                };
             }
         }
 
@@ -399,9 +419,9 @@ async fn run_plane(
         }
 
         let slide = matches!(job.canvas, Frame::Slide { .. });
-        if completed && !slide {
+        if completed && !slide && !home_restore {
             for region in damage.regions() {
-                let area = align4(clip(*region, full), canvas_w);
+                let area = clip(*region, full).covering_panel_window();
                 if !area.is_empty() {
                     completed = upload(
                         &mut panel,
@@ -427,7 +447,10 @@ async fn run_plane(
                 // Keep the same lease through both uploads, including a full
                 // restore after clear_outside or wake. A failed band must not
                 // acknowledge a complete frame or restore panel brightness.
-                if !status_valid
+                if home_restore {
+                    last_status.copy_from_slice(band);
+                    status_valid = true;
+                } else if !status_valid
                     || job.clear_outside
                     || full_after_wake
                     || band != last_status.as_slice()
@@ -463,7 +486,7 @@ async fn run_plane(
                 Frame::Pool(lease) => {
                     use crate::companion::{render, status};
                     for region in damage.regions() {
-                        let area = align4(clip(*region, full), canvas_w);
+                        let area = clip(*region, full).covering_panel_window();
                         final_capture.blit(
                             &lease.pixels()[..render::PIXELS],
                             canvas_w as usize,
@@ -490,7 +513,7 @@ async fn run_plane(
                 }
                 Frame::Screen(lease) => {
                     for region in damage.regions() {
-                        let area = align4(clip(*region, full), canvas_w);
+                        let area = clip(*region, full).covering_panel_window();
                         final_capture.blit_source(
                             lease.pixels(),
                             area,
@@ -548,6 +571,9 @@ async fn run_plane(
 
         if completed {
             FIRST_FRAME.store(true, Ordering::Release);
+        }
+        if home {
+            restore_home = !completed;
         }
 
         if completed {
@@ -667,99 +693,4 @@ fn clip(rect: DirtyRect, bounds: DirtyRect) -> DirtyRect {
         x1: rect.x1.min(bounds.x1),
         y1: rect.y1.min(bounds.y1),
     }
-}
-
-/// Widen `rect` to whole 4-pixel columns (the panel's window granularity).
-/// Canvas widths are multiples of 4, so the result stays inside the canvas.
-fn align4(rect: DirtyRect, canvas_w: u16) -> DirtyRect {
-    DirtyRect {
-        x0: rect.x0 & !3,
-        x1: ((rect.x1 | 3).min(canvas_w - 1)),
-        ..rect
-    }
-}
-
-/// The four panel bands around `inner` (some may be empty).
-fn outside(inner: DirtyRect) -> [DirtyRect; 4] {
-    let right = WIDTH as u16 - 1;
-    let bottom = HEIGHT as u16 - 1;
-    let empty = DirtyRect {
-        x0: 1,
-        y0: 1,
-        x1: 0,
-        y1: 0,
-    };
-    let top = if inner.y0 > 0 {
-        DirtyRect {
-            x0: 0,
-            y0: 0,
-            x1: right,
-            y1: inner.y0 - 1,
-        }
-    } else {
-        empty
-    };
-    let below = if inner.y1 < bottom {
-        DirtyRect {
-            x0: 0,
-            y0: inner.y1 + 1,
-            x1: right,
-            y1: bottom,
-        }
-    } else {
-        empty
-    };
-    let left = if inner.x0 > 0 {
-        DirtyRect {
-            x0: 0,
-            y0: inner.y0,
-            x1: inner.x0 - 1,
-            y1: inner.y1,
-        }
-    } else {
-        empty
-    };
-    let side = if inner.x1 < right {
-        DirtyRect {
-            x0: inner.x1 + 1,
-            y0: inner.y0,
-            x1: right,
-            y1: inner.y1,
-        }
-    } else {
-        empty
-    };
-    [top, below, left, side]
-}
-
-/// Paint `band` black in [`CLEAR_ROWS`] chunks. Returns false on an SPI error.
-async fn clear(panel: &mut Display<esp_hal::Async>, band: DirtyRect) -> bool {
-    if band.is_empty() {
-        return true;
-    }
-    let mut y = band.y0;
-    while y <= band.y1 {
-        let y2 = (y + CLEAR_ROWS - 1).min(band.y1);
-        let dst = DirtyRect {
-            x0: band.x0,
-            y0: y,
-            x1: band.x1,
-            y1: y2,
-        };
-        let src = DirtyRect {
-            x0: 0,
-            y0: 0,
-            x1: band.x1 - band.x0,
-            y1: y2 - y,
-        };
-        if let Err(error) = panel
-            .write_canvas_async(dst, src, (WIDTH as u16, CLEAR_ROWS), &BLACK)
-            .await
-        {
-            warn!("plane: clear {dst:?} failed: {error:?}");
-            return false;
-        }
-        y = y2 + 1;
-    }
-    true
 }

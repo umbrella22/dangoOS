@@ -264,6 +264,13 @@ pub struct SplitRows<'a> {
     height: u16,
 }
 
+/// Immutable rows encoded directly into the driver's bounded staging buffers.
+/// The source must remain unchanged until the complete upload returns.
+pub trait PixelRows {
+    fn area(&self) -> DirtyRect;
+    fn pack(&self, y0: u16, y1: u16, format: PixelFormat, output: &mut [u8]) -> usize;
+}
+
 impl<'a> SplitRows<'a> {
     /// `segments` are placed left to right starting at panel column `x0`.
     /// Zero-width segments are skipped. Rows `0..height` of every source are used.
@@ -330,7 +337,19 @@ impl<'a> SplitRows<'a> {
     }
 }
 
-/// Split a rectangle into whole rows within the DMA payload and staging budget.
+impl PixelRows for SplitRows<'_> {
+    fn area(&self) -> DirtyRect {
+        self.area()
+    }
+
+    fn pack(&self, y0: u16, y1: u16, format: PixelFormat, output: &mut [u8]) -> usize {
+        self.pack(y0, y1, format, output)
+    }
+}
+
+/// Split a rectangle into whole row pairs within the DMA and staging budget.
+/// Every independently addressed CO5300 RASET window needs an even height.
+/// Source y may be odd; the driver separately validates the destination origin.
 pub struct RowChunks {
     area: DirtyRect,
     next_y: u16,
@@ -340,8 +359,13 @@ pub struct RowChunks {
 impl RowChunks {
     pub fn new(area: DirtyRect, format: PixelFormat, capacity: usize) -> Self {
         assert!(area.is_valid(), "DMA rectangle must be inside the panel");
-        let rows = capacity.min(MAX_DMA_BYTES) / (area.width() * format.bytes_per_pixel());
-        assert!(rows > 0, "one pixel row must fit the transfer budget");
+        assert_eq!(
+            area.height() % 2,
+            0,
+            "panel windows require whole row pairs"
+        );
+        let rows = (capacity.min(MAX_DMA_BYTES) / (area.width() * format.bytes_per_pixel())) & !1;
+        assert!(rows >= 2, "one pixel row pair must fit the transfer budget");
         Self {
             area,
             next_y: area.y0,
@@ -441,6 +465,39 @@ mod tests {
                 .all(|c| c.width() * c.height() * format.bytes_per_pixel() <= MAX_DMA_BYTES));
             assert_eq!(chunks.last().unwrap().y1, 479);
         }
+    }
+
+    #[test]
+    fn home_chunks_keep_every_destination_window_even_in_both_formats() {
+        for (format, rows, last, count) in [
+            (PixelFormat::Rgb565Be, 46, 14, 8),
+            (PixelFormat::Bgr888, 30, 6, 12),
+        ] {
+            let parts: Vec<_> =
+                RowChunks::new(rect(0, 0, 351, 335), format, MAX_DMA_BYTES).collect();
+            assert_eq!(parts.len(), count);
+            assert_eq!(parts[0].height(), rows);
+            assert_eq!(parts.last().unwrap().height(), last);
+            let mut next = 0;
+            for part in parts {
+                assert_eq!(part.y0, next);
+                let dst = DirtyRect {
+                    x0: 64,
+                    x1: 415,
+                    y0: 88 + part.y0,
+                    y1: 88 + part.y1,
+                };
+                assert!(dst.is_panel_window());
+                assert!(part.width() * part.height() * format.bytes_per_pixel() <= MAX_DMA_BYTES);
+                next = part.y1 + 1;
+            }
+            assert_eq!(next, 336);
+        }
+        // An odd source row still maps to a legal even destination row.
+        let parts: Vec<_> =
+            RowChunks::new(rect(0, 1, 351, 336), PixelFormat::Bgr888, MAX_DMA_BYTES).collect();
+        assert_eq!(parts[0].y0, 1);
+        assert!(parts.iter().all(|part| part.height() % 2 == 0));
     }
 
     #[test]

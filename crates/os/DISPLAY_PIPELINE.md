@@ -50,8 +50,10 @@ PARTIAL 缓冲的实际行距。`copy_to_shadow` 只编码回调包含的像素�
 
 ## Damage、页面恢复与输入
 
-`Damage` 保存最多 16 个 inclusive 矩形。横向扩大到 CO5300 所需的四列对齐，
-额外列取自已经初始化的 shadow。仅当包围矩形的像素量不大于分别发送时合并；
+`Damage` 保存最多 16 个 inclusive 矩形。扩大到驱动的四列、两行窗口，
+额外像素取自已经初始化的 shadow。CO5300 V0.00 §7.5.21（p159）及
+§7.5.22（p161）要求列、行起点和范围均为偶数；四列沿用本板原有的更严格约束。
+仅当包围矩形的像素量不大于分别发送时合并；
 矩形数量达到上限时回退为覆盖全部变化的包围矩形。
 
 `PlaneUi::submit` 合并被替换 Screen job 的 damage。上传失败时 plane 累积
@@ -60,8 +62,13 @@ PARTIAL 缓冲的实际行距。`copy_to_shadow` 只编码回调包含的像素�
 失败本身不生成新帧，重试仍需要后续 job。SPI 超时沿用驱动的 `faulted` 状态，
 后续上传拒绝执行，直到硬件重新初始化；普通可重试错误会在当前矩形上重试一次。
 
-Home 状态带缓存最后成功上传的实际像素。相同状态带跳过上传；其他页面、清屏、
-传输失败和 sleep/wake 会使缓存失效。团子主体仍沿用现有双槽画布与动画节奏。
+返回 Home 时，`home_rows.rs::HomeRows` 从同一个 `ReadLease` 编码团子与状态带，
+并把外围填黑，按整宽行从上到下恢复完整面板。它直接使用驱动的有界 staging，
+无需全屏合成缓冲。plane 在启动、其他页面上传后和 Home 上传失败后要求完整恢复；
+恢复成功后才允许普通局部 Home 上传。唤醒同样要求完整恢复后才恢复亮度。
+普通 Home 状态带缓存最后成功上传的实际像素，相同状态带跳过上传；其他页面、
+完整恢复、传输失败和 sleep/wake 会更新或使缓存失效。
+团子主体沿用现有双槽画布与动画节奏。
 
 指针样本设置 pending 标记，UI 线程在 shadow 空闲时主动调用 LVGL indev 读取，
 无需等待下一次 indev timer。两轮之间完成的短按通过 latch 先报告 press，下一轮
@@ -70,8 +77,12 @@ Home 状态带缓存最后成功上传的实际像素。相同状态带跳过上
 
 ## 上传、面板配置与内存
 
-`board-s31/src/pixels.rs::RowChunks` 按整行分块，单块上限 32,736 B。
-480×480 全屏 RGB565 / RGB888 分别需要 15 / 22 块。push 每帧由
+`board-s31/src/pixels.rs::RowChunks` 按整行对分块，单块上限 32,736 B。
+源区域可以从奇数行开始，但高度必须为偶数；驱动另行验证实际目的行起点与高度。
+352×336 的 Home 普通上传在 RGB565 下为 46 行一块（8 块），RGB888 下为
+30 行一块（12 块）。原 31 行 RGB888 块违反独立 RASET 窗口的两行要求。
+480×480 全屏 RGB565 / RGB888 分别需要 15 / 22 块，完整 Home 恢复使用相同分块。
+`PixelRows` 为 push 与完整 Home 恢复提供不可变的逐行编码源。push 每帧由
 `transition::rows` 把旧页与新页的对应列段拼成整行，按整宽行块自上而下发送，
 窗口数与全屏相同，写入顺序也与全屏一致；这条路径总是经 staging 打包。
 新页只绘制一次，每个动画位置仍需传完整屏幕。
@@ -134,7 +145,7 @@ python3 scripts/assets/export_display_replay.py \
 两个设置页均等待松手动画结束，再执行 10 轮空闲循环，要求零像素提交。
 播放器的展示速度由 HTML/GIF 指定，不能作为上传帧率或实际触控延迟。
 
-2026-11-12 的主机验证结果：
+首次性能对照前的主机验证结果（历史源码见表后说明）：
 
 | 检查 | 结果 |
 | --- | --- |
@@ -172,8 +183,9 @@ TE、调度、PSRAM 争用和屏幕光学响应。
 ## 设备对照入口
 
 `display-metrics` 同时提供 `display-test` 控制台实验入口：`status` 返回启动时
-17 次连续 GPIO TE 边沿观察的周期摘要；`page home|launcher|settings` 走正常页面
-生命周期；`pattern colors|gradient|off` 由 UI 线程管理原生 LVGL 测试图；
+17 次连续 GPIO TE 边沿观察的周期摘要；`page home|launcher|settings` 在常规 UI
+消息处理前变更页面，经同一轮 reconcile 和页面生命周期后再渲染；
+`pattern colors|gradient|off` 由 UI 线程管理原生 LVGL 测试图；
 `swipe x0 y0 x1 y1 duration_ms` 经普通输入队列注入有界轨迹。
 `tone prepare|play|clean` 管理独立临时 WAV，并使用正常音频服务播放。
 `play` 仅排入独立诊断任务；采样工具确认音频状态已达到 `playing` 后才开始并发
@@ -196,8 +208,8 @@ EmbedScope 的最终画面镜像会在每帧上传后量化／复制，尤其会
 
 上游 R-11 已在 `lv_binding_rust` 本地提交
 `066f96b583e1e3dd83d6492fae961b48dd4eb8d9` 实现
-`.invalidation_alignment(4, 1)`，在 LVGL invalidation 阶段统一绘制与 DIRECT 同步区。
-当前 PARTIAL 的持久 shadow 保证扩展列已初始化，本轮未更改依赖来源，未迁移 DIRECT。
+`.invalidation_alignment(4, 2)` 可在 LVGL invalidation 阶段统一本板的绘制与 DIRECT
+同步区。当前 PARTIAL 的持久 shadow 保证扩展列与行已初始化，未更改依赖来源，未迁移 DIRECT。
 
 以下命令只构建。配对比较先保持 TE 策略相同，再独立比较局部低延迟实验：
 
@@ -286,11 +298,11 @@ reconcile。重新测得 20 次 RGB565 转场每次均有 6 个中间帧，原�
 也尚未获得稳定目视确认。局部控件保留高精度和按 damage 上传的实现继续保留，
 默认格式无需依赖未完成的光学验收。四种候选的固件和资源预算均通过。
 
-最终装回的默认镜像来自 `d02aabd`，仅 `firmware` 与默认 Lua/dual-core features，
+首次性能对照后装回的默认镜像来自 `d02aabd`，仅 `firmware` 与默认 Lua/dual-core features，
 关闭 RGB888、局部 TE 旁路、metrics 和 EmbedScope。镜像为 5,363,008 B，SHA256 为
 `63f040b2dabe7d233ce5837acae6785c14db6980774375cb4f70a5670e7dd770`，
 已通过 Recovery 完整读回、安装后 Ready、再次重启后的 Ready 和连续三轮 2 秒灭屏唤醒。
-最终状态为 `Ready generation=224, ready=1, sys=1, data=1, frame=1, vm=1`，
+该次安装状态为 `Ready generation=224, ready=1, sys=1, data=1, frame=1, vm=1`，
 `power active, cycle=3, frame_ready=1`。测试 WAV 已删除，音量恢复至测试前的 100，
 音频关闭，页面回到 Home。`final-default-r2/final-health.json` 保存最终身份和状态。
 
@@ -300,3 +312,52 @@ reconcile。重新测得 20 次 RGB565 转场每次均有 6 个中间帧，原�
 `manual-observations.json` 单独保存人工反馈。每个 `reconciled-*` 子目录包含原始日志。
 实际 SCLK/脉宽、TE 到可见扫描的相位、10 轮撕裂光学记录、无线吞吐、真实 SPI
 超时/面板断开和音频听感仍未验收；不会从固件时间戳或最终截图推断这些结果。
+
+## 窗口边界与 Home 恢复回归（2026-11-12）
+
+RGB888 Home 曾出现静止后仍保留的横向切割线。同一源帧冻结后，串行和并行
+打包均复现；软件源画布中没有这些线。原 31 行独立 RASET 窗口违反两行边界。
+改为 30 行块、damage 扩展到四列两行后，实机静止画面、动画、拖动及返回均确认
+无横线。RGB888 色条的 RGB 顺序、白灰及残影检查通过。
+
+随后导航出现另一种残留：Home 右侧留下绿白点或旧应用片段。全屏色条覆盖能够
+清除；旧路径 8 轮导航的最后一轮再次出现，8 次外围清黑均报告成功。
+同一源帧的串行主体重传没有清掉残留，软件源捕获也没有对应图案。
+这一结果没有确定具体丢失的窗口命令或面板内部行为。
+
+Home 完整恢复已改为 `HomeRows`，将黑背景、主体和状态带编码成同一批整宽行。
+RGB888 的首帧由原来的 699,360 B / 115 窗口变为 691,200 B / 22 窗口；
+普通动画仍为 354,816 B / 12 窗口，不增加全屏缓冲。
+`home-restore-full-rows-r3` 的 20 轮导航完成 656 帧，日志无失败、截断或未配对记录。
+目视反馈为切换瞬间闪过，停稳后自行消失，未再报告停稳后持续残留。
+这不构成切换过程无撕裂验收。后续关闭 EmbedScope 的 R4 12 轮复验中，
+停稳后仍报告右侧绿白点或旧应用片段；横向切割线未复发。整宽恢复本身没有
+解决该现象，其收益为减少窗口命令并从同一租约恢复完整画面。
+
+R5 区分了导航与冻结：手动返回 Home 后单独冻结，画面干净；经普通触摸输入队列
+完成 10 轮往返再冻结，画面也干净。诊断 `page` 入口原本在本轮 `Ui::drain`
+之后直接 `app.go`，随即进入 Home 渲染；此时 `Ui::tick` 仍遍历旧对象树，
+不会替代 reconcile。入口现已移到常规 drain 前，使模型、对象树及生命周期在
+渲染前完成同一轮更新。R6 保留其他条件，原直接跳页路径完成 20 轮、766 帧，
+没有失败上传、截断行或未配对计量记录；最后冻结画面目视确认干净。
+这些对照支持将残留按诊断入口时序回归处理，没有新增 rs_lvgl 改动需求。
+冻结、同帧重传及灯光控制已从待交付源码移除。此结果不认证所有转场均无光学撕裂。
+
+R3 使用 EmbedScope 每帧镜像，全屏 Screen/Slide job 中位耗时约 209 / 208 ms，
+其中传输约 44 / 49 ms；复制和量化显著延长租约。正常转场复验关闭 EmbedScope，
+不能将镜像构建的少量中间帧当作无诊断固件的转场表现。
+R3 的 RTC 用量因既有 EmbedScope 记录超过常规基线 52 B，仅作为诊断构建例外，
+资源策略没有更改；最终普通构建必须通过原策略。
+
+新增测试覆盖整个 480×480 的单像素窗口扩展、两种格式的 Home 行块连续性、
+奇数源行到偶数目的行的映射，以及从非黑旧页恢复完整 Home 后的每个像素。
+完整 workspace 592 通过、2 ignored；RGB888 + simulator OS 库 388 通过、
+2 ignored；原生 UI 4 通过，两种格式回放各 107/107 完整画面对照通过。
+这些结果对应 `home-restore-rows-work/` 的源码快照与日志，性能表仍对应历史 `d02aabd`。
+
+移除临时诊断并调整入口顺序后的 `./scripts/check.sh` 全部通过：workspace
+592 通过、2 ignored，原生 UI 4 通过，Python 130 通过；驱动、Lua/TS 构建、
+引擎互斥、资源包、Recovery 构建及 3,241 个 C 符号检查通过。
+该脚本合计 1,131 次 Rust 测试执行通过、4 ignored，包含重复配置下的执行次数。
+原始日志为 `final-production-check/check.log`，本轮修改文件 rustfmt 和 diff 检查通过。
+Recovery 仅构建验证，实机安装只替换 main。

@@ -11,7 +11,7 @@
 use crate::{
     board,
     geometry::DirtyRect,
-    pixels::{PixelSource, RowChunks, SplitRows, MAX_DMA_BYTES, PANEL_FORMAT},
+    pixels::{PixelRows, PixelSource, RowChunks, MAX_DMA_BYTES, PANEL_FORMAT},
 };
 use core::{
     alloc::{GlobalAlloc, Layout},
@@ -163,7 +163,7 @@ impl Drop for DmaStaging {
 #[derive(Clone, Copy)]
 enum ChunkSource<'a> {
     Pixels(PixelSource<'a>, DirtyRect),
-    Rows(SplitRows<'a>, DirtyRect),
+    Rows(&'a dyn PixelRows, DirtyRect),
 }
 struct Prepared<'a> {
     direct: Option<&'a [u8]>,
@@ -222,7 +222,7 @@ impl Display<Blocking> {
     /// Blocking HAL writes copy into BOOT_TX_BYTES. Bound each clear band by
     /// that capacity, independently of the larger asynchronous staging buffer.
     pub fn clear_black(&mut self) -> Result<(), esp_hal::spi::Error> {
-        const BAND_ROWS: u16 = (BOOT_TX_BYTES / ROW_BYTES) as u16;
+        const BAND_ROWS: u16 = ((BOOT_TX_BYTES / ROW_BYTES) & !1) as u16;
         self.write_reg(
             CMD_CASET,
             &[
@@ -312,8 +312,10 @@ impl Display<Async> {
         assert!(dst.is_valid() && src.is_valid());
         assert_eq!(dst.width(), src.width());
         assert_eq!(dst.height(), src.height());
-        assert_eq!(dst.x0 % 4, 0);
-        assert_eq!(dst.width() % 4, 0);
+        assert!(
+            dst.is_panel_window(),
+            "CO5300 window requires four columns and two rows"
+        );
         assert!(src.x1 < source.size().0 && src.y1 < source.size().1);
         let chunks = RowChunks::new(src, PANEL_FORMAT, CHUNK_BYTES).map(|part| {
             let window = DirtyRect {
@@ -327,17 +329,18 @@ impl Display<Async> {
     }
 
     /// Upload composed full rows (a page push) as row-major whole-width chunks.
-    pub async fn write_rows_async(&mut self, rows: SplitRows<'_>) -> Result<(), Error> {
+    pub async fn write_rows_async(&mut self, rows: impl PixelRows) -> Result<(), Error> {
         if self.faulted {
             return Err(Error::Faulted);
         }
         let area = rows.area();
-        assert!(area.is_valid());
-        assert_eq!(area.x0 % 4, 0);
-        assert_eq!(area.width() % 4, 0);
+        assert!(
+            area.is_panel_window(),
+            "CO5300 window requires four columns and two rows"
+        );
         self.write_chunks(
             RowChunks::new(area, PANEL_FORMAT, CHUNK_BYTES)
-                .map(|part| (part, ChunkSource::Rows(rows, part))),
+                .map(|part| (part, ChunkSource::Rows(&rows, part))),
         )
         .await
     }

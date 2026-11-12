@@ -14,7 +14,7 @@
 //!   page comes in from the left.
 //!
 //! Offsets are multiples of 4 because the panel takes 4-pixel aligned
-//! columns (see `plane::align4`).
+//! columns (see `DirtyRect::covering_panel_window`).
 
 use crate::shell::navigation::route::Page;
 

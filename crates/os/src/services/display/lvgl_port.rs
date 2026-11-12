@@ -566,6 +566,7 @@ mod tests {
     #[test]
     fn native_flush_keeps_rgb888_precision_and_lease_blocks_writes_until_completion() {
         native(|port| {
+            let mut panel = MemoryPanel::new((480, 480), PANEL_FORMAT);
             unsafe {
                 sys::lv_obj_set_style_bg_color(sys::lv_screen_active(), color(0x13, 0x57, 0x9b), 0);
                 sys::lv_obj_set_style_bg_opa(sys::lv_screen_active(), 255, 0);
@@ -573,6 +574,7 @@ mod tests {
             port.render_now();
             let (lease, damage) = port.take_frame().unwrap();
             assert!(damage.is_full());
+            panel.upload(FULL, FULL, lease.pixels());
             let actual = lease.pixels().rgb888_at(240, 240);
             if cfg!(feature = "display-rgb888") {
                 assert_eq!(actual, [0x13, 0x57, 0x9b]);
@@ -590,8 +592,15 @@ mod tests {
             assert!(!port.is_busy());
             assert!(unsafe { port.write_rect((0, 0, 1, 1), pixel.as_ptr(), 2) });
             let (lease, damage) = port.take_frame().unwrap();
-            assert_eq!(damage.pixels(), 4);
+            assert_eq!(damage.pixels(), 8);
             assert_eq!(lease.pixels().rgb888_at(0, 0), [255, 0, 0]);
+            // The expanded neighbouring row comes from unchanged shadow context.
+            assert_eq!(lease.pixels().rgb888_at(0, 1), actual);
+            for region in damage.regions() {
+                assert!(region.is_panel_window());
+                panel.upload(*region, *region, lease.pixels());
+            }
+            assert!(panel.matches(lease.pixels()));
             assert_eq!(lease.pixels().rgb888_at(240, 240), actual);
         });
     }

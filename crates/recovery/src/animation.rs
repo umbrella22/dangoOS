@@ -6,7 +6,7 @@ pub const WORK_BYTES: usize = WIDTH * HEIGHT / 2;
 const HEADER: usize = 48;
 const INDEX: usize = 16;
 /// Bounds of the picture above the fixed footer, aligned to the panel's
-/// four-pixel QSPI window requirement. No previous pixel buffer is needed.
+/// four-column, two-row QSPI windows. No previous pixel buffer is needed.
 #[derive(Clone, Copy, Debug)]
 pub struct Bounds {
     pub x0: u16,
@@ -32,13 +32,13 @@ pub fn visible_bounds(frame: &[u8]) -> Option<Bounds> {
             let right = row.iter().rposition(|&b| b != 0).unwrap();
             let r = rect.get_or_insert(Bounds {
                 x0: 476,
-                y0: y as u16,
+                y0: y as u16 & !1,
                 x1: 3,
                 y1: y as u16,
             });
             r.x0 = r.x0.min((left as u16 * 2) & !3);
             r.x1 = r.x1.max((right as u16 * 2 + 1) | 3);
-            r.y1 = y as u16;
+            r.y1 = y as u16 | 1;
         }
     }
     rect
@@ -154,6 +154,8 @@ mod tests {
             if let Some(r) = damage {
                 assert_eq!(r.x0 % 4, 0);
                 assert_eq!((r.x1 - r.x0 + 1) % 4, 0);
+                assert_eq!(r.y0 % 2, 0);
+                assert_eq!((r.y1 - r.y0 + 1) % 2, 0);
                 assert!(r.x1 < 480 && r.y1 < 380);
                 for row in r.y0..=r.y1 {
                     let at = row as usize * 240;
@@ -166,6 +168,16 @@ mod tests {
         }
         assert_eq!(a.frames(), 126);
         assert_eq!(duration, 3960);
+    }
+    #[test]
+    fn single_odd_rows_include_their_unchanged_partner_without_entering_footer() {
+        for y in [1, 378, 379] {
+            let mut frame = vec![0; WORK_BYTES];
+            frame[y * WIDTH / 2 + 1] = 0x10;
+            let r = visible_bounds(&frame).unwrap();
+            assert_eq!((r.y0, r.y1), (y as u16 & !1, y as u16 | 1));
+            assert!(r.y1 < 380);
+        }
     }
     fn fixture() -> Vec<u8> {
         let mut header = Vec::from(*b"RAN1");

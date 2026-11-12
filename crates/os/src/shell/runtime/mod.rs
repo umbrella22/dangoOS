@@ -559,6 +559,12 @@ pub async fn ui_task(mut plane: PlaneUi) {
             _ => {}
         }
 
+        // Apply diagnostic navigation before the ordinary reconcile, just as
+        // input navigation does. A late Home change would tick the previous
+        // page's widget tree while its first complete restore is pending.
+        #[cfg(feature = "display-metrics")]
+        display_tests.poll(&mut app, &mut ui, &mut port, frames.slide != Slide::Idle);
+
         // ---- queued UI messages ----
         if let Err(error) = ui.drain(&mut app, DRAIN_MAX) {
             warn!("ui_task: Ui::drain rejected: {error}");
@@ -632,8 +638,6 @@ pub async fn ui_task(mut plane: PlaneUi) {
         }
         crate::companion::brain::control::poll(&mut runtime, now_ms, buttons::shutdown_requested())
             .await;
-        #[cfg(feature = "display-metrics")]
-        display_tests.poll(&mut app, &mut ui, &mut port, frames.slide != Slide::Idle);
         if app.page() != last_page {
             crate::shell::lifecycle::device::apply(
                 last_page,

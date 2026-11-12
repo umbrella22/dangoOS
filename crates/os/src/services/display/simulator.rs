@@ -3,7 +3,7 @@
 use alloc::{vec, vec::Vec};
 use board_s31::{
     geometry::DirtyRect,
-    pixels::{PixelFormat, PixelSource, RowChunks, SplitRows, MAX_DMA_BYTES},
+    pixels::{PixelFormat, PixelRows, PixelSource, RowChunks, MAX_DMA_BYTES},
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -56,6 +56,7 @@ impl MemoryPanel {
     /// Apply the same whole-row chunks and encoded bytes as the device driver.
     pub fn upload(&mut self, dst: DirtyRect, src: DirtyRect, source: PixelSource<'_>) -> Upload {
         assert!(dst.x1 < self.size.0 && dst.y1 < self.size.1);
+        assert!(dst.is_panel_window());
         assert_eq!((dst.width(), dst.height()), (src.width(), src.height()));
         let mut staging = vec![0; MAX_DMA_BYTES];
         let mut stats = Upload::default();
@@ -83,9 +84,10 @@ impl MemoryPanel {
     }
 
     /// Apply composed full rows (a page push) with the driver's row-major chunks.
-    pub fn upload_rows(&mut self, rows: SplitRows<'_>) -> Upload {
+    pub fn upload_rows(&mut self, rows: impl PixelRows) -> Upload {
         let area = rows.area();
         assert!(area.x1 < self.size.0 && area.y1 < self.size.1);
+        assert!(area.is_panel_window());
         let mut staging = vec![0; MAX_DMA_BYTES];
         let mut stats = Upload::default();
         for part in RowChunks::new(area, self.format, MAX_DMA_BYTES) {
@@ -122,6 +124,51 @@ mod tests {
     use crate::shell::navigation::transition::{self, Direction, Source};
 
     #[test]
+    fn converted_home_preserves_every_row_and_the_surrounding_panel() {
+        let pixels: Vec<u16> = (0..352 * 336)
+            .map(|i| ((i / 352) ^ (i % 352) * 71) as u16)
+            .collect();
+        let source = PixelSource::rgb565(&pixels, (352, 336));
+        for format in [PixelFormat::Rgb565Be, PixelFormat::Bgr888] {
+            let mut panel = MemoryPanel::new((480, 480), format);
+            let stats = panel.upload(
+                DirtyRect {
+                    x0: 64,
+                    y0: 88,
+                    x1: 415,
+                    y1: 423,
+                },
+                DirtyRect {
+                    x0: 0,
+                    y0: 0,
+                    x1: 351,
+                    y1: 335,
+                },
+                source,
+            );
+            assert_eq!(stats.bytes, 352 * 336 * format.bytes_per_pixel());
+            assert_eq!(
+                stats.windows,
+                if format == PixelFormat::Bgr888 { 12 } else { 8 }
+            );
+            for y in 0..480 {
+                for x in 0..480 {
+                    let expected = if (64..416).contains(&x) && (88..424).contains(&y) {
+                        source.rgb888_at(x - 64, y - 88)
+                    } else {
+                        [0; 3]
+                    };
+                    assert_eq!(
+                        panel.pixels().rgb888_at(x, y),
+                        expected,
+                        "{format:?} ({x},{y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn partial_window_preserves_surrounding_pixels_and_padded_source_rows() {
         let mut panel = MemoryPanel::new((8, 4), PixelFormat::Bgr888);
         let mut bytes = [0xee; 32 * 4];
@@ -134,20 +181,21 @@ mod tests {
         let source = PixelSource::bytes(&bytes, (8, 4), 32, PixelFormat::Bgr888);
         let dst = DirtyRect {
             x0: 0,
-            y0: 1,
+            y0: 0,
             x1: 3,
-            y1: 2,
+            y1: 1,
         };
         let src = DirtyRect {
             x0: 4,
-            y0: 2,
+            y0: 1,
             x1: 7,
-            y1: 3,
+            y1: 2,
         };
         let stats = panel.upload(dst, src, source);
         assert_eq!((stats.bytes, stats.direct_bytes, stats.windows), (24, 0, 1));
-        assert_eq!(panel.pixels().rgb888_at(0, 1), [0x13, 2, 4]);
-        assert_eq!(panel.pixels().rgb888_at(3, 2), [0x13, 3, 7]);
+        assert_eq!(panel.pixels().rgb888_at(0, 0), [0x13, 1, 4]);
+        assert_eq!(panel.pixels().rgb888_at(3, 1), [0x13, 2, 7]);
+        assert_eq!(panel.pixels().rgb888_at(0, 2), [0, 0, 0]);
         assert_eq!(panel.pixels().rgb888_at(4, 1), [0, 0, 0]);
     }
 
