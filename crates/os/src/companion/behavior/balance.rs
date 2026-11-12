@@ -5,11 +5,20 @@
 //! Y up: specific force is opposite gravity, hence (-ax, +ay). Confirm that
 //! mounting on the physical board before accepting the direction of movement.
 use super::affect::{EventKind, SensorEvent};
-use crate::companion::render::math::{PI, atan2, cos, inv_sqrt, sin};
+use crate::companion::render::math::{atan2, cos, inv_sqrt, sin, PI};
 
 const STALE_MS: u64 = 300;
 const ORBIT: f32 = 24.0;
 const DEG: f32 = 180.0 / PI;
+const TURN_START_DEG: f32 = 65.0;
+const TURN_CANCEL_DEG: f32 = 50.0;
+const TURN_CONFIRM_MS: u64 = 80;
+const FAST_TURN_DEG: f32 = 140.0;
+const FAST_MEMORY_MS: u64 = 650;
+const GRIP_MS: u32 = 280;
+const FALL_MS: u32 = 380;
+const LAND_MS: u32 = 680;
+const RECOVER_MS: u32 = 620;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BalanceStage {
@@ -28,6 +37,7 @@ pub enum BalanceFace {
     #[default]
     Neutral,
     Effort,
+    Startled,
     Dizzy,
     Weary,
 }
@@ -83,17 +93,25 @@ pub struct Balance {
     upright: bool,
     target: f32,
     raw_angle: Option<f32>,
+    /// Signed travel from the last chosen side, including +/-180 crossings.
+    turn_deg: f32,
+    turn_started_at: Option<u64>,
+    turn_side: f32,
+    fast_at: Option<u64>,
+    peak_rate: f32,
     accel_speed: f32,
     gyro_speed: f32,
+    /// A chosen resting side. Sensor noise cannot move this destination.
+    goal: f32,
     angle: f32,
     position: [f32; 2],
-    velocity: [f32; 2],
+    from_angle: f32,
+    from_position: [f32; 2],
+    crawl_ms: u32,
     blend: f32,
     room: f32,
     stage: BalanceStage,
     stage_ms: u32,
-    fast_ms: u32,
-    quiet_ms: u32,
     walk_ms: u32,
     recovery_grip: f32,
     recovery_drag: f32,
@@ -113,17 +131,23 @@ impl Balance {
             upright: false,
             target: 0.0,
             raw_angle: None,
+            turn_deg: 0.0,
+            turn_started_at: None,
+            turn_side: 1.0,
+            fast_at: None,
+            peak_rate: 0.0,
             accel_speed: 0.0,
             gyro_speed: 0.0,
+            goal: 0.0,
             angle: 0.0,
-            position: [0.0, ORBIT],
-            velocity: [0.0; 2],
+            position: [0.0; 2],
+            from_angle: 0.0,
+            from_position: [0.0; 2],
+            crawl_ms: 1400,
             blend: 0.0,
             room: 0.0,
             stage: BalanceStage::Resting,
             stage_ms: 0,
-            fast_ms: 0,
-            quiet_ms: 0,
             walk_ms: 0,
             recovery_grip: 0.0,
             recovery_drag: 0.0,
@@ -147,16 +171,16 @@ impl Balance {
                 }
                 let (x, y, z) = (-(ax_mg as f32), ay_mg as f32, az_mg as f32);
                 let total = x * x + y * y + z * z;
-                // Impacts and free fall do not supply an upright reference.
                 if !(650.0 * 650.0..=1350.0 * 1350.0).contains(&total) {
                     return;
                 }
-                let planar = x * x + y * y;
                 let threshold = if self.upright { 350.0 } else { 600.0 };
-                self.upright = planar > threshold * threshold;
+                self.upright = x * x + y * y > threshold * threshold;
                 let previous_at = self.accel_at.replace(event.at_ms);
                 if !self.upright {
                     self.raw_angle = None;
+                    self.turn_deg = 0.0;
+                    self.turn_started_at = None;
                     self.accel_speed = 0.0;
                     return;
                 }
@@ -167,10 +191,29 @@ impl Balance {
                 self.accel_speed = self
                     .raw_angle
                     .map_or(0.0, |p| wrap(a - p).abs() * 1000.0 / dt as f32);
+                self.turn_deg += wrap(a - self.raw_angle.unwrap_or(self.goal));
                 self.raw_angle = Some(a);
-                // The gyro supplies urgency; gravity supplies the lasting pose.
                 self.target =
                     wrap(self.target + wrap(a - self.target) * dt as f32 / (60.0 + dt as f32));
+                if self.stage == BalanceStage::Resting {
+                    if self.turn_started_at.is_some()
+                        && self.turn_deg * self.turn_side < TURN_CANCEL_DEG
+                    {
+                        self.turn_started_at = None;
+                    }
+                    if self.turn_started_at.is_none() && self.turn_deg.abs() >= TURN_START_DEG {
+                        self.turn_started_at = Some(event.at_ms);
+                        self.turn_side = self.turn_deg.signum();
+                    }
+                }
+                if self.accel_speed >= 250.0
+                    && self
+                        .gyro_at
+                        .is_some_and(|at| event.at_ms.saturating_sub(at) <= 120)
+                    && self.gyro_speed >= 200.0
+                {
+                    self.note_fast(event.at_ms);
+                }
             }
             EventKind::Gyro {
                 gx_dps,
@@ -185,9 +228,17 @@ impl Balance {
                     .abs()
                     .max((gy_dps as f32).abs())
                     .max((gz_dps as f32).abs());
+                if self.gyro_speed >= 250.0 && self.accel_speed >= 180.0 {
+                    self.note_fast(event.at_ms);
+                }
             }
             _ => {}
         }
+    }
+
+    fn note_fast(&mut self, at: u64) {
+        self.fast_at = Some(at);
+        self.peak_rate = self.peak_rate.max(self.accel_speed.max(self.gyro_speed));
     }
 
     pub fn tick(&mut self, now_ms: u64) -> BalanceVisual {
@@ -198,7 +249,6 @@ impl Balance {
             .accel_at
             .is_none_or(|at| now_ms.saturating_sub(at) > STALE_MS)
         {
-            // Do not extrapolate an old sensor stream into an endless fall.
             *self = Self::new(now_ms);
             return BalanceVisual::REST;
         }
@@ -213,27 +263,37 @@ impl Balance {
     }
 
     fn enter(&mut self, stage: BalanceStage) {
-        if stage == BalanceStage::Struggling {
-            self.hold_side = if wrap(self.target - self.angle) < 0.0 {
-                -1.0
-            } else {
-                1.0
-            };
-            self.impact_strength = 0.0;
-            if matches!(self.face, BalanceFace::Neutral | BalanceFace::Weary) {
-                self.face = BalanceFace::Effort;
-                self.face_ms = 0;
-                self.face_quiet_ms = 0;
-            }
-        }
         if stage == BalanceStage::Recovering {
             let previous = self.visual();
             self.recovery_grip = previous.grip;
             self.recovery_drag = previous.drag;
         }
+        self.from_angle = self.angle;
+        self.from_position = self.position;
         self.stage = stage;
         self.stage_ms = 0;
-        self.quiet_ms = 0;
+    }
+
+    fn start_crawl(&mut self, goal: f32) {
+        self.goal = goal;
+        self.hold_side = if wrap(goal - self.angle) < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        self.crawl_ms = (wrap(goal - self.angle).abs() * 1000.0 / 65.0).clamp(900.0, 2800.0) as u32;
+        self.turn_started_at = None;
+        self.enter(BalanceStage::Scooting);
+    }
+
+    fn finish(&mut self) {
+        self.angle = self.goal;
+        self.position = destination(self.goal);
+        self.turn_deg = wrap(self.raw_angle.unwrap_or(self.goal) - self.goal);
+        self.turn_started_at = None;
+        self.fast_at = None;
+        self.peak_rate = 0.0;
+        self.enter(BalanceStage::Resting);
     }
 
     fn advance(&mut self, ms: u32, now: u64) {
@@ -243,174 +303,187 @@ impl Balance {
         self.blend = approach(self.blend, if self.upright { 1.0 } else { 0.0 }, dt * 4.0);
         if !self.upright {
             self.room = approach(self.room, 0.0, dt * 3.0);
-            self.enter(BalanceStage::Resting);
-            self.fast_ms = 0;
-            self.face = BalanceFace::Neutral;
-            self.face_ms = 0;
-            self.face_quiet_ms = 0;
+            self.goal = 0.0;
+            self.fast_at = None;
+            self.peak_rate = 0.0;
             self.angle += wrap(-self.angle) * (dt * 5.0).min(1.0);
-            for i in 0..2 {
-                self.velocity[i] = 0.0;
-            }
+            self.enter(BalanceStage::Resting);
+            self.set_face(BalanceFace::Neutral);
             return;
         }
-        let room =
-            (self.target.abs() / 18.0)
-                .min(1.0)
-                .max(if self.stage == BalanceStage::Resting {
-                    0.0
-                } else {
-                    1.0
-                });
-        self.room = approach(self.room, room, dt * 2.5);
-        let rate = self.accel_speed.max(
+        let rate = self.motion_rate(now);
+        let heading = self.raw_angle.unwrap_or(self.target);
+        if self.stage == BalanceStage::Resting {
+            let confirmed = self.turn_started_at.is_some_and(|started| {
+                self.accel_at.unwrap_or(started).saturating_sub(started) >= TURN_CONFIRM_MS
+                    && self.turn_deg * self.turn_side >= TURN_START_DEG
+            });
+            if confirmed {
+                self.start_crawl(side_angle(heading));
+            } else {
+                self.advance_face(ms, rate);
+                return;
+            }
+        }
+        // Coalesce a new side into the current action. Fine angle changes do
+        // not alter either the path or its end time.
+        if matches!(
+            self.stage,
+            BalanceStage::Scooting | BalanceStage::Struggling
+        ) && wrap(heading - self.goal).abs() >= TURN_START_DEG
+        {
+            let goal = side_angle(heading);
+            if self.stage == BalanceStage::Scooting {
+                self.start_crawl(goal);
+            } else {
+                self.goal = goal;
+            }
+        }
+        // A quick half-turn stays committed after the hand stops. Otherwise
+        // a completed 180-degree flip incorrectly takes the rescue shortcut.
+        if self.stage == BalanceStage::Scooting
+            && self.turn_deg.abs() >= FAST_TURN_DEG
+            && self
+                .fast_at
+                .is_some_and(|at| now.saturating_sub(at) <= FAST_MEMORY_MS)
+        {
+            self.goal = side_angle(heading);
+            self.impact_strength = ((self.peak_rate - 180.0) / 500.0).clamp(0.0, 1.0);
+            self.enter(BalanceStage::Struggling);
+            self.set_face(BalanceFace::Startled);
+        }
+        self.room = approach(self.room, 1.0, dt * 3.0);
+        let dest = destination(self.goal);
+        match self.stage {
+            BalanceStage::Scooting => {
+                let u = (self.stage_ms as f32 / self.crawl_ms as f32).min(1.0);
+                self.move_to(dest, smooth(u), smooth(u));
+                if u >= 1.0 {
+                    self.finish();
+                }
+            }
+            BalanceStage::Struggling => {
+                // Brief catch and wobble, with the body visibly lagging the paws.
+                let u = (self.stage_ms as f32 / GRIP_MS as f32).min(1.0);
+                self.angle =
+                    wrap(self.from_angle + wrap(self.goal - self.from_angle) * smooth(u) * 0.10);
+                if self.stage_ms >= GRIP_MS {
+                    self.enter(BalanceStage::Falling);
+                }
+            }
+            BalanceStage::Falling => {
+                let u = (self.stage_ms as f32 / FALL_MS as f32).min(1.0);
+                self.move_to(dest, smooth(u), u * u);
+                if u >= 1.0 {
+                    self.angle = self.goal;
+                    self.position = dest;
+                    self.enter(BalanceStage::Landing);
+                }
+            }
+            BalanceStage::Landing => {
+                if self.stage_ms >= LAND_MS {
+                    self.enter(BalanceStage::Recovering);
+                }
+            }
+            BalanceStage::Recovering => {
+                if self.stage_ms >= RECOVER_MS {
+                    self.finish();
+                }
+            }
+            BalanceStage::Resting => {}
+        }
+        self.advance_face(ms, rate);
+    }
+
+    fn move_to(&mut self, dest: [f32; 2], angle_progress: f32, position_progress: f32) {
+        self.angle = wrap(self.from_angle + wrap(self.goal - self.from_angle) * angle_progress);
+        for (i, value) in dest.into_iter().enumerate() {
+            self.position[i] =
+                self.from_position[i] + (value - self.from_position[i]) * position_progress;
+        }
+    }
+
+    fn motion_rate(&self, now: u64) -> f32 {
+        self.accel_speed.max(
             if self.gyro_at.is_some_and(|t| now.saturating_sub(t) < 120) {
                 self.gyro_speed
             } else {
                 0.0
             },
-        );
-        let error = wrap(self.target - self.angle);
-        let gravity = [-sin(self.target / DEG), cos(self.target / DEG)];
-        let destination = [gravity[0] * ORBIT, gravity[1] * ORBIT];
-        let fast = rate > 210.0 && error.abs() > 14.0;
-        self.fast_ms = if fast {
-            self.fast_ms.saturating_add(ms)
-        } else {
-            self.fast_ms.saturating_sub(ms * 2)
-        };
+        )
+    }
 
-        match self.stage {
-            BalanceStage::Resting | BalanceStage::Scooting => {
-                if self.fast_ms >= 100 || (error.abs() > 68.0 && rate > 130.0) {
-                    self.enter(BalanceStage::Struggling);
-                } else if error.abs() > 3.5 || self.accel_speed > 12.0 {
-                    if self.stage != BalanceStage::Scooting {
-                        self.enter(BalanceStage::Scooting);
-                    }
-                } else if self.stage == BalanceStage::Scooting && error.abs() < 1.5 && rate < 12.0 {
-                    self.enter(BalanceStage::Resting);
-                }
-                self.angle = wrap(self.angle + error.clamp(-110.0 * dt, 110.0 * dt));
-                for i in 0..2 {
-                    self.position[i] += (destination[i] - self.position[i]) * (dt * 7.0).min(1.0);
-                }
-            }
-            BalanceStage::Struggling => {
-                self.impact_strength = self
-                    .impact_strength
-                    .max(((rate - 180.0) / 400.0).clamp(0.0, 1.0));
-                // A visible grip attempt precedes release; stopping can save it.
-                if rate < 95.0 {
-                    self.quiet_ms = self.quiet_ms.saturating_add(ms);
-                } else {
-                    self.quiet_ms = 0;
-                }
-                self.angle = wrap(self.angle + error.clamp(-38.0 * dt, 38.0 * dt));
-                if self.quiet_ms >= 140 && self.stage_ms >= 220 {
-                    self.fast_ms = 0;
-                    self.enter(BalanceStage::Recovering);
-                } else if self.stage_ms >= 500 && (rate > 160.0 || error.abs() > 65.0) {
-                    self.velocity = [-gravity[0] * 20.0, -gravity[1] * 20.0];
-                    self.enter(BalanceStage::Falling);
-                }
-            }
-            BalanceStage::Falling => {
-                self.angle = wrap(self.angle + error.clamp(-280.0 * dt, 280.0 * dt));
-                for i in 0..2 {
-                    self.velocity[i] += gravity[i] * 560.0 * dt;
-                    self.position[i] += self.velocity[i] * dt;
-                }
-                let depth = self.position[0] * gravity[0] + self.position[1] * gravity[1];
-                if depth >= ORBIT || self.stage_ms >= 650 {
-                    self.position = destination;
-                    self.velocity = [0.0; 2];
-                    self.fast_ms = 0;
-                    self.enter(BalanceStage::Landing);
-                }
-            }
-            BalanceStage::Landing => {
-                self.angle = wrap(self.angle + error.clamp(-180.0 * dt, 180.0 * dt));
-                for i in 0..2 {
-                    self.position[i] += (destination[i] - self.position[i]) * (dt * 8.0).min(1.0);
-                }
-                if self.stage_ms >= 650 {
-                    self.enter(BalanceStage::Recovering);
-                }
-            }
-            BalanceStage::Recovering => {
-                self.angle = wrap(self.angle + error.clamp(-150.0 * dt, 150.0 * dt));
-                for i in 0..2 {
-                    self.position[i] += (destination[i] - self.position[i]) * (dt * 8.0).min(1.0);
-                }
-                if self.stage_ms >= 500 {
-                    self.enter(BalanceStage::Resting);
-                }
-            }
+    fn set_face(&mut self, face: BalanceFace) {
+        if face != self.face {
+            self.face = face;
+            self.face_ms = 0;
+            self.face_quiet_ms = 0;
         }
-        self.advance_face(ms, rate);
     }
 
     fn advance_face(&mut self, ms: u32, rate: f32) {
-        if self.face == BalanceFace::Neutral {
-            return;
-        }
         self.face_ms = self.face_ms.saturating_add(ms);
         self.face_quiet_ms = if rate < 35.0 {
             self.face_quiet_ms.saturating_add(ms)
         } else {
             0
         };
-        let next = match self.face {
-            BalanceFace::Effort | BalanceFace::Dizzy if self.face_quiet_ms >= 160 => {
+        let spinning = self.turn_deg.abs() >= 300.0 && rate > 90.0;
+        let face = match self.stage {
+            BalanceStage::Struggling => BalanceFace::Startled,
+            BalanceStage::Falling if spinning => BalanceFace::Dizzy,
+            BalanceStage::Falling => BalanceFace::Startled,
+            BalanceStage::Landing if self.stage_ms < 120 => self.face,
+            BalanceStage::Landing | BalanceStage::Recovering if spinning => BalanceFace::Dizzy,
+            BalanceStage::Landing | BalanceStage::Recovering => BalanceFace::Weary,
+            _ if matches!(self.face, BalanceFace::Dizzy | BalanceFace::Startled)
+                && self.face_quiet_ms >= 160 =>
+            {
                 BalanceFace::Weary
             }
-            BalanceFace::Effort if self.face_ms >= 280 => BalanceFace::Dizzy,
-            BalanceFace::Weary
-                if self.face_ms >= 900
-                    && matches!(self.stage, BalanceStage::Resting | BalanceStage::Scooting) =>
-            {
-                BalanceFace::Neutral
-            }
-            face => face,
+            _ if self.face == BalanceFace::Weary && self.face_ms >= 900 => BalanceFace::Neutral,
+            _ => self.face,
         };
-        if next != self.face {
-            self.face = next;
-            self.face_ms = 0;
-        }
+        self.set_face(face);
     }
 
     fn visual(&self) -> BalanceVisual {
         if self.blend <= 0.001 {
             return BalanceVisual::REST;
         }
-        let angle = self.angle * self.blend;
         let activity = self.room * self.blend;
-        let r = angle / DEG;
-        let (c, s) = (cos(r).abs(), sin(r).abs());
-        let fit = (352.0 / (352.0 * c + 336.0 * s))
-            .min(336.0 / (336.0 * c + 352.0 * s))
-            .min(1.0);
         let (reach, step, squash) = match self.stage {
-            BalanceStage::Scooting => (0.24, sin(self.walk_ms as f32 / 80.0), 0.0),
+            BalanceStage::Scooting => {
+                let envelope = (self.stage_ms as f32 / 160.0)
+                    .min(1.0)
+                    .min(self.crawl_ms.saturating_sub(self.stage_ms) as f32 / 180.0);
+                (
+                    0.22 * envelope,
+                    sin(self.walk_ms as f32 / 120.0) * envelope,
+                    0.0,
+                )
+            }
             BalanceStage::Struggling => (
-                0.3 + 0.7 * (self.stage_ms as f32 / 400.0).min(1.0),
-                sin(self.stage_ms as f32 / 42.0),
-                0.025,
-            ),
-            BalanceStage::Falling => (0.65, sin(self.stage_ms as f32 / 45.0), -0.04),
-            BalanceStage::Landing => (
-                0.12 * (1.0 - self.stage_ms as f32 / 650.0),
+                0.3 + 0.7 * (self.stage_ms as f32 / 200.0).min(1.0),
+                sin(self.stage_ms as f32 / 38.0),
                 0.0,
-                (0.16 + self.impact_strength * 0.17)
-                    * (1.0 - self.stage_ms as f32 / 480.0).max(0.0)
-                    * cos(self.stage_ms as f32 / 72.0),
             ),
-            BalanceStage::Recovering => (0.10 * (1.0 - self.stage_ms as f32 / 500.0), 0.0, 0.0),
+            BalanceStage::Falling => (0.55, sin(self.stage_ms as f32 / 70.0), 0.0),
+            BalanceStage::Landing => {
+                let release = smooth((self.stage_ms.saturating_sub(120) as f32 / 440.0).min(1.0));
+                (
+                    0.08 * (1.0 - release),
+                    0.0,
+                    (0.26 + self.impact_strength * 0.16) * (1.0 - release),
+                )
+            }
+            BalanceStage::Recovering => (
+                0.06 * (1.0 - self.stage_ms as f32 / RECOVER_MS as f32),
+                0.0,
+                0.0,
+            ),
             BalanceStage::Resting => (0.0, 0.0, 0.0),
         };
-        // A disk bounds the moving centre even if the device keeps turning in
-        // mid-air. Pixel placement never escapes the fixed panel upload window.
         let norm2 = self.position[0] * self.position[0] + self.position[1] * self.position[1];
         let limit = if norm2 > 38.0 * 38.0 {
             38.0 * inv_sqrt(norm2)
@@ -422,26 +495,26 @@ impl Balance {
             stage: self.stage,
             face: self.face,
             rotation_reaction: false,
-            angle_deg: angle,
+            angle_deg: self.angle * self.blend,
             x: self.position[0] * activity * limit,
             y: self.position[1] * activity * limit,
-            scale: fit * (1.0 - activity * 0.12),
+            scale: 1.0,
             squash,
             reach,
             step,
             drag: match self.stage {
-                BalanceStage::Struggling => (self.stage_ms as f32 / 400.0).min(1.0),
+                BalanceStage::Struggling => (self.stage_ms as f32 / 200.0).min(1.0),
                 BalanceStage::Falling => 1.0,
                 BalanceStage::Recovering => {
-                    self.recovery_drag * (1.0 - self.stage_ms as f32 / 500.0).max(0.0)
+                    self.recovery_drag * (1.0 - self.stage_ms as f32 / RECOVER_MS as f32).max(0.0)
                 }
                 _ => 0.0,
             },
             grip: match self.stage {
-                BalanceStage::Struggling => (self.stage_ms as f32 / 140.0).min(1.0),
-                BalanceStage::Falling => (1.0 - self.stage_ms as f32 / 180.0).max(0.0),
+                BalanceStage::Struggling => (self.stage_ms as f32 / 100.0).min(1.0),
+                BalanceStage::Falling => (1.0 - self.stage_ms as f32 / 160.0).max(0.0),
                 BalanceStage::Recovering => {
-                    self.recovery_grip * (1.0 - self.stage_ms as f32 / 500.0).max(0.0)
+                    self.recovery_grip * (1.0 - self.stage_ms as f32 / RECOVER_MS as f32).max(0.0)
                 }
                 _ => 0.0,
             },
@@ -450,9 +523,22 @@ impl Balance {
     }
 }
 
+fn destination(angle: f32) -> [f32; 2] {
+    [-sin(angle / DEG) * ORBIT, cos(angle / DEG) * ORBIT]
+}
+
+fn side_angle(angle: f32) -> f32 {
+    wrap(crate::companion::render::math::round(angle / 90.0) as f32 * 90.0)
+}
+
+fn smooth(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
 fn approach(value: f32, target: f32, step: f32) -> f32 {
     value + (target - value).clamp(-step, step)
 }
+
 fn wrap(angle: f32) -> f32 {
     let mut a = angle % 360.0;
     if a > 180.0 {

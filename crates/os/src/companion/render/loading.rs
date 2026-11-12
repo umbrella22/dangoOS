@@ -13,6 +13,19 @@ pub fn render(out: &mut [u16]) {
     assert_eq!(at, PIXELS);
 }
 
+pub fn render_panel(out: &mut [u16]) {
+    use super::{VIEW_ORIGIN, VIEW_PIXELS, VIEW_W, W};
+    assert_eq!(out.len(), VIEW_PIXELS);
+    out.fill(0);
+    let mut at = 0;
+    for pair in data::BLOB.chunks_exact(2) {
+        let start = (at / W + VIEW_ORIGIN.1) * VIEW_W + at % W + VIEW_ORIGIN.0;
+        out[start..start + pair[0] as usize].fill(data::PALETTE[pair[1] as usize]);
+        at += pair[0] as usize;
+    }
+    assert_eq!(at, PIXELS);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

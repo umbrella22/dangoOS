@@ -1,9 +1,9 @@
 //! The panel plane: uploads the fox canvas at a fixed position.
 //!
-//! The fox never moves across the panel. The fox widget renders its canvas
-//! (expression plus the in-canvas entrance) into a two-slot
+//! The fox widget composes the character, movement and link icons into a
+//! full-panel frame in a two-slot
 //! [`CanvasPool`](crate::services::display::canvas_pool::CanvasPool), and this task
-//! uploads the newest frame below the panel centre. There is no damage union
+//! uploads the newest frame at the panel origin. There is no damage union
 //! and no old-position clear: the rectangle never changes.
 //!
 //! # Ownership and overlap
@@ -26,8 +26,8 @@
 //! Off the home page the frame is LVGL's full-screen shadow
 //! ([`Frame::Screen`]) placed at the panel origin, and only its damaged
 //! rectangle is uploaded. Coming back home, the first fox job asks for
-//! `clear_outside`, which restores the black background, character and status
-//! band together as full-width rows from the same Home lease.
+//! `clear_outside`. Every Home frame already restores the complete viewport
+//! from one lease, including the background and link icons.
 //!
 //! The panel brightness follows [`set_brightness`] (Settings); the target is
 //! applied after the next completed upload.
@@ -60,10 +60,6 @@ use {
 };
 use {crate::shell::navigation::transition, crate::shell::navigation::transition::Direction};
 
-/// Vertical offset of the character canvas below the panel centre. The fox
-/// is bottom-anchored in its canvas with headroom for hops; 16 px down keeps
-/// the visual centre of the face on the panel centre.
-const FOX_DROP_PX: u16 = 16;
 /// Longest wait for a TE edge before transferring anyway.
 const TE_TIMEOUT: Duration = Duration::from_millis(30);
 
@@ -86,7 +82,7 @@ pub fn set_brightness(percent: u8) {
 
 /// The pixels a job uploads.
 pub enum Frame {
-    /// A Home slot: character pixels followed by its separate status band.
+    /// A complete Home frame with character and link icons already composed.
     Pool(ReadLease),
     /// LVGL's full-screen shadow frame (hub pages).
     Screen(ScreenLease),
@@ -104,9 +100,7 @@ pub enum Frame {
 impl Frame {
     fn pixels(&self, size: (u16, u16)) -> PixelSource<'_> {
         match self {
-            Frame::Pool(lease) => {
-                PixelSource::rgb565(&lease.pixels()[..crate::companion::render::PIXELS], size)
-            }
+            Frame::Pool(lease) => PixelSource::rgb565(lease.pixels(), size),
             Frame::Screen(lease) => lease.pixels(),
             Frame::Slide { new, .. } => new.pixels(),
         }
@@ -251,13 +245,8 @@ async fn run_plane(
     let mut applied_brightness: Option<u8> = None;
     let mut sleeping = false;
     let mut full_after_wake = false;
-    // The panel starts with inherited boot content. A non-Home upload or an
-    // incomplete Home restore requires another complete Home before local jobs.
-    let mut restore_home = true;
     let mut restored_cycle = 0;
     let mut pending_screen = Damage::new();
-    let mut last_status = alloc::vec![0u16; crate::companion::status::PIXELS];
-    let mut status_valid = false;
     #[cfg(feature = "display-metrics")]
     super::diagnostics::sample_te(&mut te).await;
     #[cfg(feature = "display-metrics")]
@@ -284,7 +273,6 @@ async fn run_plane(
         .await;
         let mut job = match next {
             Either::First(sleep) => {
-                status_valid = false;
                 // Return every queued canvas lease before acknowledging standby.
                 JOBS.reset();
                 let cycle = crate::services::power::coordinator::cycle();
@@ -328,11 +316,6 @@ async fn run_plane(
             continue;
         }
         let home = matches!(job.canvas, Frame::Pool(_));
-        if home {
-            job.clear_outside |= restore_home;
-        } else {
-            restore_home = true;
-        }
         if full_after_wake {
             job.damage = None;
             job.clear_outside = matches!(job.canvas, Frame::Pool(_));
@@ -370,37 +353,13 @@ async fn run_plane(
             x1: canvas_w - 1,
             y1: canvas_h - 1,
         };
-        let damage = job.damage.unwrap_or_else(|| Damage::from(full));
-
-        // Restore black background, body and status in one top-to-bottom row
-        // stream, reducing window commands without a full-screen copy.
-        // Ordinary Home frames remain local.
-        let home_restore = job.clear_outside && matches!(job.canvas, Frame::Pool(_));
-        if home_restore {
-            if let Frame::Pool(lease) = &job.canvas {
-                let mut result = panel
-                    .write_rows_async(super::home_rows::HomeRows::new(
-                        lease.pixels(),
-                        (origin_x, origin_y),
-                    ))
-                    .await;
-                if result.is_err() {
-                    result = panel
-                        .write_rows_async(super::home_rows::HomeRows::new(
-                            lease.pixels(),
-                            (origin_x, origin_y),
-                        ))
-                        .await;
-                }
-                completed = match result {
-                    Ok(()) => true,
-                    Err(error) => {
-                        warn!("plane: Home restore failed: {error:?}");
-                        false
-                    }
-                };
-            }
-        }
+        // Home movement can reach any edge of the panel. Publish its complete
+        // composed viewport, including icons, in one row-major upload.
+        let damage = if home {
+            Damage::from(full)
+        } else {
+            job.damage.unwrap_or_else(|| Damage::from(full))
+        };
 
         if let Frame::Slide {
             new,
@@ -419,7 +378,7 @@ async fn run_plane(
         }
 
         let slide = matches!(job.canvas, Frame::Slide { .. });
-        if completed && !slide && !home_restore {
+        if completed && !slide {
             for region in damage.regions() {
                 let area = clip(*region, full).covering_panel_window();
                 if !area.is_empty() {
@@ -436,45 +395,6 @@ async fn run_plane(
                 }
             }
         }
-        if completed {
-            if let Frame::Pool(lease) = &job.canvas {
-                use crate::companion::{render, status};
-                let band = &lease.pixels()[render::PIXELS..];
-                let at = (
-                    (i32::from(origin_x) + status::OFFSET.0) as u16,
-                    (i32::from(origin_y) + status::OFFSET.1) as u16,
-                );
-                // Keep the same lease through both uploads, including a full
-                // restore after clear_outside or wake. A failed band must not
-                // acknowledge a complete frame or restore panel brightness.
-                if home_restore {
-                    last_status.copy_from_slice(band);
-                    status_valid = true;
-                } else if !status_valid
-                    || job.clear_outside
-                    || full_after_wake
-                    || band != last_status.as_slice()
-                {
-                    completed = upload(
-                        &mut panel,
-                        PixelSource::rgb565(band, (status::WIDTH as u16, status::HEIGHT as u16)),
-                        at,
-                        DirtyRect {
-                            x0: 0,
-                            y0: 0,
-                            x1: status::WIDTH as u16 - 1,
-                            y1: status::HEIGHT as u16 - 1,
-                        },
-                    )
-                    .await;
-                    if completed {
-                        last_status.copy_from_slice(band);
-                        status_valid = true;
-                    }
-                }
-            }
-        }
-
         #[cfg(feature = "embedscope")]
         if completed {
             // Copy while the original leases still protect every source, then
@@ -484,31 +404,15 @@ async fn run_plane(
             }
             let source = match &job.canvas {
                 Frame::Pool(lease) => {
-                    use crate::companion::{render, status};
                     for region in damage.regions() {
                         let area = clip(*region, full).covering_panel_window();
                         final_capture.blit(
-                            &lease.pixels()[..render::PIXELS],
+                            lease.pixels(),
                             canvas_w as usize,
                             area,
                             (origin_x + area.x0, origin_y + area.y0),
                         );
                     }
-                    let at = (
-                        (i32::from(origin_x) + status::OFFSET.0) as u16,
-                        (i32::from(origin_y) + status::OFFSET.1) as u16,
-                    );
-                    final_capture.blit(
-                        &lease.pixels()[render::PIXELS..],
-                        status::WIDTH,
-                        DirtyRect {
-                            x0: 0,
-                            y0: 0,
-                            x1: status::WIDTH as u16 - 1,
-                            y1: status::HEIGHT as u16 - 1,
-                        },
-                        at,
-                    );
                     "Home"
                 }
                 Frame::Screen(lease) => {
@@ -572,10 +476,6 @@ async fn run_plane(
         if completed {
             FIRST_FRAME.store(true, Ordering::Release);
         }
-        if home {
-            restore_home = !completed;
-        }
-
         if completed {
             apply_brightness(&mut panel, &mut applied_brightness, restored_cycle).await;
         }
@@ -589,10 +489,6 @@ async fn run_plane(
             // A cached LVGL page must cover the whole panel after Home or a slide.
             pending_screen = Damage::full();
         }
-        if !completed || !matches!(job.canvas, Frame::Pool(_)) {
-            status_valid = false;
-        }
-
         #[cfg(feature = "display-metrics")]
         {
             let stats = panel.take_stats();
@@ -677,12 +573,10 @@ async fn upload(
     true
 }
 
-/// Top-left of the canvas on the panel: centred horizontally, [`FOX_DROP_PX`]
-/// below centre vertically.
+/// Centre the viewport. Full-panel Home frames start at the panel origin;
+/// the renderer already places the sprite within that viewport.
 fn origin((w, h): (u16, u16)) -> (u16, u16) {
-    let x = (WIDTH as u16 - w) / 2;
-    let y = ((HEIGHT as u16 - h) / 2 + FOX_DROP_PX).min(HEIGHT as u16 - h);
-    (x, y)
+    ((WIDTH as u16 - w) / 2, (HEIGHT as u16 - h) / 2)
 }
 
 /// `rect` limited to `bounds`.

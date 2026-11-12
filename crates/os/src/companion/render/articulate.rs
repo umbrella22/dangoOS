@@ -1,9 +1,9 @@
 //! Stylized mitten gestures and a small body sway for the v4 character layers.
 use super::{
-    Scene,
-    math::{PI, cos, round, sin},
+    math::{cos, round, sin, PI},
     scene::{ArticulatedLayer, Layer, Layers, RigFrame},
     skin::{BalanceRig, RigArticulation},
+    Scene,
 };
 use crate::companion::behavior::balance::{BalanceFace, BalanceStage, BalanceVisual};
 
@@ -22,7 +22,12 @@ pub(super) fn pose(
     let body_dx = round(-motion.hold_side * motion.drag * grip * 7.0) as i16;
     let body_dy = round(-6.0 * (1.0 - motion.drag) * grip) as i16;
     let breathing = sin(t as f32 / 620.0);
-    let sway = motion.hold_side * (5.0 + sin(t as f32 / 115.0) * 3.0) * grip;
+    let sway = motion.hold_side * (5.0 + sin(t as f32 / 115.0) * 3.0) * grip
+        + if motion.stage == BalanceStage::Scooting {
+            motion.step * 0.8
+        } else {
+            0.0
+        };
     let angle = sway * PI / 180.0;
     let hands = core::array::from_fn(|i| {
         let side = if i == 0 { -1.0 } else { 1.0 };
@@ -90,6 +95,7 @@ pub(super) fn pose(
     scene.over = Layers::new();
     let face = match motion.face {
         BalanceFace::Effort => Some(rig.faces[0]),
+        BalanceFace::Startled => Some(rig.faces[3]),
         BalanceFace::Dizzy => Some(rig.faces[1]),
         BalanceFace::Weary => Some(rig.faces[2]),
         _ if blink => Some(art.blink),

@@ -1,7 +1,7 @@
 //! `FoxWidget`: the fox-dango character as an LVGL custom widget.
 //!
-//! The widget renders a 352x336 character and a small status band into one
-//! two-slot [`CanvasPool`] at a bounded cadence. Application code drives the
+//! The widget composes the character and link icons into a full-panel frame
+//! in a two-slot [`CanvasPool`] at a bounded cadence. Application code drives the
 //! mounted instance through a shared [`FoxControl`]: `rs_lvgl_ui::custom` keeps the
 //! mounted widget when a later `App::view` builds a new descriptor, so the
 //! handle is how the expression and pose change without a remount.
@@ -31,13 +31,13 @@ use core::ptr::NonNull;
 use rs_lvgl::sys as lvgl_sys;
 use rs_lvgl_ui::{CustomObject, CustomWidget, NativeObject, Obj, UiError};
 
-use crate::companion::behavior::Expression;
 use crate::companion::behavior::balance::BalanceVisual;
+use crate::companion::behavior::Expression;
 use crate::companion::status;
 use {
-    crate::companion::render as fox, crate::companion::render::FoxAnimator,
-    crate::companion::render::FoxInput, crate::companion::render::FoxPose,
-    crate::companion::render::FoxRenderer, crate::companion::render::entrance,
+    crate::companion::render as fox, crate::companion::render::entrance,
+    crate::companion::render::FoxAnimator, crate::companion::render::FoxInput,
+    crate::companion::render::FoxPose, crate::companion::render::FoxRenderer,
 };
 use {
     crate::services::display::canvas_pool::CanvasPool,
@@ -45,11 +45,11 @@ use {
 };
 
 /// Canvas width in pixels.
-pub const CANVAS_WIDTH: usize = fox::W;
+pub const CANVAS_WIDTH: usize = fox::VIEW_W;
 /// Canvas height in pixels.
-pub const CANVAS_HEIGHT: usize = fox::H;
-/// Each slot owns both images until LVGL or the panel finishes reading them.
-pub const FRAME_PIXELS: usize = fox::PIXELS + status::PIXELS;
+pub const CANVAS_HEIGHT: usize = fox::VIEW_H;
+/// Each slot owns the complete frame until LVGL or the panel finishes reading it.
+pub const FRAME_PIXELS: usize = fox::VIEW_PIXELS;
 
 /// Minimum interval between rendered frames: 20 fps.
 ///
@@ -112,7 +112,11 @@ impl Default for FoxVisual {
 }
 
 fn finite_or(value: f32, fallback: f32) -> f32 {
-    if value.is_finite() { value } else { fallback }
+    if value.is_finite() {
+        value
+    } else {
+        fallback
+    }
 }
 
 /// Application-facing handle to the mounted [`FoxWidget`].
@@ -361,7 +365,6 @@ pub struct FoxWidget {
     since_frame_ms: u32,
     /// Native canvas, kept so the LVGL path can repoint and invalidate it.
     canvas: Option<NonNull<lvgl_sys::lv_obj_t>>,
-    status_canvas: Option<NonNull<lvgl_sys::lv_obj_t>>,
     #[cfg(target_os = "none")]
     render_budget: crate::platform::runtime::frequency::device::Budget,
 }
@@ -380,7 +383,6 @@ impl FoxWidget {
             last_expression: None,
             since_frame_ms: 0,
             canvas: None,
-            status_canvas: None,
             // Leave half the 50 ms frame interval for upload and scheduling.
             #[cfg(target_os = "none")]
             render_budget: crate::platform::runtime::frequency::device::Budget::new(25_000),
@@ -443,23 +445,13 @@ impl FoxWidget {
     fn show_latest(&mut self, pool: &'static CanvasPool, object: &mut CustomObject) {
         self.shown = None;
         self.shown = pool.take_ready();
-        if let (Some(shown), Some(canvas), Some(status_canvas)) =
-            (self.shown.as_ref(), self.canvas, self.status_canvas)
-        {
+        if let (Some(shown), Some(canvas)) = (self.shown.as_ref(), self.canvas) {
             // SAFETY: `canvas` is the live native canvas created in `create`;
             // the pool buffer is `'static` and `self.shown` keeps the renderer
             // out of it until the next frame.
             unsafe {
                 let pixels = shown.as_ptr().cast_mut();
                 set_canvas_buffer(canvas, pixels, CANVAS_WIDTH, CANVAS_HEIGHT);
-                set_canvas_buffer(
-                    status_canvas,
-                    pixels.add(fox::PIXELS),
-                    status::WIDTH,
-                    status::HEIGHT,
-                );
-                // This band sits outside its parent's character rectangle.
-                lvgl_sys::lv_obj_invalidate(status_canvas.as_ptr());
             };
         }
         object.invalidate();

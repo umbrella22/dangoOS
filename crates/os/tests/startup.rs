@@ -41,9 +41,8 @@ fn no_builtin_before_skin_publication_and_low_battery_is_terminal() {
     let mut ui = Ui::new(&display, theme()).unwrap();
     ui.mount(&app).unwrap();
     let mut expected = vec![0; os::companion::widget::FRAME_PIXELS];
-    let (character, band) = expected.split_at_mut(os::companion::render::PIXELS);
-    os::companion::render::loading::render(character);
-    os::companion::status::render(band, os::services::radio::Snapshot::new());
+    os::companion::render::loading::render_panel(&mut expected);
+    os::companion::status::render_panel(&mut expected, os::services::radio::Snapshot::new());
     for _ in 0..60 {
         ui.tick(50).unwrap();
         let frame = control.take_frame().unwrap();
@@ -61,31 +60,10 @@ fn no_builtin_before_skin_publication_and_low_battery_is_terminal() {
         );
     }
     let mut loading = vec![0; 480 * 480 * 3];
-    for y in 0..os::companion::render::H {
-        for x in 0..os::companion::render::W {
-            let p = expected[y * os::companion::render::W + x];
-            let at = ((y + (480 - os::companion::render::H) / 2) * 480
-                + x
-                + (480 - os::companion::render::W) / 2)
-                * 3;
-            loading[at..at + 3].copy_from_slice(&[
-                ((p >> 11) * 255 / 31) as u8,
-                (((p >> 5) & 63) * 255 / 63) as u8,
-                ((p & 31) * 255 / 31) as u8,
-            ]);
-        }
-    }
-    for y in 0..os::companion::status::HEIGHT {
-        for x in 0..os::companion::status::WIDTH {
-            let p = expected[os::companion::render::PIXELS + y * os::companion::status::WIDTH + x];
-            let at = (((480 - os::companion::render::H) as i32 / 2
-                + os::companion::status::OFFSET.1
-                + y as i32) as usize
-                * 480
-                + (480 - os::companion::render::W) / 2
-                + os::companion::status::OFFSET.0 as usize
-                + x)
-                * 3;
+    for y in 0..os::companion::render::VIEW_H {
+        for x in 0..os::companion::render::VIEW_W {
+            let p = expected[y * os::companion::render::VIEW_W + x];
+            let at = (y * 480 + x) * 3;
             loading[at..at + 3].copy_from_slice(&[
                 ((p >> 11) * 255 / 31) as u8,
                 (((p >> 5) & 63) * 255 / 63) as u8,

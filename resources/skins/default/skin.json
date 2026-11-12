@@ -2,11 +2,11 @@
   "schema_version": 1,
   "id": "default",
   "name": "鸣潮 · 心月狐团子",
-  "version": "2026-11-11-image26-v1",
+  "version": "2026-11-11-image26-crawl",
   "canvas": [
     352,
     336
   ],
-  "binary_bytes": 681094,
-  "binary_crc32": 2697355137
+  "binary_bytes": 684873,
+  "binary_crc32": 3519429785
 }

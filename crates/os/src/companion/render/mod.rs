@@ -38,6 +38,12 @@ pub use {
 
 /// Canvas pixel count.
 pub const PIXELS: usize = W * H;
+/// The panel viewport leaves room for a full-size character to turn and crawl.
+/// Sprite coordinates and compressed resources remain 352 x 336.
+pub const VIEW_W: usize = 480;
+pub const VIEW_H: usize = 480;
+pub const VIEW_PIXELS: usize = VIEW_W * VIEW_H;
+pub const VIEW_ORIGIN: (usize, usize) = ((VIEW_W - W) / 2, (VIEW_H - H) / 2 + 16);
 /// Transparent palette index in sprite RLE.
 pub const TRANSPARENT: u8 = 255;
 

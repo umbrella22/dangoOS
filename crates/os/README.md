@@ -26,7 +26,7 @@ Core0 服务线程处理同步文件与资源工作。显示和音频继续使�
 
 | 任务入口 | 执行位置 | 行为 |
 | --- | --- | --- |
-| `services/display/plane.rs` | Core0 中断，FROM_CPU_INTR1，优先级 2 | 独占 CO5300；352×336 Home 画布位于面板 (64,88)，按既有分块协议执行 QSPI DMA；Screen/Snapshot/Pool 租约保护在途像素 |
+| `services/display/plane.rs` | Core0 中断，FROM_CPU_INTR1，优先级 2 | 独占 CO5300；480×480 Home 帧在面板原点上传，原尺寸角色与状态图标由同一帧合成；Screen/Snapshot/Pool 租约保护在途像素，行块执行 QSPI DMA |
 | `shell/runtime/mod.rs` | Core1 UI 线程 | 独占 LVGL；传感器与指针按既有顺序处理；50 ms 动画节奏及紧急变更绘制、导航和帧交接 |
 | `apps/runtime.rs` → `apps/lua/task.rs` 或 `apps/ts/device.rs` | Core1 UI 线程 | 执行所选前台 VM；停止状态在 VM 析构后发布，原生桥接清理继续由 UI 任务处理 |
 | `boot::usb_task`、`console` | Core0 服务线程 | USB 栈与 CDC 收发、日志及延迟存储挂载；启动时优先提供控制台 |

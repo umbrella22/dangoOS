@@ -173,11 +173,20 @@ fn link_status_reaches_plane_frames_without_waiting_for_animation_cadence() {
         let frame = control
             .take_frame()
             .expect("link changes publish an urgent plane frame");
-        assert_eq!(
-            &frame.pixels()[..fox::PIXELS],
-            &baseline[..fox::PIXELS],
-            "status must not move, erase or replace any part of the character"
-        );
+        for (index, (&pixel, &previous)) in frame.pixels().iter().zip(&baseline).enumerate() {
+            let x = index % CANVAS_WIDTH;
+            let y = index / CANVAS_WIDTH;
+            let left = status::OFFSET.0 as usize;
+            let top = status::OFFSET.1 as usize;
+            if !(left..left + status::WIDTH).contains(&x)
+                || !(top..top + status::HEIGHT).contains(&y)
+            {
+                assert_eq!(
+                    pixel, previous,
+                    "radio change must leave the character untouched at {x},{y}"
+                );
+            }
+        }
         if status == Snapshot::new() {
             assert_eq!(
                 frame.pixels(),
@@ -204,7 +213,95 @@ fn link_status_reaches_plane_frames_without_waiting_for_animation_cadence() {
 }
 
 #[test]
-fn native_status_band_draws_above_the_character_and_leaves_no_pixels_after_unmount() {
+fn animation_uploads_never_erase_connected_link_icons_between_panel_bursts() {
+    use crate::services::display::{damage::FULL, simulator::MemoryPanel};
+    use crate::services::radio::{BluetoothState, Snapshot, WifiLink, WifiState};
+    use board_s31::pixels::{PixelFormat, PixelSource, RowChunks, MAX_DMA_BYTES};
+    let _guard = test_support::lock();
+    unsafe { rs_lvgl::deinit() };
+    rs_lvgl::init();
+    let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
+    let control = FoxControl::new(Expression::Idle);
+    control.set_plane_mode(true);
+    let connected = Snapshot {
+        wifi: WifiState::Connected,
+        wifi_link: WifiLink::Connected {
+            rssi_dbm: Some(-55),
+        },
+        bluetooth: BluetoothState::Connected,
+        ip: None,
+    };
+    control.set_radio_status(connected);
+    let mut ui = mount(&control, &display);
+    let mut icons = alloc::vec![0; status::PIXELS];
+    status::render(&mut icons, connected);
+    // Start with an old page, but retain already visible connected icons.
+    // The first complete Home frame must also remove every stale page pixel.
+    let mut old_page = alloc::vec![0xa55a; fox::VIEW_PIXELS];
+    let left = status::OFFSET.0 as usize;
+    let top = status::OFFSET.1 as usize;
+    for y in 0..status::HEIGHT {
+        let at = (top + y) * CANVAS_WIDTH + left;
+        old_page[at..at + status::WIDTH]
+            .copy_from_slice(&icons[y * status::WIDTH..(y + 1) * status::WIDTH]);
+    }
+    let size = (CANVAS_WIDTH as u16, CANVAS_HEIGHT as u16);
+    let mut panels: alloc::vec::Vec<_> = [PixelFormat::Rgb565Be, PixelFormat::Bgr888]
+        .into_iter()
+        .map(|format| {
+            let mut panel = MemoryPanel::new(size, format);
+            panel.upload(FULL, FULL, PixelSource::rgb565(&old_page, size));
+            (format, panel)
+        })
+        .collect();
+    let mut first_frame = None;
+    let mut animated = false;
+    for frame_number in 0..32 {
+        ui.tick(FRAME_INTERVAL_MS).unwrap();
+        let frame = control.take_frame().expect("animation publishes a frame");
+        let pixels = frame.pixels();
+        assert_eq!(pixels.len(), fox::VIEW_PIXELS);
+        if let Some(first) = &first_frame {
+            animated |= pixels != first;
+        } else {
+            first_frame = Some(pixels.to_vec());
+        }
+        let source = PixelSource::rgb565(pixels, size);
+        for (format, panel) in &mut panels {
+            // Use the production encoders and even-row chunk plan in each
+            // panel format, checking icons after every addressed window.
+            let mut uploaded = 0;
+            for area in RowChunks::new(FULL, *format, MAX_DMA_BYTES) {
+                uploaded += panel.upload(area, area, source).bytes;
+                let visible = panel.pixels();
+                for y in 0..status::HEIGHT {
+                    for x in 0..status::WIDTH {
+                        assert_eq!(
+                            visible.rgb565_at(left + x, top + y),
+                            icons[y * status::WIDTH + x],
+                            "{format:?}, frame {frame_number}, window {area:?}, icon {x},{y}"
+                        );
+                    }
+                }
+            }
+            assert_eq!(uploaded, fox::VIEW_PIXELS * format.bytes_per_pixel());
+            assert!(panel.matches(source), "complete Home replaces the old page");
+        }
+    }
+    assert!(
+        animated,
+        "the character must actually animate during the check"
+    );
+    ui.unmount();
+    drop(ui);
+    unsafe {
+        display.delete();
+        rs_lvgl::deinit();
+    }
+}
+
+#[test]
+fn native_composed_status_draws_above_the_character_and_clears_after_unmount() {
     use crate::services::radio::{BluetoothState, Snapshot, WifiLink, WifiState};
     use core::cell::RefCell;
     use core::ptr;
@@ -258,7 +355,7 @@ fn native_status_band_draws_above_the_character_and_leaves_no_pixels_after_unmou
         let out = pixels.borrow();
         let left = (480 - CANVAS_WIDTH) / 2 + status::OFFSET.0 as usize;
         let top = ((480 - CANVAS_HEIGHT) as i32 / 2 + status::OFFSET.1) as usize;
-        for y in 0..(480 - CANVAS_HEIGHT) / 2 {
+        for y in 0..fox::VIEW_ORIGIN.1 {
             for x in 0..480 {
                 let expected = if (left..left + status::WIDTH).contains(&x)
                     && (top..top + status::HEIGHT).contains(&y)
@@ -270,7 +367,7 @@ fn native_status_band_draws_above_the_character_and_leaves_no_pixels_after_unmou
                 assert_eq!(out[y * 480 + x], expected, "status at {x},{y}");
             }
         }
-        let character = out[(480 - CANVAS_HEIGHT) / 2 * 480..].to_vec();
+        let character = out[fox::VIEW_ORIGIN.1 * 480..].to_vec();
         if let Some(previous) = &previous_character {
             assert_eq!(
                 &character, previous,
@@ -283,7 +380,7 @@ fn native_status_band_draws_above_the_character_and_leaves_no_pixels_after_unmou
     unsafe { lvgl_sys::lv_refr_now(ptr::null_mut()) };
     assert!(
         pixels.borrow().iter().all(|&c| c == 0),
-        "the outlying child must be cleared with its parent"
+        "unmount must clear both the character and the composed icons"
     );
     drop(ui);
     unsafe {

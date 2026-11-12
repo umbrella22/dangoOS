@@ -1,12 +1,13 @@
 //! Validated, owned skin resources. No file-backed pointer reaches the renderer.
 use alloc::{boxed::Box, rc::Rc, string::String, vec::Vec};
 use miniz_oxide::inflate::{
+    core::{decompress, inflate_flags, DecompressorOxide},
     TINFLStatus,
-    core::{DecompressorOxide, decompress, inflate_flags},
 };
 use {
-    crate::companion::render::FoxPose, crate::companion::render::H, crate::companion::render::Img,
-    crate::companion::render::Pose, crate::companion::render::W, crate::companion::render::data,
+    crate::companion::render::data, crate::companion::render::FoxPose,
+    crate::companion::render::Img, crate::companion::render::Pose, crate::companion::render::H,
+    crate::companion::render::W,
 };
 
 pub const MAGIC: &[u8; 8] = b"MSKIN01\0";
@@ -30,7 +31,7 @@ pub struct RigHand {
 pub struct BalanceRig {
     pub body: Img,
     pub hands: [RigHand; 2],
-    /// v4: effort, dizzy, weary, relief; transparent face patches.
+    /// v4: effort, dizzy, weary, startled; transparent face patches.
     /// v3 retains its release and landing faces in the middle slots.
     pub faces: [Img; 4],
     pub articulation: Option<RigArticulation>,
@@ -843,8 +844,8 @@ mod tests {
     use alloc::vec;
     use {
         crate::companion::render::FoxAnimator, crate::companion::render::FoxInput,
-        crate::companion::render::FoxRenderer, crate::companion::render::PIXELS,
-        crate::companion::render::Scene,
+        crate::companion::render::FoxRenderer, crate::companion::render::Scene,
+        crate::companion::render::PIXELS,
     };
     #[test]
     fn validation_decoder_reuses_state_and_enforces_limits_after_failed_streams() {
@@ -855,11 +856,9 @@ mod tests {
         assert_eq!(decoder.decompress(&compressed, plain.len()).unwrap(), plain);
         let state = (&**decoder.0.as_ref().unwrap()) as *const DecompressorOxide;
         assert!(decoder.decompress(&compressed, plain.len() - 1).is_err());
-        assert!(
-            decoder
-                .decompress(&compressed[..compressed.len() - 1], plain.len())
-                .is_err()
-        );
+        assert!(decoder
+            .decompress(&compressed[..compressed.len() - 1], plain.len())
+            .is_err());
         let mut bad_checksum = compressed.clone();
         *bad_checksum.last_mut().unwrap() ^= 1;
         assert!(decoder.decompress(&bad_checksum, plain.len()).is_err());
@@ -1137,11 +1136,9 @@ mod tests {
                 g[1].resize(12, mouth);
             }
         });
-        assert!(
-            Skin::parse(invalid)
-                .unwrap_err()
-                .contains("simultaneous layer capacity")
-        );
+        assert!(Skin::parse(invalid)
+            .unwrap_err()
+            .contains("simultaneous layer capacity"));
     }
 
     #[test]

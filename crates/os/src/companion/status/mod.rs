@@ -1,5 +1,5 @@
-//! Compact Home link icons in a separate band above the character canvas.
-//! Its pixels share the character's frame lease on both the panel and LVGL.
+//! Compact Home link icons composed into the character's full-panel frame.
+//! The panel and LVGL display the same pixels from one frame lease.
 use crate::services::radio::{BluetoothState, Snapshot, WifiLink, WifiState};
 
 mod icons;
@@ -7,8 +7,8 @@ mod icons;
 pub const WIDTH: usize = 80;
 pub const HEIGHT: usize = 34;
 pub const PIXELS: usize = WIDTH * HEIGHT;
-/// Band origin relative to the character canvas. Leave 14 px between them.
-pub const OFFSET: (i32, i32) = (((super::render::W - WIDTH) / 2) as i32, -48);
+/// Fixed panel position, independent of the character's motion.
+pub const OFFSET: (i32, i32) = (((super::render::VIEW_W - WIDTH) / 2) as i32, 40);
 const MUTED: u16 = 0x7bef;
 const DIM: u16 = 0x2945;
 const CONNECTED: u16 = 0x8f16;
@@ -26,7 +26,15 @@ fn signal_arcs(rssi_dbm: Option<i32>) -> u8 {
     }
 }
 
-fn draw(out: &mut [u16], mask: &[u8], width: usize, x: usize, y: usize, colors: &[u16]) {
+fn draw(
+    out: &mut [u16],
+    stride: usize,
+    mask: &[u8],
+    width: usize,
+    x: usize,
+    y: usize,
+    colors: &[u16],
+) {
     for (index, &sample) in mask.iter().enumerate() {
         let alpha = u16::from(sample & 31);
         if alpha == 0 {
@@ -37,14 +45,29 @@ fn draw(out: &mut [u16], mask: &[u8], width: usize, x: usize, y: usize, colors: 
         let r = (((color >> 11) & 31) * alpha + 8) / 16;
         let g = (((color >> 5) & 63) * alpha + 8) / 16;
         let b = ((color & 31) * alpha + 8) / 16;
-        out[(y + index / width) * WIDTH + x + index % width] = r << 11 | g << 5 | b;
+        out[(y + index / width) * stride + x + index % width] = r << 11 | g << 5 | b;
     }
 }
 
-/// Draw the complete band into its part of the leased frame, without allocating.
+/// Draw a compact band for previews and tooling, without allocating.
 pub fn render(out: &mut [u16], status: Snapshot) {
     assert_eq!(out.len(), PIXELS);
-    out.fill(0);
+    render_with_stride(out, WIDTH, status);
+}
+
+/// Compose the icons before publishing or uploading the full-panel frame.
+/// Only the fixed status rectangle is cleared; no extra band buffer is needed.
+pub fn render_panel(out: &mut [u16], status: Snapshot) {
+    use super::render::{VIEW_PIXELS, VIEW_W};
+    assert_eq!(out.len(), VIEW_PIXELS);
+    let offset = OFFSET.1 as usize * VIEW_W + OFFSET.0 as usize;
+    render_with_stride(&mut out[offset..], VIEW_W, status);
+}
+
+fn render_with_stride(out: &mut [u16], stride: usize, status: Snapshot) {
+    for y in 0..HEIGHT {
+        out[y * stride..y * stride + WIDTH].fill(0);
+    }
 
     let wifi_color = match status.wifi_link {
         WifiLink::Connected { .. } => CONNECTED,
@@ -64,7 +87,7 @@ pub fn render(out: &mut [u16], status: Snapshot) {
     for arc in 0..usize::from(arcs) {
         wifi[arc + 2] = CONNECTED;
     }
-    draw(out, &icons::WIFI, icons::WIFI_WIDTH, 9, 4, &wifi);
+    draw(out, stride, &icons::WIFI, icons::WIFI_WIDTH, 9, 4, &wifi);
 
     let bluetooth_color = match status.bluetooth {
         BluetoothState::Off => DIM,
@@ -75,6 +98,7 @@ pub fn render(out: &mut [u16], status: Snapshot) {
     };
     draw(
         out,
+        stride,
         &icons::BLUETOOTH,
         icons::BLUETOOTH_WIDTH,
         52,
@@ -86,6 +110,45 @@ pub fn render(out: &mut [u16], status: Snapshot) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn panel_composition_matches_the_band_and_preserves_surrounding_pixels() {
+        use crate::companion::render::{VIEW_PIXELS, VIEW_W};
+        let mut panel = alloc::vec![0xffff; VIEW_PIXELS];
+        let mut band = alloc::vec![0; PIXELS];
+        for status in [
+            Snapshot {
+                wifi: WifiState::Connected,
+                wifi_link: WifiLink::Connected {
+                    rssi_dbm: Some(-55),
+                },
+                bluetooth: BluetoothState::Streaming,
+                ip: None,
+            },
+            Snapshot {
+                wifi: WifiState::Reconnecting,
+                bluetooth: BluetoothState::Fault,
+                ..Snapshot::new()
+            },
+            Snapshot::new(),
+        ] {
+            render_panel(&mut panel, status);
+            render(&mut band, status);
+            for (index, &pixel) in panel.iter().enumerate() {
+                let x = index % VIEW_W;
+                let y = index / VIEW_W;
+                let left = OFFSET.0 as usize;
+                let top = OFFSET.1 as usize;
+                let expected =
+                    if (left..left + WIDTH).contains(&x) && (top..top + HEIGHT).contains(&y) {
+                        band[(y - top) * WIDTH + x - left]
+                    } else {
+                        0xffff
+                    };
+                assert_eq!(pixel, expected, "panel pixel {x},{y}: {status:?}");
+            }
+        }
+    }
+
     #[test]
     fn signal_arcs_distinguish_weak_links_and_unavailable_measurements() {
         for (dbm, arcs) in [
