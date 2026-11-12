@@ -320,38 +320,7 @@ impl Session {
                 .begin(vfs, "photo", UploadKind::Photo)
                 .map(|_| "photo-begin".into()),
             ("photo-commit", [rel]) => self.commit_photo(vfs, rel),
-            ("brain-begin", []) => self
-                .begin(vfs, "resident", UploadKind::Brain)
-                .map(|_| "brain-begin".into()),
-            ("brain-commit", [])
-                if self.kind == UploadKind::Brain
-                    && self.staging.as_deref() == Some("resident") =>
-            {
-                match crate::companion::brain::store::read_source(
-                    vfs,
-                    crate::companion::brain::store::STAGED_SOURCE,
-                ) {
-                    Ok(source) => {
-                        self.staging = None;
-                        let _ = vfs.remove_tree(self.staging_root());
-                        out(Effect::Brain(
-                            crate::companion::brain::store::Action::Install(source),
-                        ));
-                        return;
-                    }
-                    Err(e) => Err(e),
-                }
-            }
-            (verb @ ("brain-reload" | "brain-default" | "brain-status"), []) => {
-                use crate::companion::brain::store::Action;
-                let action = match verb {
-                    "brain-reload" => Action::Reload,
-                    "brain-default" => Action::Default,
-                    _ => Action::Status,
-                };
-                out(Effect::Brain(action));
-                return;
-            }
+            ("brain-status", []) => Ok("brain-status active=rust source=firmware".into()),
             ("skin-commit", [id])
                 if self.kind == UploadKind::Skin && self.staging.as_deref() == Some(id) =>
             {

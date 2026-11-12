@@ -1,6 +1,6 @@
 # EmbedTS 接入与产物边界
 
-团子 OS 默认选择 `lua-engine`。`ts-engine` feature 通过依赖别名接入外部 `embedts-engine`，与 Lua 互斥。OS 的 Rust 适配层提供存储、原生 LVGL、显示、硬件、调度和常驻 brain；引擎本体、SDK 与 TS 源码在 EmbedTypescript 仓库。
+团子 OS 默认选择前台应用引擎 `lua-engine`。`ts-engine` feature 通过依赖别名接入外部 `embedts-engine`，与 Lua 互斥。OS 的 Rust 适配层提供存储、原生 LVGL、显示、硬件和应用调度；引擎本体、SDK 与 TS 源码在 EmbedTypescript 仓库。
 
 ## 交付路径
 
@@ -22,7 +22,7 @@ flowchart LR
 
 ## 固定输入
 
-`resources/embedts/manifest.json` 记录构建器版本、TSRS 提交、引擎 ID、宿主 ABI、每个源码摘要和产物摘要。`brain/default.etb.hex` 提供默认常驻行为，`selftest.etb` 用于设备引擎自检，`fixtures/` 供 OS 宿主集成测试使用。
+`resources/embedts/manifest.json` 记录构建器版本、TSRS 提交、引擎 ID、宿主 ABI、每个源码摘要和产物摘要。`selftest.etb` 用于设备引擎自检，`fixtures/` 供 OS 宿主集成测试使用。
 
 在 EmbedTypescript 仓库运行：
 
@@ -30,13 +30,15 @@ flowchart LR
 cargo run -p embedts-builder --locked --example export-dangoos -- target/dangoos-inputs
 ```
 
-审核后整体替换 OS 的 `resources/embedts`。OS 运行 `python3 scripts/check/compiled_apps.py` 验证清单、容器、摘要和源码边界，再执行两种引擎选择的测试。TS 测试使用当前引擎解析包，防止构建器和运行时漂移。引擎配方变化时重新导出；不对旧字节码修改魔数后复用。
+审核后将应用、自检和宿主夹具连同其清单条目更新到 OS 的 `resources/embedts`；导出中的 brain 产物不属于 OS 输入。OS 运行 `python3 scripts/check/compiled_apps.py` 验证清单、容器、摘要和源码边界，再执行两种引擎选择的测试。TS 测试使用当前引擎解析包，防止构建器和运行时漂移。引擎配方变化时重新导出；不对旧字节码修改魔数后复用。
 
 ## 文件与状态
 
 应用入口为 `.etb`，魔数为 `EMBEDTS\0`。包头校验格式、长度、引擎指纹、宿主 ABI 与 SHA-256。扩展名决定注册表路由，兼容性和完整性由引擎检查。QuickJS 字节码要求可信构建来源。
 
-brain 字符串接口使用 `etb1:` 加小写十六进制，可写路径使用 `.etb.hex`，Lua 路径独立。旧 `.rsts` 产物需要重新构建和安装；迁移不删除设备旧文件，也不将旧持久选择作为新格式加载。引擎或候选初始化失败仍按现有控制器回退到原生行为。
+团子行为只由 Rust 运行时执行，随固件更新。Lua/TS 的常驻大脑、`etb1:` 行为信封及脚本上传/重载/默认选择入口已移除。`brain-status` 返回 `active=rust source=firmware`，与前台引擎是否运行无关。旧设备上的行为脚本不再读取，固件不自动删除这些文件。
+
+旧 `.rsts` 应用需要重新构建和安装。前台应用的 `.etb` 路由、引擎自检、worker 和原生 UI 接口继续使用原契约。
 
 ## 验证与发布
 
@@ -44,7 +46,9 @@ brain 字符串接口使用 `etb1:` 加小写十六进制，可写路径使用 `
 
 引擎来源检查同时核对 workspace 的完整 Git revision、两个消费方的继承关系及锁文件。更新引擎时同步更新依赖与预编译输入，并分别验证 GitHub 源码、固件、应用与设备。版本发布是独立步骤。
 
-## GitHub 依赖与设备验证 · 2026-11-04
+## 历史验证 · 2026-11-04
+
+以下记录对应迁移到 Rust 行为之前的固件与当时的 A/B 布局；脚本大脑事务及其健康字段不代表当前接口。
 
 EmbedTypescript 已发布提交 [`98eaf67207874467eaffcc725780ed319f65a5ee`](https://github.com/umbrella22/EmbedTypescript/commit/98eaf67207874467eaffcc725780ed319f65a5ee)，该提交的[独立 CI](https://github.com/umbrella22/EmbedTypescript/actions/runs/41843577282)通过，覆盖 82 个 Rust 测试、SDK 类型与子集检查、7 个应用构建和 OS 固定输入导出。
 

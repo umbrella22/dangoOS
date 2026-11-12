@@ -14,13 +14,24 @@ pub fn render(out: &mut [u16]) {
 }
 
 pub fn render_panel(out: &mut [u16]) {
+    render_panel_encoded::<false>(out);
+}
+
+/// The placeholder in panel-ready RGB565 big-endian storage.
+pub fn render_panel_rgb565be(out: &mut [u16]) {
+    render_panel_encoded::<true>(out);
+}
+
+fn render_panel_encoded<const BIG_ENDIAN: bool>(out: &mut [u16]) {
     use super::{VIEW_ORIGIN, VIEW_PIXELS, VIEW_W, W};
     assert_eq!(out.len(), VIEW_PIXELS);
     out.fill(0);
     let mut at = 0;
     for pair in data::BLOB.chunks_exact(2) {
         let start = (at / W + VIEW_ORIGIN.1) * VIEW_W + at % W + VIEW_ORIGIN.0;
-        out[start..start + pair[0] as usize].fill(data::PALETTE[pair[1] as usize]);
+        out[start..start + pair[0] as usize].fill(super::encode_rgb565::<BIG_ENDIAN>(
+            data::PALETTE[pair[1] as usize],
+        ));
         at += pair[0] as usize;
     }
     assert_eq!(at, PIXELS);
@@ -48,5 +59,15 @@ mod tests {
             }
         }
         assert_eq!(width, 0);
+    }
+
+    #[test]
+    fn panel_wire_encoding_preserves_the_placeholder_and_background() {
+        use crate::companion::render::VIEW_PIXELS;
+        let mut native = alloc::vec![0x1234; VIEW_PIXELS];
+        let mut wire = alloc::vec![0xabcd; VIEW_PIXELS];
+        render_panel(&mut native);
+        render_panel_rgb565be(&mut wire);
+        assert!(native.iter().zip(wire).all(|(&n, w)| n == u16::from_be(w)));
     }
 }

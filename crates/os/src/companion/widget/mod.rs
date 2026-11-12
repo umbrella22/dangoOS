@@ -14,7 +14,7 @@
 //! * `apply_props` accepts the unit properties without consuming animation time;
 //!   live state continues to come from the shared control.
 //! * `tick` advances the [`FoxAnimator`] on every `Ui::tick` and renders on
-//!   a 50 ms cadence, or on the next tick after an urgent change, into a pool
+//!   a 33 ms cadence, or on the next tick after an urgent change, into a pool
 //!   [`WriteLease`](crate::services::display::canvas_pool::WriteLease) and publishes it.
 //!   - LVGL path (host previews and tests): the widget takes the published
 //!     frame, points the native canvas at it and invalidates it.
@@ -51,13 +51,13 @@ pub const CANVAS_HEIGHT: usize = fox::VIEW_H;
 /// Each slot owns the complete frame until LVGL or the panel finishes reading it.
 pub const FRAME_PIXELS: usize = fox::VIEW_PIXELS;
 
-/// Minimum interval between rendered frames: 20 fps.
+/// Minimum interval between rendered frames: approximately 30 fps.
 ///
 /// The animator still advances on every `Ui::tick`; this only bounds the
 /// renderer and the panel upload. Urgent changes (a new expression, the rise
 /// of a tap pulse) render on the next tick, so the cadence never delays a
 /// touch response.
-pub const FRAME_INTERVAL_MS: u32 = 50;
+pub const FRAME_INTERVAL_MS: u32 = 33;
 
 /// How far the pose may scale the fox above its normal size. The warp keeps
 /// the bottom edge fixed, so larger values push the ears out of the canvas.
@@ -125,13 +125,12 @@ fn finite_or(value: f32, fallback: f32) -> f32 {
 /// task is single-threaded, so `Cell` is enough.
 pub struct FoxControl {
     expression: Cell<Expression>,
-    play_pose: Cell<Option<FoxPose>>,
     skin: core::cell::RefCell<Rc<fox::skin::Skin>>,
     loading: Cell<bool>,
     radio_status: Cell<Option<crate::services::radio::Snapshot>>,
     visual: Cell<FoxVisual>,
     balance: Cell<BalanceVisual>,
-    /// Render on the next tick instead of waiting for the 50 ms cadence.
+    /// Render on the next tick instead of waiting for the normal cadence.
     urgent: Cell<bool>,
     #[cfg(test)]
     creates: Cell<u32>,
@@ -171,7 +170,6 @@ impl FoxControl {
     pub fn new(expression: Expression) -> Rc<Self> {
         Rc::new(Self {
             expression: Cell::new(expression),
-            play_pose: Cell::new(None),
             skin: core::cell::RefCell::new(fox::skin::Skin::builtin()),
             loading: Cell::new(false),
             radio_status: Cell::new(None),
@@ -264,25 +262,14 @@ impl FoxControl {
         self.expression.get()
     }
 
-    /// Timed Lua animation selection; terminal runtime clears it before Sleep.
-    pub fn set_play_pose(&self, pose: Option<FoxPose>) {
-        if self.play_pose.replace(pose) != pose {
-            self.mark_urgent();
-        }
-    }
-    pub fn play_pose(&self) -> Option<FoxPose> {
-        self.play_pose.get()
-    }
     fn selected_pose(&self) -> FoxPose {
-        self.play_pose
-            .get()
-            .unwrap_or_else(|| FoxPose::from(self.expression()))
+        FoxPose::from(self.expression())
     }
 
     /// Apply a new pose (squash, gaze, pulse).
     ///
     /// Only the rise of a tap pulse is urgent: that is the frame the finger's
-    /// response lands in. The decay, eased gaze and squash ride the 50 ms
+    /// response lands in. The decay, eased gaze and squash ride the normal
     /// cadence; marking every decay step urgent once rendered a frame every
     /// 5 ms for 280 ms and pushed touch P95 from 30 ms to 46 ms on device.
     pub fn set_visual(&self, visual: FoxVisual) {
@@ -316,7 +303,7 @@ impl FoxControl {
         self.entrance_active.get()
     }
 
-    /// Render on the next tick, ignoring the 50 ms cadence.
+    /// Render on the next tick, ignoring the normal cadence.
     pub fn mark_urgent(&self) {
         self.urgent.set(true);
     }
@@ -383,7 +370,7 @@ impl FoxWidget {
             last_expression: None,
             since_frame_ms: 0,
             canvas: None,
-            // Leave half the 50 ms frame interval for upload and scheduling.
+            // Leave part of the 33 ms frame interval for upload and scheduling.
             #[cfg(target_os = "none")]
             render_budget: crate::platform::runtime::frequency::device::Budget::new(25_000),
         }

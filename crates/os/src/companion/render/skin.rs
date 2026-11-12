@@ -592,65 +592,53 @@ mod balance_tests {
             render::{FoxAnimator, FoxInput},
         };
         use crate::{Expression, FoxControl, Runtime};
-        for use_brain in [false, true] {
-            let control = FoxControl::new(Expression::Idle);
-            let mut runtime = Runtime::new(0, Rc::clone(&control));
-            if use_brain {
-                runtime
-                    .enable_brain(
-                        crate::companion::brain::DEFAULT_SOURCE,
-                        0,
-                        &app_host::GLOBAL_ALLOCATOR,
-                        None,
-                    )
-                    .unwrap();
-            }
-            let mut animator = FoxAnimator::with_skin(FoxPose::Idle, reference());
-            let mut recovered_while_affect_was_still_dizzy = false;
-            for at in (20u64..=4800).step_by(20) {
-                let moving = at.saturating_sub(500).min(900);
-                let angle = (moving as f32 * 0.6).to_radians();
-                for kind in [
-                    EventKind::Accel {
-                        ax_mg: (angle.sin() * 1000.0) as i16,
-                        ay_mg: (angle.cos() * 1000.0) as i16,
-                        az_mg: 0,
-                    },
-                    EventKind::Gyro {
-                        gx_dps: 0,
-                        gy_dps: 0,
-                        gz_dps: if at > 500 && moving < 900 { 600 } else { 0 },
-                    },
-                ] {
-                    runtime.on_sensor(SensorEvent {
-                        at_ms: at,
-                        source: EventSource::Imu,
-                        kind,
-                    });
-                }
-                runtime.tick(at);
-                animator.set_pose(control.expression().into());
-                animator.advance(20);
-                let balance = control.balance();
-                let scene = animator.scene(FoxInput {
-                    balance,
-                    ..FoxInput::REST
+        let control = FoxControl::new(Expression::Idle);
+        let mut runtime = Runtime::new(0, Rc::clone(&control));
+        let mut animator = FoxAnimator::with_skin(FoxPose::Idle, reference());
+        let mut recovered_while_affect_was_still_dizzy = false;
+        for at in (20u64..=4800).step_by(20) {
+            let moving = at.saturating_sub(500).min(900);
+            let angle = (moving as f32 * 0.6).to_radians();
+            for kind in [
+                EventKind::Accel {
+                    ax_mg: (angle.sin() * 1000.0) as i16,
+                    ay_mg: (angle.cos() * 1000.0) as i16,
+                    az_mg: 0,
+                },
+                EventKind::Gyro {
+                    gx_dps: 0,
+                    gy_dps: 0,
+                    gz_dps: if at > 500 && moving < 900 { 600 } else { 0 },
+                },
+            ] {
+                runtime.on_sensor(SensorEvent {
+                    at_ms: at,
+                    source: EventSource::Imu,
+                    kind,
                 });
-                if at > 3200 {
-                    assert_eq!(balance.face, BalanceFace::Neutral);
-                    assert_eq!(scene.pose, FoxPose::Idle);
-                    assert!(
-                        scene.rig.is_some(),
-                        "same layered body through recovery and the Idle handoff"
-                    );
-                    if control.expression() == Expression::Confused {
-                        recovered_while_affect_was_still_dizzy = true;
-                        assert!(balance.rotation_reaction);
-                    }
+            }
+            runtime.tick(at);
+            animator.set_pose(control.expression().into());
+            animator.advance(20);
+            let balance = control.balance();
+            let scene = animator.scene(FoxInput {
+                balance,
+                ..FoxInput::REST
+            });
+            if at > 3200 {
+                assert_eq!(balance.face, BalanceFace::Neutral);
+                assert_eq!(scene.pose, FoxPose::Idle);
+                assert!(
+                    scene.rig.is_some(),
+                    "same layered body through recovery and the Idle handoff"
+                );
+                if control.expression() == Expression::Confused {
+                    recovered_while_affect_was_still_dizzy = true;
+                    assert!(balance.rotation_reaction);
                 }
             }
-            assert!(recovered_while_affect_was_still_dizzy);
         }
+        assert!(recovered_while_affect_was_still_dizzy);
         let unrelated = FoxAnimator::with_skin(FoxPose::Confused, reference()).scene(FoxInput {
             balance: BalanceVisual {
                 active: true,

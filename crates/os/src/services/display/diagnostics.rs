@@ -187,8 +187,15 @@ mod device {
             }
             Command::Status => {
                 let t = critical_section::with(|cs| TE.borrow(cs).get());
-                format!("@ok display-test rgb888={} low_latency={} te_count={} te_min={} te_mean={} te_max={} timeouts={}",
-                    cfg!(feature="display-rgb888") as u8, cfg!(feature="display-low-latency") as u8, t[0],t[1],t[2],t[3],t[4])
+                // Read the live divider after USB is available; early startup
+                // logs can precede the console connection.
+                let clock = esp_hal::peripherals::SPI2::regs().clock().read();
+                format!("@ok display-test rgb888={} low_latency={} te_count={} te_min={} te_mean={} te_max={} timeouts={} spi_pre={} spi_n={} spi_h={} spi_eq={}",
+                    cfg!(feature="display-rgb888") as u8, cfg!(feature="display-low-latency") as u8, t[0],t[1],t[2],t[3],t[4],
+                    u32::from(clock.clkdiv_pre().bits()) + 1,
+                    u32::from(clock.clkcnt_n().bits()) + 1,
+                    u32::from(clock.clkcnt_h().bits()) + 1,
+                    clock.clk_equ_sysclk().bit_is_set() as u8)
             }
             Command::Swipe { from, to, ms } => {
                 use crate::services::input::touch::{inject_test, TouchEvent};

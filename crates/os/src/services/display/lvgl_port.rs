@@ -4,8 +4,9 @@
 //! uploaded by `plane_task` straight from the canvas pool. The launcher and
 //! the native apps are ordinary LVGL widget trees, rendered here:
 //!
-//! - LVGL renders in PARTIAL mode into a small internal-RAM draw buffer
-//!   ([`DRAW_ROWS`] rows), which keeps the rasterizer on fast memory;
+//! - LVGL renders in PARTIAL mode into a [`DRAW_ROWS`]-row draw buffer. The
+//!   default dual-core RGB565 buffer uses PSRAM with full-frame capacity;
+//!   RGB888 and single-core builds retain smaller internal-RAM buffers;
 //! - the flush callback copies each band into a 480x480 PSRAM shadow frame
 //!   and records bounded, separate damage regions;
 //! - the UI task then hands the shadow to the plane as a [`ScreenLease`]
@@ -38,9 +39,13 @@ use {
     crate::services::display::geometry::WIDTH,
 };
 
-/// Halving the band saves 22.5 KiB of internal RAM for the Core1 stack budget.
-/// LVGL still renders the same pixels into its full shadow.
-#[cfg(feature = "dual-core-ui")]
+/// Dual-core RGB565 uses a 450 KiB PSRAM buffer in PARTIAL mode to avoid
+/// repeating object/task preparation for each small band. RGB888 retains a
+/// 33.75 KiB internal band; single-core retains 48 internal rows. The persistent
+/// shadows use PSRAM, independently of this render buffer.
+#[cfg(all(feature = "dual-core-ui", not(feature = "display-rgb888")))]
+const DRAW_ROWS: usize = 480;
+#[cfg(all(feature = "dual-core-ui", feature = "display-rgb888"))]
 const DRAW_ROWS: usize = 24;
 #[cfg(not(feature = "dual-core-ui"))]
 const DRAW_ROWS: usize = 48;
@@ -55,6 +60,26 @@ static SNAPSHOT: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 static SNAPSHOT_BUSY: AtomicBool = AtomicBool::new(false);
 /// Panel area flushed since the last [`DisplayPort::take_frame`].
 static DAMAGE: Mutex<Cell<Damage>> = Mutex::new(Cell::new(Damage::new()));
+
+#[cfg(all(feature = "display-metrics", target_os = "none"))]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct FlushStats {
+    pub us: u32,
+    pub calls: u32,
+    pub pixels: u32,
+}
+#[cfg(all(feature = "display-metrics", target_os = "none"))]
+static FLUSH_STATS: Mutex<Cell<FlushStats>> = Mutex::new(Cell::new(FlushStats {
+    us: 0,
+    calls: 0,
+    pixels: 0,
+}));
+
+/// UI-thread diagnostics only. Flush remains synchronous into the same shadow.
+#[cfg(all(feature = "display-metrics", target_os = "none"))]
+pub(crate) fn take_flush_stats() -> FlushStats {
+    critical_section::with(|cs| FLUSH_STATS.borrow(cs).take())
+}
 
 static POINTER_X: AtomicI32 = AtomicI32::new(0);
 static POINTER_Y: AtomicI32 = AtomicI32::new(0);
@@ -228,7 +253,13 @@ impl DisplayPort {
         POINTER_PENDING.store(false, Ordering::Relaxed);
         let format = LVGL_FORMAT;
         let stride = unsafe { sys::lv_draw_buf_width_to_stride(WIDTH as u32, format) } as usize;
-        let draw = PixelMemory::new(stride * DRAW_ROWS, false);
+        let draw = PixelMemory::new(
+            stride * DRAW_ROWS,
+            cfg!(all(
+                feature = "dual-core-ui",
+                not(feature = "display-rgb888")
+            )),
+        );
         let shadow = PixelMemory::new(FRAME_BYTES, true);
         SHADOW.store(shadow.as_ptr().cast(), Ordering::Release);
         let snapshot = PixelMemory::new(FRAME_BYTES, true);
@@ -247,6 +278,8 @@ impl DisplayPort {
             );
             sys::lv_display_set_flush_cb(display.as_ptr(), Some(flush));
             sys::lv_timer_set_period(sys::lv_display_get_refr_timer(display.as_ptr()), 16);
+            #[cfg(all(feature = "display-metrics", target_os = "none"))]
+            super::refresh_metrics::register(display.as_ptr());
         }
 
         let indev = NonNull::new(unsafe { sys::lv_indev_create() })
@@ -470,6 +503,10 @@ unsafe extern "C" fn flush(
     area: *const sys::lv_area_t,
     pixels: *mut u8,
 ) {
+    #[cfg(all(feature = "display-metrics", target_os = "none"))]
+    let started = crate::platform::runtime::time::now_us();
+    #[cfg(all(feature = "display-metrics", target_os = "none"))]
+    let mut flushed_pixels = 0;
     let shadow = SHADOW.load(Ordering::Acquire);
     if !shadow.is_null() && !area.is_null() && !pixels.is_null() {
         let area = unsafe { *area };
@@ -507,9 +544,22 @@ unsafe extern "C" fn flush(
                 y1: y2 as u16,
             };
             add_damage(rect);
+            #[cfg(all(feature = "display-metrics", target_os = "none"))]
+            {
+                flushed_pixels = rect.width() as u32 * rect.height() as u32;
+            }
         }
     }
     unsafe { sys::lv_display_flush_ready(display) };
+    #[cfg(all(feature = "display-metrics", target_os = "none"))]
+    critical_section::with(|cs| {
+        let cell = FLUSH_STATS.borrow(cs);
+        let mut stats = cell.get();
+        stats.us += crate::platform::runtime::time::now_us().saturating_sub(started) as u32;
+        stats.calls += 1;
+        stats.pixels += flushed_pixels;
+        cell.set(stats);
+    });
 }
 
 unsafe extern "C" fn read_pointer(_indev: *mut sys::lv_indev_t, data: *mut sys::lv_indev_data_t) {
@@ -561,6 +611,131 @@ mod tests {
 
     fn color(red: u8, green: u8, blue: u8) -> sys::lv_color_t {
         sys::lv_color_t { red, green, blue }
+    }
+
+    #[test]
+    fn partial_buffer_capacity_and_reshaped_edge_updates_preserve_every_pixel() {
+        native(|port| {
+            let display = unsafe { sys::lv_display_get_default() };
+            assert_eq!(
+                unsafe { sys::lv_display_get_render_mode(display) },
+                sys::lv_display_render_mode_t_LV_DISPLAY_RENDER_MODE_PARTIAL
+            );
+            let buffer = unsafe { &*sys::lv_display_get_buf_active(display) };
+            let rows = if !cfg!(feature = "dual-core-ui") {
+                48
+            } else if cfg!(feature = "display-rgb888") {
+                24
+            } else {
+                480
+            };
+            let capacity = WIDTH * rows * LVGL_STORAGE.bytes_per_pixel();
+            assert_eq!(buffer.data_size as usize, capacity);
+            assert_eq!(
+                unsafe { sys::lv_display_get_color_format(display) },
+                LVGL_FORMAT
+            );
+            println!(
+                "partial-buffer dual_core={} rgb888={} bytes={} rows={} mode=PARTIAL",
+                cfg!(feature = "dual-core-ui"),
+                cfg!(feature = "display-rgb888"),
+                buffer.data_size,
+                rows
+            );
+
+            let screen = unsafe { sys::lv_screen_active() };
+            unsafe {
+                sys::lv_obj_remove_style_all(screen);
+                sys::lv_obj_remove_flag(screen, sys::lv_obj_flag_t_LV_OBJ_FLAG_SCROLLABLE);
+                sys::lv_obj_set_style_bg_color(screen, color(0, 0, 0), 0);
+                sys::lv_obj_set_style_bg_opa(screen, 255, 0);
+            }
+            // Existing objects avoid creation invalidating their initial
+            // geometry. Each later color change invalidates only this shape.
+            let rects = [(37, 53, 1, 9), (93, 141, 13, 1), (479, 479, 1, 1)];
+            let objects = rects.map(|(x, y, w, h)| unsafe {
+                let obj = sys::lv_obj_create(screen);
+                sys::lv_obj_remove_style_all(obj);
+                sys::lv_obj_set_pos(obj, x, y);
+                sys::lv_obj_set_size(obj, w, h);
+                sys::lv_obj_set_style_bg_color(obj, color(0, 0, 0), 0);
+                sys::lv_obj_set_style_bg_opa(obj, 255, 0);
+                obj
+            });
+            let mut expected = [[0, 0, 0]; 3];
+            let mut panel = MemoryPanel::new((480, 480), PANEL_FORMAT);
+            let mut present = |port: &mut DisplayPort, background, expected: &[[u8; 3]; 3]| {
+                port.render_now();
+                let (lease, damage) = port.take_frame().unwrap();
+                for rect in damage.regions() {
+                    panel.upload(*rect, *rect, lease.pixels());
+                }
+                let source = lease.pixels();
+                for y in 0..HEIGHT {
+                    for x in 0..WIDTH {
+                        let mut pixel = background;
+                        for (i, &(left, top, w, h)) in rects.iter().enumerate() {
+                            if x >= left as usize
+                                && x < (left + w) as usize
+                                && y >= top as usize
+                                && y < (top + h) as usize
+                            {
+                                pixel = expected[i];
+                            }
+                        }
+                        assert_eq!(source.rgb888_at(x, y), pixel, "shadow ({x},{y})");
+                        assert_eq!(panel.pixels().rgb888_at(x, y), pixel, "panel ({x},{y})");
+                    }
+                }
+                assert!(port.is_busy());
+                assert!(port.take_frame().is_none());
+                let regions = damage.regions().len();
+                drop(lease);
+                assert!(!port.is_busy());
+                regions
+            };
+            present(port, [0, 0, 0], &expected);
+            for (i, pixel) in [[255, 0, 0], [0, 255, 0], [0, 0, 255]]
+                .into_iter()
+                .enumerate()
+            {
+                expected[i] = pixel;
+                unsafe {
+                    sys::lv_obj_set_style_bg_color(
+                        objects[i],
+                        color(pixel[0], pixel[1], pixel[2]),
+                        0,
+                    );
+                }
+                present(port, [0, 0, 0], &expected);
+                let buffer = unsafe { &*sys::lv_display_get_buf_active(display) };
+                println!(
+                    "partial-edge case={} w={} h={} stride={} bytes={}",
+                    i,
+                    buffer.header.w(),
+                    buffer.header.h(),
+                    buffer.header.stride(),
+                    buffer.data_size
+                );
+            }
+            unsafe { sys::lv_obj_set_style_bg_color(screen, color(255, 255, 255), 0) };
+            present(port, [255, 255, 255], &expected);
+            expected[0] = [255, 0, 255];
+            expected[2] = [0, 255, 255];
+            for i in [0, 2] {
+                let pixel = expected[i];
+                unsafe {
+                    sys::lv_obj_set_style_bg_color(
+                        objects[i],
+                        color(pixel[0], pixel[1], pixel[2]),
+                        0,
+                    );
+                }
+            }
+            assert!(present(port, [255, 255, 255], &expected) >= 2);
+            port.render_now();
+            assert!(port.take_frame().is_none());
+        });
     }
 
     #[test]

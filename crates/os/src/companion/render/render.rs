@@ -13,6 +13,7 @@ use alloc::rc::Rc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use super::encode_rgb565;
 use super::scene::ArticulatedLayer;
 use crate::companion::render::math::{cos, round, sin, PI};
 use {
@@ -97,10 +98,10 @@ fn sample_row(
 
 #[cfg(test)]
 fn warp(indices: &[u8], palette: &[u16], transform: Warp, out: &mut [u16]) {
-    warp_to(indices, palette, transform, out, (W, H), (0, 0));
+    warp_to::<false>(indices, palette, transform, out, (W, H), (0, 0));
 }
 
-fn warp_to(
+fn warp_to<const BIG_ENDIAN: bool>(
     indices: &[u8],
     palette: &[u16],
     transform: Warp,
@@ -109,17 +110,17 @@ fn warp_to(
     origin: (i32, i32),
 ) {
     if transform.angle_deg != 0.0 || transform.fit != 1.0 {
-        warp_rotated(indices, palette, transform, out, size, origin);
+        warp_rotated::<BIG_ENDIAN>(indices, palette, transform, out, size, origin);
         return;
     }
     let (width, height) = size;
     let (ox, oy) = (origin.0 as usize, origin.1 as usize);
-    out[..width * height].fill(0);
     if transform == Warp::IDENTITY {
+        out[..width * height].fill(0);
         for y in 0..H {
             let row = &mut out[(oy + y) * width + ox..(oy + y) * width + ox + W];
             for (o, &v) in row.iter_mut().zip(&indices[y * W..(y + 1) * W]) {
-                *o = palette.get(v as usize).copied().unwrap_or(0);
+                *o = encode_rgb565::<BIG_ENDIAN>(palette.get(v as usize).copied().unwrap_or(0));
             }
         }
         return;
@@ -138,9 +139,19 @@ fn warp_to(
     for (x, slot) in xlut.iter_mut().enumerate() {
         *slot = sample(ax + (x as f32 - origin.0 as f32 - transform.dx as f32 - ax) / transform.sx);
     }
+    // Outside this interval both horizontal taps are out of the source.
+    // Clear those black margins directly instead of filtering them in every
+    // source and destination row. Keep the original sample quantization.
+    let intersects_source = |sx: &Sample| i32::from(sx.left) >= -1 && i32::from(sx.left) < W as i32;
+    let Some(x0) = xlut.iter().position(intersects_source) else {
+        out[..width * height].fill(0);
+        return;
+    };
+    let x1 = xlut.iter().rposition(intersects_source).unwrap() + 1;
+    let xlut = &xlut[x0..x1];
     let mut row_a = [0; super::VIEW_W];
     let mut row_b = [0; super::VIEW_W];
-    let (mut a, mut b) = (&mut row_a[..width], &mut row_b[..width]);
+    let (mut a, mut b) = (&mut row_a[..xlut.len()], &mut row_b[..xlut.len()]);
     let (mut a_blank, mut b_blank) = (true, true);
     let mut previous = None;
     for y in 0..height {
@@ -169,20 +180,23 @@ fn warp_to(
             row.fill(0);
             continue;
         }
+        row[..x0].fill(0);
+        row[x1..].fill(0);
+        let row = &mut row[x0..x1];
         for ((o, &top), &bottom) in row.iter_mut().zip(a.iter()).zip(b.iter()) {
             let rgb = if top == bottom {
                 top
             } else {
                 blend(top, bottom, u32::from(sy.weight))
             };
-            *o = (rgb | rgb >> 16) as u16;
+            *o = encode_rgb565::<BIG_ENDIAN>((rgb | rgb >> 16) as u16);
         }
     }
 }
 
 /// Inverse affine sampling. The existing row-cache path remains available for
 /// ordinary breathing; rotation adds no canvas and no per-frame allocation.
-fn warp_rotated(
+fn warp_rotated<const BIG_ENDIAN: bool>(
     indices: &[u8],
     palette: &[u16],
     t: Warp,
@@ -254,7 +268,7 @@ fn warp_rotated(
             let top = blend(color(x, y), color(x + 1, y), u32::from(px.weight));
             let bottom = blend(color(x, y + 1), color(x + 1, y + 1), u32::from(px.weight));
             let rgb = blend(top, bottom, u32::from(py.weight));
-            *o = (rgb | rgb >> 16) as u16;
+            *o = encode_rgb565::<BIG_ENDIAN>((rgb | rgb >> 16) as u16);
             u += du;
             v += dv;
         }
@@ -513,12 +527,12 @@ impl FoxRenderer {
 
     /// Draw `scene` into `out` (`W * H` RGB565 pixels).
     pub fn render(&mut self, scene: &Scene, out: &mut [u16]) {
-        self.render_target(scene, out, (W, H), (0, 0));
+        self.render_target::<false>(scene, out, (W, H), (0, 0));
     }
 
     /// Draw at the original asset size into the full panel, without fitting.
     pub fn render_panel(&mut self, scene: &Scene, out: &mut [u16]) {
-        self.render_target(
+        self.render_target::<false>(
             scene,
             out,
             (super::VIEW_W, super::VIEW_H),
@@ -526,7 +540,19 @@ impl FoxRenderer {
         );
     }
 
-    fn render_target(
+    /// Render the same colors with each storage word in big-endian byte order.
+    /// The caller must publish the canvas with that encoding, never as native
+    /// LVGL pixels. Encoding is folded into the final pixel store.
+    pub fn render_panel_rgb565be(&mut self, scene: &Scene, out: &mut [u16]) {
+        self.render_target::<true>(
+            scene,
+            out,
+            (super::VIEW_W, super::VIEW_H),
+            (super::VIEW_ORIGIN.0 as i32, super::VIEW_ORIGIN.1 as i32),
+        );
+    }
+
+    fn render_target<const BIG_ENDIAN: bool>(
         &mut self,
         scene: &Scene,
         out: &mut [u16],
@@ -546,7 +572,7 @@ impl FoxRenderer {
         };
 
         let warp = scene.warp;
-        warp_to(&self.idx, pal, warp, out, size, origin);
+        warp_to::<BIG_ENDIAN>(&self.idx, pal, warp, out, size, origin);
 
         for l in scene.over.iter() {
             let img = &l.img;
@@ -580,7 +606,8 @@ impl FoxRenderer {
                     }
                     let v = self.scratch[sy as usize * img.w as usize + sx as usize];
                     if v != TRANSPARENT {
-                        out[y as usize * width + x as usize] = lookup(v);
+                        out[y as usize * width + x as usize] =
+                            encode_rgb565::<BIG_ENDIAN>(lookup(v));
                     }
                 }
             }
@@ -597,6 +624,125 @@ impl Default for FoxRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipped_breathing_filter_matches_full_width_bilinear_pixels_and_preserves_the_tail() {
+        fn check<const BIG_ENDIAN: bool>() {
+            let palette: Vec<u16> = (0..32).map(|v| (v * 2137) as u16).collect();
+            let indices: Vec<u8> = (0..PIXELS)
+                .map(|i| {
+                    if i % 17 == 0 {
+                        TRANSPARENT
+                    } else {
+                        (i % 32) as u8
+                    }
+                })
+                .collect();
+            let source = |x: i32, y: i32| {
+                if !(0..W as i32).contains(&x) || !(0..H as i32).contains(&y) {
+                    return 0;
+                }
+                let index = indices[y as usize * W + x as usize];
+                expanded(palette.get(index as usize).copied().unwrap_or(0))
+            };
+            let mix = |a, b, weight| if a == b { a } else { blend(a, b, weight) };
+            for size in [(W, H), (super::super::VIEW_W, super::super::VIEW_H)] {
+                let origin = if size == (W, H) { (0, 0) } else { (64, 88) };
+                for (sx, sy) in [(0.88, 1.05), (1.12, 0.92), (-0.9, 1.15), (0.7, 0.8)] {
+                    for (dx, dy) in [(-500, 0), (-80, -140), (0, 0), (120, 90), (500, 400)] {
+                        let transform = Warp {
+                            sx,
+                            sy,
+                            dx,
+                            dy,
+                            ..Warp::IDENTITY
+                        };
+                        let mut actual = vec![0x1234; size.0 * size.1 + 16];
+                        warp_to::<BIG_ENDIAN>(
+                            &indices,
+                            &palette,
+                            transform,
+                            &mut actual,
+                            size,
+                            origin,
+                        );
+                        let ax = W as f32 / 2.0;
+                        let ay = (H - 1) as f32;
+                        // Independent scalar oracle filters all destination
+                        // columns, including black margins and clipped edges.
+                        for y in 0..size.1 {
+                            let py =
+                                sample(ay - (ay - (y as f32 - origin.1 as f32 - dy as f32)) / sy);
+                            for x in 0..size.0 {
+                                let px =
+                                    sample(ax + (x as f32 - origin.0 as f32 - dx as f32 - ax) / sx);
+                                let (left, top) = (i32::from(px.left), i32::from(py.left));
+                                let a = mix(
+                                    source(left, top),
+                                    source(left + 1, top),
+                                    u32::from(px.weight),
+                                );
+                                let b = mix(
+                                    source(left, top + 1),
+                                    source(left + 1, top + 1),
+                                    u32::from(px.weight),
+                                );
+                                let rgb = mix(a, b, u32::from(py.weight));
+                                assert_eq!(actual[y * size.0 + x], encode_rgb565::<BIG_ENDIAN>((rgb | rgb >> 16) as u16),
+                                    "size={size:?} scale=({sx},{sy}) offset=({dx},{dy}) pixel=({x},{y})");
+                            }
+                        }
+                        assert!(actual[size.0 * size.1..].iter().all(|&v| v == 0x1234));
+                    }
+                }
+            }
+        }
+        check::<false>();
+        check::<true>();
+    }
+
+    #[test]
+    fn wire_pixels_match_native_across_articulation_rotation_and_skin_changes() {
+        use crate::companion::render::{FoxAnimator, FoxInput, FoxPose, VIEW_PIXELS};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../resources/skins");
+        let mut native = FoxRenderer::new();
+        let mut wire = FoxRenderer::new();
+        let mut actual = vec![0; VIEW_PIXELS];
+        let mut expected = vec![0; VIEW_PIXELS];
+        for name in ["eclipse", "normal", "black-blue", "eclipse"] {
+            let skin =
+                Skin::parse(std::fs::read(root.join(name).join("fox.bin")).unwrap()).unwrap();
+            let mut animator = FoxAnimator::new(FoxPose::Idle);
+            animator.set_skin(skin);
+            for pose in [FoxPose::Idle, FoxPose::Panic, FoxPose::Sleep, FoxPose::Idle] {
+                animator.set_pose(pose);
+                for (step, angle) in [(33, 0.0), (71, 90.0), (193, 180.0), (53, 270.0)] {
+                    animator.advance(step);
+                    let mut scene = animator.scene(FoxInput::REST);
+                    scene.warp.angle_deg = angle;
+                    actual.fill(0xabcd);
+                    expected.fill(0x1234);
+                    wire.render_panel_rgb565be(&scene, &mut actual);
+                    native.render_panel(&scene, &mut expected);
+                    assert!(
+                        actual
+                            .iter()
+                            .zip(&expected)
+                            .all(|(&w, &n)| u16::from_be(w) == n),
+                        "{name} {pose:?} step={step} angle={angle}"
+                    );
+                }
+            }
+        }
+        // Exercise the unscaled palette path as well as breathing and rotation.
+        let scene = Scene::still(FoxPose::Idle);
+        wire.render_panel_rgb565be(&scene, &mut actual);
+        native.render_panel(&scene, &mut expected);
+        assert!(actual
+            .iter()
+            .zip(&expected)
+            .all(|(&w, &n)| u16::from_be(w) == n));
+    }
 
     #[test]
     fn panel_keeps_original_pixels_and_full_size_rotations_inside_the_viewport() {
@@ -620,7 +766,7 @@ mod tests {
                 angle_deg: angle as f32,
                 ..Warp::IDENTITY
             };
-            warp_to(
+            warp_to::<false>(
                 &renderer.idx,
                 palette,
                 t,
@@ -628,7 +774,7 @@ mod tests {
                 (VIEW_W, VIEW_H),
                 (VIEW_ORIGIN.0 as i32, VIEW_ORIGIN.1 as i32),
             );
-            warp_to(
+            warp_to::<false>(
                 &renderer.idx,
                 palette,
                 t,

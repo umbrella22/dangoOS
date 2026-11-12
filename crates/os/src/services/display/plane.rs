@@ -100,7 +100,7 @@ pub enum Frame {
 impl Frame {
     fn pixels(&self, size: (u16, u16)) -> PixelSource<'_> {
         match self {
-            Frame::Pool(lease) => PixelSource::rgb565(lease.pixels(), size),
+            Frame::Pool(lease) => lease.source(size),
             Frame::Screen(lease) => lease.pixels(),
             Frame::Slide { new, .. } => new.pixels(),
         }
@@ -406,9 +406,8 @@ async fn run_plane(
                 Frame::Pool(lease) => {
                     for region in damage.regions() {
                         let area = clip(*region, full).covering_panel_window();
-                        final_capture.blit(
-                            lease.pixels(),
-                            canvas_w as usize,
+                        final_capture.blit_source(
+                            lease.source(job.size),
                             area,
                             (origin_x + area.x0, origin_y + area.y0),
                         );

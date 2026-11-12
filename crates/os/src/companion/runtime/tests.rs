@@ -4,44 +4,15 @@ use {
     crate::companion::behavior::affect::ReactionReason,
 };
 
-#[cfg(feature = "ts-engine")]
-#[test]
-fn ts_rejects_lua_source_and_retains_native_reactions() {
-    let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
-    assert!(runtime
-        .enable_brain("return {}", 0, &app_host::GLOBAL_ALLOCATOR, None)
-        .is_err());
-    assert!(!runtime.brain_active());
-    assert!(runtime.brain_error().unwrap().contains("bytecode envelope"));
-    runtime.on_sensor(SensorEvent {
-        at_ms: 100,
-        source: EventSource::Touch,
-        kind: EventKind::TouchPoke,
-    });
-    runtime.tick(100);
-    assert_eq!(runtime.expression(), Expression::Puzzled);
-}
 use {
     crate::companion::behavior::personality::SCREEN_CENTER_X,
     crate::companion::behavior::personality::SCREEN_CENTER_Y,
 };
 
 #[test]
-fn bundled_bootstrap_retains_pre_mount_inputs_and_bad_selection_falls_back_warm() {
-    let mut native = Runtime::new(0, FoxControl::new(Expression::Idle));
+fn native_boot_retains_early_module_battery_and_light_inputs() {
     let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
-    runtime
-        .enable_brain(
-            crate::companion::brain::DEFAULT_SOURCE,
-            0,
-            &app_host::GLOBAL_ALLOCATOR,
-            None,
-        )
-        .unwrap();
     runtime.ignore_touch_until(1000);
-    native.ignore_touch_until(1000);
-    // These arrive while USB/storage startup is pending. Module insertion
-    // is an edge, and must not disappear into a newly created Idle engine.
     for event in [
         SensorEvent {
             at_ms: 10,
@@ -61,162 +32,68 @@ fn bundled_bootstrap_retains_pre_mount_inputs_and_bad_selection_falls_back_warm(
             kind: EventKind::LightLevel(60),
         },
     ] {
-        native.on_sensor(event);
         runtime.on_sensor(event);
     }
-    assert_eq!(native.tick(100), runtime.tick(100));
-    assert_eq!(runtime.expression(), native.expression());
+    runtime.tick(100);
     assert_ne!(runtime.expression(), Expression::Idle);
-    // An absent persisted selection leaves this active VM untouched. Its
-    // module sequence continues instead of restarting at storage-ready.
-    assert_eq!(native.tick(1000), runtime.tick(1000));
-    assert_eq!(runtime.expression(), native.expression());
-    assert_eq!(native.tick(6000), runtime.tick(6000));
+    assert!(!runtime.on_pointer(PointerSample {
+        at_ms: 100,
+        x: SCREEN_CENTER_X,
+        y: SCREEN_CENTER_Y,
+        pressed: true
+    }));
+    runtime.tick(6000);
     assert_eq!(runtime.expression(), Expression::Dying);
-    assert_eq!(runtime.expression(), native.expression());
-    // A present but bad persisted source deliberately switches to the
-    // native engines that consumed the very same early inputs.
-    assert!(runtime
-        .enable_brain(
-            "error('bad persisted selection')",
-            6100,
-            &app_host::GLOBAL_ALLOCATOR,
-            None
-        )
-        .is_err());
-    assert!(!runtime.brain_active());
-    assert_eq!(runtime.expression(), Expression::Dying);
-    assert_eq!(native.tick(6200), runtime.tick(6200));
-    assert_eq!(runtime.expression(), native.expression());
-    #[cfg(feature = "lua-engine")]
-    let happy =
-        "return {on_event=function()end,tick=function()fox.set_expression('Happy')end}".to_string();
-    #[cfg(feature = "ts-engine")]
-    let happy = crate::companion::brain::ts_vm::encode(include_bytes!(
-        "../../../../../resources/embedts/fixtures/brain-happy.etb"
-    ));
-    runtime.reload_brain(&happy, 6300).unwrap();
-    assert!(runtime.brain_active());
-    assert_eq!(runtime.expression(), Expression::Happy);
+    assert_eq!(runtime.affect_state().expression, Expression::Dying);
 }
 
-#[cfg(feature = "lua-engine")]
 #[test]
-fn native_urgent_reflexes_override_custom_brain_and_default_off_home_filter_matches() {
-    let control = FoxControl::new(Expression::Idle);
-    let mut custom = Runtime::new(0, Rc::clone(&control));
-    custom.enable_brain("return {on_event=function()end,tick=function()fox.set_expression('Happy');fox.play('Charging',5000);haptic.play('Happy')end}",0,&app_host::GLOBAL_ALLOCATOR,None).unwrap();
-    custom.on_sensor(SensorEvent {
-        at_ms: 100,
-        source: EventSource::System,
-        kind: EventKind::Activity(Expression::Error),
-    });
-    assert_eq!(custom.expression(), Expression::Error);
-    assert_eq!(control.play_pose(), None);
-    assert_ne!(custom.tick(100), Some(HapticPattern::Happy));
-    custom.on_sensor(SensorEvent {
-        at_ms: 200,
-        source: EventSource::System,
-        kind: EventKind::Activity(Expression::Idle),
-    });
-    assert_eq!(custom.expression(), Expression::Happy);
-    let mut native = Runtime::new(0, FoxControl::new(Expression::Idle));
-    let mut lua = Runtime::new(0, FoxControl::new(Expression::Idle));
-    lua.enable_brain(
-        crate::companion::brain::DEFAULT_SOURCE,
-        0,
-        &app_host::GLOBAL_ALLOCATOR,
-        None,
-    )
-    .unwrap();
-    for kind in [
-        EventKind::TouchPoke,
-        EventKind::KeyDown,
-        EventKind::Accel {
-            ax_mg: 2000,
-            ay_mg: 0,
-            az_mg: 0,
-        },
-        EventKind::BatteryLevel(3),
+fn system_actions_are_consumed_once_and_shutdown_discards_both_pending_stages() {
+    use crate::companion::behavior::affect::SystemCommand;
+    for (kind, expected) in [
+        (EventKind::ButtonShort, SystemCommand::StartListening),
+        (EventKind::ButtonLong, SystemCommand::Hub),
+        (EventKind::ButtonDouble, SystemCommand::StopActivity),
     ] {
-        if crate::shell::model::reaches_fox_off_home(&kind) {
-            let event = SensorEvent {
-                at_ms: 100,
-                source: EventSource::Touch,
+        let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
+        runtime.on_sensor(SensorEvent {
+            at_ms: 100,
+            source: EventSource::ButtonBoot,
+            kind,
+        });
+        runtime.tick(100);
+        assert_eq!(
+            runtime.take_command(),
+            None,
+            "Boot key cannot issue AI actions"
+        );
+        runtime.on_sensor(SensorEvent {
+            at_ms: 200,
+            source: EventSource::ButtonPower,
+            kind,
+        });
+        runtime.tick(200);
+        runtime.tick(210);
+        assert_eq!(runtime.take_command(), Some(expected));
+        assert_eq!(runtime.take_command(), None);
+        runtime.tick(220);
+        assert_eq!(runtime.take_command(), None);
+        for tick_before_shutdown in [false, true] {
+            let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
+            runtime.on_sensor(SensorEvent {
+                at_ms: 300,
+                source: EventSource::ButtonPower,
                 kind,
-            };
-            native.on_sensor(event);
-            lua.on_sensor(event);
+            });
+            if tick_before_shutdown {
+                runtime.tick(300);
+            }
+            runtime.begin_shutdown();
+            assert_eq!(runtime.take_command(), None);
+            assert_eq!(runtime.tick(400), None);
+            assert_eq!(runtime.take_command(), None);
         }
     }
-    assert_eq!(native.tick(500), lua.tick(500));
-    assert_eq!(native.expression(), lua.expression());
-}
-
-#[cfg(feature = "lua-engine")]
-#[test]
-fn resident_runtime_is_warm_and_recovers_after_bad_boot_and_runtime_failure() {
-    let control = FoxControl::new(Expression::Idle);
-    let mut native = Runtime::new(0, Rc::clone(&control));
-    let other = FoxControl::new(Expression::Idle);
-    let mut lua = Runtime::new(0, other);
-    assert!(lua
-        .enable_brain(
-            "error('bad persisted source')",
-            0,
-            &app_host::GLOBAL_ALLOCATOR,
-            None
-        )
-        .is_err());
-    assert!(!lua.brain_active());
-    assert!(lua.brain_error().is_some());
-    lua.reload_brain(crate::companion::brain::DEFAULT_SOURCE, 0)
-        .unwrap();
-    let events = [
-        SensorEvent {
-            at_ms: 100,
-            source: EventSource::System,
-            kind: EventKind::Activity(Expression::Listening),
-        },
-        SensorEvent {
-            at_ms: 300,
-            source: EventSource::Touch,
-            kind: EventKind::TouchPet,
-        },
-        SensorEvent {
-            at_ms: 500,
-            source: EventSource::Light,
-            kind: EventKind::LightLevel(60),
-        },
-    ];
-    for event in events {
-        native.on_sensor(event);
-        lua.on_sensor(event);
-        assert_eq!(native.expression(), lua.expression());
-        assert_eq!(native.tick(event.at_ms), lua.tick(event.at_ms));
-    }
-    lua.reload_brain("return {on_event=function()fox.set_expression('Angry');error('runtime fault')end,tick=function()fox.set_expression('Happy')end}",600).unwrap();
-    assert_eq!(lua.expression(), Expression::Happy);
-    let event = SensorEvent {
-        at_ms: 700,
-        source: EventSource::Battery,
-        kind: EventKind::BatteryLevel(3),
-    };
-    native.on_sensor(event);
-    lua.on_sensor(event);
-    assert!(!lua.brain_active());
-    assert_eq!(lua.expression(), native.expression());
-    assert_eq!(lua.tick(10000), native.tick(10000));
-    assert_eq!(lua.expression(), native.expression());
-    lua.reload_brain("return {on_event=function()end,tick=function()fox.play('Charging',100);led_strip.set(1,255,0,0);haptic.play('Happy')end}",11000).unwrap();
-    assert!(lua.brain_leds().is_some());
-    lua.begin_shutdown();
-    assert_eq!(lua.expression(), Expression::Sleep);
-    assert!(lua.brain_leds().is_none());
-    assert_eq!(lua.tick(12000), None);
-    assert!(lua
-        .reload_brain(crate::companion::brain::DEFAULT_SOURCE, 12000)
-        .is_err());
 }
 
 fn tap(runtime: &mut Runtime, at_ms: u64) {

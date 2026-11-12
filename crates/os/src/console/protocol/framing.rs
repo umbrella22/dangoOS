@@ -53,7 +53,6 @@ impl Session {
                                 deferred |= matches!(
                                     effect,
                                     Effect::Manage(_)
-                                        | Effect::Brain(_)
                                         | Effect::BootStatus
                                         | Effect::Recovery
                                         | Effect::NandInfo

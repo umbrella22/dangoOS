@@ -15,11 +15,11 @@ authors = ["umbrella22", "Claude", "GLM"]
 ts-engine = { package = "embedts-engine", git = "https://github.com/umbrella22/EmbedTypescript.git", rev = "98eaf67207874467eaffcc725780ed319f65a5ee", default-features = false }
 # Published LVGL bindings, used directly by their package names.
 # Upgrade both packages together; Cargo.lock records the resolved versions.
-rs_lvgl = { version = "0.7.0", default-features = false, features = [
+rs_lvgl = { version = "0.8.0", default-features = false, features = [
     "alloc",
     "unsafe_no_autoinit",
 ] }
-rs_lvgl_ui = { version = "0.7.0", default-features = false, features = [
+rs_lvgl_ui = { version = "0.8.0", default-features = false, features = [
     "alloc",
     "no-autoinit",
     # Native hub controls, Lua images/dialogs and the fox/splash canvases.

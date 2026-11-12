@@ -57,8 +57,6 @@ pub fn begin_shutdown() {
     critical_section::with(|cs| {
         LIFECYCLE.borrow_ref_mut(cs).request_shutdown();
         *LUA_FRAME.borrow_ref_mut(cs) = None;
-        *BRAIN_FRAME.borrow_ref_mut(cs) = None;
-        REFLEX_UNTIL.borrow(cs).set(0);
     });
     OWNER.store(Owner::Dark as u8, Ordering::Release);
     SPARKS.store(0, Ordering::Relaxed);
@@ -110,30 +108,6 @@ pub fn lua_release() {
     critical_section::with(|cs| *LUA_FRAME.borrow_ref_mut(cs) = None);
 }
 
-static BRAIN_FRAME: critical_section::Mutex<core::cell::RefCell<Option<(Frame, u64)>>> =
-    critical_section::Mutex::new(core::cell::RefCell::new(None));
-static REFLEX_UNTIL: critical_section::Mutex<core::cell::Cell<u64>> =
-    critical_section::Mutex::new(core::cell::Cell::new(0));
-/// Independent resident lease: never changes the foreground owner or frame.
-pub fn brain_frame(pixels: Option<[[u8; 3]; 6]>, now: u64) {
-    if shutting_down() {
-        return;
-    }
-    critical_section::with(|cs| {
-        *BRAIN_FRAME.borrow_ref_mut(cs) =
-            pixels.map(|p| (p.map(|[r, g, b]| Rgb { r, g, b }), now.saturating_add(200)))
-    });
-}
-pub fn native_reflex(now: u64, duration: u64) {
-    if shutting_down() {
-        return;
-    }
-    critical_section::with(|cs| {
-        let end = REFLEX_UNTIL.borrow(cs);
-        end.set(end.get().max(now.saturating_add(duration)));
-    });
-}
-static NATIVE_EXPRESSION: AtomicU8 = AtomicU8::new(0);
 static EXPRESSION: AtomicU8 = AtomicU8::new(0);
 static AMBIENT: AtomicU8 = AtomicU8::new(u8::MAX);
 static ATTACHED: AtomicBool = AtomicBool::new(false);
@@ -187,16 +161,6 @@ pub fn replay_preview() {
 }
 
 /// The expression on screen. Called by the UI task each loop.
-pub fn show_native(expression: Expression) {
-    if shutting_down() {
-        return;
-    }
-    let index = Expression::ALL
-        .iter()
-        .position(|e| *e == expression)
-        .unwrap_or(0);
-    NATIVE_EXPRESSION.store(index as u8, Ordering::Relaxed);
-}
 pub fn show(expression: Expression) {
     if shutting_down() {
         return;
@@ -258,7 +222,6 @@ pub fn configure_channel(
 pub async fn lights_task(mut channel: LightChannel) {
     info!("lights_task: WS2812 x{LED_COUNT} on GPIO38 (right slot), RMT ch1 10 MHz");
     let mut light = MoodLight::new();
-    let mut native_light = MoodLight::new();
     let mut codes = [PulseCode::end_marker(); LED_COUNT * 24 + 1];
     let mut sent: Option<Frame> = None;
     let mut sent_at = 0u64;
@@ -283,24 +246,16 @@ pub async fn lights_task(mut channel: LightChannel) {
 
         let index = EXPRESSION.load(Ordering::Relaxed) as usize;
         light.set_expression(Expression::ALL[index.min(Expression::ALL.len() - 1)], now);
-        let native_index = NATIVE_EXPRESSION.load(Ordering::Relaxed) as usize;
-        native_light.set_expression(
-            Expression::ALL[native_index.min(Expression::ALL.len() - 1)],
-            now,
-        );
         let ambient = AMBIENT.load(Ordering::Relaxed);
         if ambient <= 100 {
             light.set_ambient(ambient);
-            native_light.set_ambient(ambient);
         }
         let sparks = SPARKS.load(Ordering::Relaxed);
         if sparks & 0xFF != seen_sparks & 0xFF {
             light.spark(Side::Left, now);
-            native_light.spark(Side::Left, now);
         }
         if (sparks >> 8) & 0xFF != (seen_sparks >> 8) & 0xFF {
             light.spark(Side::Right, now);
-            native_light.spark(Side::Right, now);
         }
         seen_sparks = sparks;
 
@@ -311,24 +266,8 @@ pub async fn lights_task(mut channel: LightChannel) {
         }
         // The fox's light keeps running underneath so it resumes smoothly.
         let fox = light.frame(now);
-        let native = native_light.frame(now);
         let mut frame = match OWNER.load(Ordering::Relaxed) {
-            0 => critical_section::with(|cs| {
-                if now < REFLEX_UNTIL.borrow(cs).get()
-                    || matches!(
-                        Expression::ALL[native_index.min(Expression::ALL.len() - 1)],
-                        Expression::Error | Expression::Panic
-                    )
-                {
-                    return native;
-                }
-                BRAIN_FRAME
-                    .borrow_ref(cs)
-                    .as_ref()
-                    .filter(|(_, until)| now < *until)
-                    .map(|(frame, _)| *frame)
-                    .unwrap_or(fox)
-            }),
+            0 => fox,
             1 => preview_frame(now.saturating_sub(preview_since)),
             3 => critical_section::with(|cs| {
                 (*LUA_FRAME.borrow_ref(cs)).unwrap_or([Rgb::OFF; LED_COUNT])

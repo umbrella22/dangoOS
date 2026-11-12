@@ -114,162 +114,125 @@ mod tests {
         runtime.tick(at);
     }
     #[test]
-    fn native_and_lua_expire_connection_edges_at_four_seconds_without_replaying_them() {
-        for lua in [false, true]
-            .into_iter()
-            .filter(|lua| cfg!(feature = "lua-engine") || !lua)
-        {
-            let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
-            #[cfg(feature = "lua-engine")]
-            if lua {
-                runtime
-                    .enable_brain(
-                        crate::companion::brain::DEFAULT_SOURCE,
-                        0,
-                        &app_host::GLOBAL_ALLOCATOR,
-                        None,
-                    )
-                    .unwrap();
-            }
-            for (at, kind, expected) in [
-                (
-                    10,
-                    EventKind::NetworkConnection(true),
-                    Expression::NetworkConnected,
-                ),
-                (
-                    4_009,
-                    EventKind::NetworkConnection(true),
-                    Expression::NetworkConnected,
-                ),
-                (4_010, EventKind::NetworkConnection(true), Expression::Idle),
-                (4_020, EventKind::NetworkConnection(true), Expression::Idle),
-                (
-                    5_000,
-                    EventKind::BluetoothConnection(true),
-                    Expression::BluetoothConnected,
-                ),
-                (
-                    6_000,
-                    EventKind::NetworkConnection(false),
-                    Expression::NetworkDisconnected,
-                ),
-                (
-                    9_999,
-                    EventKind::NetworkConnection(false),
-                    Expression::NetworkDisconnected,
-                ),
-                (
-                    10_000,
-                    EventKind::NetworkConnection(false),
-                    Expression::Idle,
-                ),
-                (
-                    11_000,
-                    EventKind::BluetoothConnection(false),
-                    Expression::BluetoothDisconnected,
-                ),
-                (
-                    11_010,
-                    EventKind::MusicPlayback(true),
-                    Expression::MusicPlaying,
-                ),
-                (16_000, EventKind::MusicPlayback(false), Expression::Idle),
-                (
-                    17_000,
-                    EventKind::MusicPlayback(true),
-                    Expression::MusicPlaying,
-                ),
-                (
-                    18_000,
-                    EventKind::BluetoothConnection(true),
-                    Expression::MusicPlaying,
-                ),
-                (
-                    18_100,
-                    EventKind::MusicPlayback(false),
-                    Expression::BluetoothConnected,
-                ),
-                (
-                    22_000,
-                    EventKind::BluetoothConnection(true),
-                    Expression::Idle,
-                ),
-                (
-                    23_000,
-                    EventKind::Activity(Expression::Error),
-                    Expression::Error,
-                ),
-                (
-                    23_010,
-                    EventKind::NetworkConnection(true),
-                    Expression::Error,
-                ),
-                (
-                    28_000,
-                    EventKind::Activity(Expression::Idle),
-                    Expression::Idle,
-                ),
-                (29_000, EventKind::BatteryLevel(3), Expression::Dying),
-                (
-                    29_010,
-                    EventKind::BluetoothConnection(false),
-                    Expression::Dying,
-                ),
-                (34_000, EventKind::BatteryLevel(80), Expression::Idle),
-            ] {
-                event(&mut runtime, at, kind);
-                assert_eq!(runtime.expression(), expected, "lua={lua}, at={at}");
-            }
-            assert_eq!(runtime.brain_active(), lua);
+    fn native_expires_connection_edges_at_four_seconds_without_replaying_them() {
+        let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
+        for (at, kind, expected) in [
+            (
+                10,
+                EventKind::NetworkConnection(true),
+                Expression::NetworkConnected,
+            ),
+            (
+                4_009,
+                EventKind::NetworkConnection(true),
+                Expression::NetworkConnected,
+            ),
+            (4_010, EventKind::NetworkConnection(true), Expression::Idle),
+            (4_020, EventKind::NetworkConnection(true), Expression::Idle),
+            (
+                5_000,
+                EventKind::BluetoothConnection(true),
+                Expression::BluetoothConnected,
+            ),
+            (
+                6_000,
+                EventKind::NetworkConnection(false),
+                Expression::NetworkDisconnected,
+            ),
+            (
+                9_999,
+                EventKind::NetworkConnection(false),
+                Expression::NetworkDisconnected,
+            ),
+            (
+                10_000,
+                EventKind::NetworkConnection(false),
+                Expression::Idle,
+            ),
+            (
+                11_000,
+                EventKind::BluetoothConnection(false),
+                Expression::BluetoothDisconnected,
+            ),
+            (
+                11_010,
+                EventKind::MusicPlayback(true),
+                Expression::MusicPlaying,
+            ),
+            (16_000, EventKind::MusicPlayback(false), Expression::Idle),
+            (
+                17_000,
+                EventKind::MusicPlayback(true),
+                Expression::MusicPlaying,
+            ),
+            (
+                18_000,
+                EventKind::BluetoothConnection(true),
+                Expression::MusicPlaying,
+            ),
+            (
+                18_100,
+                EventKind::MusicPlayback(false),
+                Expression::BluetoothConnected,
+            ),
+            (
+                22_000,
+                EventKind::BluetoothConnection(true),
+                Expression::Idle,
+            ),
+            (
+                23_000,
+                EventKind::Activity(Expression::Error),
+                Expression::Error,
+            ),
+            (
+                23_010,
+                EventKind::NetworkConnection(true),
+                Expression::Error,
+            ),
+            (
+                28_000,
+                EventKind::Activity(Expression::Idle),
+                Expression::Idle,
+            ),
+            (29_000, EventKind::BatteryLevel(3), Expression::Dying),
+            (
+                29_010,
+                EventKind::BluetoothConnection(false),
+                Expression::Dying,
+            ),
+            (34_000, EventKind::BatteryLevel(80), Expression::Idle),
+        ] {
+            event(&mut runtime, at, kind);
+            assert_eq!(runtime.expression(), expected, "at={at}");
         }
     }
     #[test]
     fn quiet_ticks_expire_each_link_expression_without_another_service_event() {
-        for lua in [false, true]
-            .into_iter()
-            .filter(|lua| cfg!(feature = "lua-engine") || !lua)
-        {
-            for (kind, expression) in [
-                (
-                    EventKind::NetworkConnection(true),
-                    Expression::NetworkConnected,
-                ),
-                (
-                    EventKind::NetworkConnection(false),
-                    Expression::NetworkDisconnected,
-                ),
-                (
-                    EventKind::BluetoothConnection(true),
-                    Expression::BluetoothConnected,
-                ),
-                (
-                    EventKind::BluetoothConnection(false),
-                    Expression::BluetoothDisconnected,
-                ),
-            ] {
-                let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
-                #[cfg(feature = "lua-engine")]
-                if lua {
-                    runtime
-                        .enable_brain(
-                            crate::companion::brain::DEFAULT_SOURCE,
-                            0,
-                            &app_host::GLOBAL_ALLOCATOR,
-                            None,
-                        )
-                        .unwrap();
-                }
-                event(&mut runtime, 100, kind);
-                runtime.tick(4_099);
-                assert_eq!(runtime.expression(), expression, "lua={lua}, kind={kind:?}");
-                runtime.tick(4_100);
-                assert_eq!(
-                    runtime.expression(),
-                    Expression::Idle,
-                    "lua={lua}, kind={kind:?}"
-                );
-            }
+        for (kind, expression) in [
+            (
+                EventKind::NetworkConnection(true),
+                Expression::NetworkConnected,
+            ),
+            (
+                EventKind::NetworkConnection(false),
+                Expression::NetworkDisconnected,
+            ),
+            (
+                EventKind::BluetoothConnection(true),
+                Expression::BluetoothConnected,
+            ),
+            (
+                EventKind::BluetoothConnection(false),
+                Expression::BluetoothDisconnected,
+            ),
+        ] {
+            let mut runtime = Runtime::new(0, FoxControl::new(Expression::Idle));
+            event(&mut runtime, 100, kind);
+            runtime.tick(4_099);
+            assert_eq!(runtime.expression(), expression, "kind={kind:?}");
+            runtime.tick(4_100);
+            assert_eq!(runtime.expression(), Expression::Idle, "kind={kind:?}");
         }
     }
     #[test]

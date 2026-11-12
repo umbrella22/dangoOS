@@ -67,8 +67,6 @@ pub enum Effect {
     Reboot,
     /// Reload the persisted skin selection on the UI task.
     SkinsChanged,
-    /// The UI task validates/commits the resident brain and returns the reply.
-    Brain(crate::companion::brain::store::Action),
     BootStatus,
     Recovery,
     /// Read-only device discovery, executed after releasing the VFS lock.
@@ -92,7 +90,6 @@ enum UploadKind {
     #[default]
     App,
     Skin,
-    Brain,
     Photo,
     Fonts,
     VoiceConfig,

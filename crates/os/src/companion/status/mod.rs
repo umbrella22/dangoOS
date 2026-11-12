@@ -26,7 +26,7 @@ fn signal_arcs(rssi_dbm: Option<i32>) -> u8 {
     }
 }
 
-fn draw(
+fn draw<const BIG_ENDIAN: bool>(
     out: &mut [u16],
     stride: usize,
     mask: &[u8],
@@ -45,26 +45,36 @@ fn draw(
         let r = (((color >> 11) & 31) * alpha + 8) / 16;
         let g = (((color >> 5) & 63) * alpha + 8) / 16;
         let b = ((color & 31) * alpha + 8) / 16;
-        out[(y + index / width) * stride + x + index % width] = r << 11 | g << 5 | b;
+        out[(y + index / width) * stride + x + index % width] =
+            super::render::encode_rgb565::<BIG_ENDIAN>(r << 11 | g << 5 | b);
     }
 }
 
 /// Draw a compact band for previews and tooling, without allocating.
 pub fn render(out: &mut [u16], status: Snapshot) {
     assert_eq!(out.len(), PIXELS);
-    render_with_stride(out, WIDTH, status);
+    render_with_stride::<false>(out, WIDTH, status);
 }
 
 /// Compose the icons before publishing or uploading the full-panel frame.
 /// Only the fixed status rectangle is cleared; no extra band buffer is needed.
 pub fn render_panel(out: &mut [u16], status: Snapshot) {
+    render_panel_encoded::<false>(out, status);
+}
+
+/// Compose into a frame whose storage words contain big-endian RGB565 bytes.
+pub fn render_panel_rgb565be(out: &mut [u16], status: Snapshot) {
+    render_panel_encoded::<true>(out, status);
+}
+
+fn render_panel_encoded<const BIG_ENDIAN: bool>(out: &mut [u16], status: Snapshot) {
     use super::render::{VIEW_PIXELS, VIEW_W};
     assert_eq!(out.len(), VIEW_PIXELS);
     let offset = OFFSET.1 as usize * VIEW_W + OFFSET.0 as usize;
-    render_with_stride(&mut out[offset..], VIEW_W, status);
+    render_with_stride::<BIG_ENDIAN>(&mut out[offset..], VIEW_W, status);
 }
 
-fn render_with_stride(out: &mut [u16], stride: usize, status: Snapshot) {
+fn render_with_stride<const BIG_ENDIAN: bool>(out: &mut [u16], stride: usize, status: Snapshot) {
     for y in 0..HEIGHT {
         out[y * stride..y * stride + WIDTH].fill(0);
     }
@@ -87,7 +97,7 @@ fn render_with_stride(out: &mut [u16], stride: usize, status: Snapshot) {
     for arc in 0..usize::from(arcs) {
         wifi[arc + 2] = CONNECTED;
     }
-    draw(out, stride, &icons::WIFI, icons::WIFI_WIDTH, 9, 4, &wifi);
+    draw::<BIG_ENDIAN>(out, stride, &icons::WIFI, icons::WIFI_WIDTH, 9, 4, &wifi);
 
     let bluetooth_color = match status.bluetooth {
         BluetoothState::Off => DIM,
@@ -96,7 +106,7 @@ fn render_with_stride(out: &mut [u16], stride: usize, status: Snapshot) {
         BluetoothState::Connected | BluetoothState::Streaming => BLUETOOTH,
         BluetoothState::Fault => FAULT,
     };
-    draw(
+    draw::<BIG_ENDIAN>(
         out,
         stride,
         &icons::BLUETOOTH,
@@ -114,6 +124,7 @@ mod tests {
     fn panel_composition_matches_the_band_and_preserves_surrounding_pixels() {
         use crate::companion::render::{VIEW_PIXELS, VIEW_W};
         let mut panel = alloc::vec![0xffff; VIEW_PIXELS];
+        let mut wire = alloc::vec![0xffff; VIEW_PIXELS];
         let mut band = alloc::vec![0; PIXELS];
         for status in [
             Snapshot {
@@ -132,6 +143,8 @@ mod tests {
             Snapshot::new(),
         ] {
             render_panel(&mut panel, status);
+            render_panel_rgb565be(&mut wire, status);
+            assert!(panel.iter().zip(&wire).all(|(&n, &w)| n == u16::from_be(w)));
             render(&mut band, status);
             for (index, &pixel) in panel.iter().enumerate() {
                 let x = index % VIEW_W;

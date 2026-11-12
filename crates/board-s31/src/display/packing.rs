@@ -3,8 +3,8 @@
 /// Pack an inclusive window from a full row-major framebuffer into big-endian
 /// bytes. All programmer preconditions are checked before writing staging.
 /// No pixel alignment policy is imposed by this transport helper.
-// The archived upstream helper is kept verbatim; `as_chunks_mut` is a style
-// suggestion only.
+// `as_chunks_mut` is a style suggestion; the explicit pair loop also supports
+// byte-aligned output with an odd final column.
 #[allow(clippy::chunks_exact_to_as_chunks)]
 pub(crate) fn pack_rgb565(
     framebuffer: &[u16],
@@ -36,10 +36,26 @@ pub(crate) fn pack_rgb565(
         let start = (y1 as usize + row_index) * stride + x1 as usize;
         let src = &framebuffer[start..start + width];
 
-        // Two pixels per 32-bit store: byte swapping is cheap, but halving
-        // the loop count and the per-iteration bookkeeping is not. Damage
-        // rectangles are 4-pixel aligned in x, so a real chunk is even; the
-        // remainder path only handles an odd final column.
+        if dst_row.as_ptr().align_offset(core::mem::align_of::<u32>()) == 0 {
+            // A byte slice only promises byte alignment. Without this checked
+            // word path LLVM emits four PSRAM byte stores per pixel pair on
+            // RV32, even for copy_from_slice(&word.to_be_bytes()).
+            for (index, pair) in src.chunks_exact(2).enumerate() {
+                let a = pair[0].to_be_bytes();
+                let b = pair[1].to_be_bytes();
+                let word = u32::from_ne_bytes([a[0], a[1], b[0], b[1]]);
+                // SAFETY: the row starts word-aligned, each index advances
+                // four bytes, and each complete pair owns four output bytes.
+                unsafe { dst_row.as_mut_ptr().cast::<u32>().add(index).write(word) };
+            }
+            if width % 2 != 0 {
+                dst_row[width * 2 - 2..].copy_from_slice(&src[width - 1].to_be_bytes());
+            }
+            continue;
+        }
+
+        // A byte-aligned fallback keeps arbitrary callers valid. Real panel
+        // windows are four-column aligned and normally use the word path.
         let mut pairs = src.chunks_exact(2);
         for (dst, pair) in dst_row.chunks_exact_mut(4).zip(&mut pairs) {
             let word = ((pair[0] as u32) << 16) | pair[1] as u32;
@@ -53,6 +69,33 @@ pub(crate) fn pack_rgb565(
     byte_count
 }
 
+/// Reverse the two bytes of each RGB565 pixel without changing pixel order.
+/// Both byte orders use this operation; arbitrary input/output alignment is
+/// supported, while aligned panel rows use word loads and stores on RV32.
+pub(crate) fn swap_rgb565_bytes(input: &[u8], output: &mut [u8]) {
+    assert_eq!(input.len() % 2, 0, "RGB565 needs complete pixels");
+    assert!(output.len() >= input.len(), "RGB565 output too short");
+    let mut at = 0;
+    if input.as_ptr().align_offset(4) == 0 && output.as_ptr().align_offset(4) == 0 {
+        while at + 4 <= input.len() {
+            // SAFETY: both bases are word-aligned, at is a multiple of four,
+            // and the loop bounds leave a complete initialized word in each.
+            unsafe {
+                let word = input.as_ptr().add(at).cast::<u32>().read();
+                let swapped = ((word & 0x00ff_00ff) << 8) | ((word & 0xff00_ff00) >> 8);
+                output.as_mut_ptr().add(at).cast::<u32>().write(swapped);
+            }
+            at += 4;
+        }
+    }
+    for (dst, src) in output[at..input.len()]
+        .chunks_exact_mut(2)
+        .zip(input[at..].chunks_exact(2))
+    {
+        dst.copy_from_slice(&[src[1], src[0]]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     extern crate alloc;
@@ -62,6 +105,44 @@ mod tests {
     const PANEL: (u16, u16) = (480, 480);
     const MAX_ROWS: u16 = 16;
     const CAPACITY: usize = MAX_ROWS as usize * PANEL.0 as usize * 2;
+
+    #[test]
+    fn byte_swap_preserves_all_colors_at_every_alignment_and_odd_pixel_tail() {
+        let mut values: Vec<u16> = (0..=u16::MAX).collect();
+        values.push(0xABCD);
+        for src_offset in 0..4 {
+            for dst_offset in 0..4 {
+                let pixels = &values[..];
+                let mut input = vec![0x33; src_offset];
+                input.extend(pixels.iter().flat_map(|p| p.to_le_bytes()));
+                let mut output = vec![0x55; dst_offset + pixels.len() * 2 + 4];
+                super::swap_rgb565_bytes(&input[src_offset..], &mut output[dst_offset..]);
+                for (pixel, bytes) in pixels.iter().zip(output[dst_offset..].chunks_exact(2)) {
+                    assert_eq!(bytes, pixel.to_be_bytes());
+                }
+                assert!(output[..dst_offset].iter().all(|&b| b == 0x55));
+                assert_eq!(&output[output.len() - 4..], &[0x55; 4]);
+            }
+        }
+    }
+
+    #[test]
+    fn numeric_pack_supports_unaligned_output_and_odd_width() {
+        let input: Vec<u16> = (0..35).map(|i| i * 1777).collect();
+        for offset in 0..4 {
+            let mut output = vec![0x99; offset + 3 * 3 * 2 + 4];
+            let count = pack_rgb565(&input, (7, 5), (1, 1, 3, 3), 3, &mut output[offset..]);
+            let expected: Vec<u8> = (1..=3)
+                .flat_map(|y| {
+                    input[y * 7 + 1..y * 7 + 4]
+                        .iter()
+                        .flat_map(|p| p.to_be_bytes())
+                })
+                .collect();
+            assert_eq!(&output[offset..offset + count], expected);
+            assert_eq!(&output[output.len() - 4..], &[0x99; 4]);
+        }
+    }
 
     #[test]
     fn primary_colors_are_big_endian() {

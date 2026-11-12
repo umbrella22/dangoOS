@@ -143,18 +143,32 @@ impl CustomWidget for FoxWidget {
         // The pool acquisition's critical section has already ended. This
         // synchronous scope runs on the sole LVGL owner, outside C callbacks;
         // no allocator, LVGL or global lock is held when requesting the clock.
+        let wire_rgb565 = cfg!(all(target_os = "none", not(feature = "display-rgb888")))
+            && self.control.plane_mode();
         let mut raster = || {
             let pixels = lease.pixels_mut();
             let pose = if self.control.loading() {
-                fox::loading::render_panel(pixels);
+                if wire_rgb565 {
+                    fox::loading::render_panel_rgb565be(pixels);
+                } else {
+                    fox::loading::render_panel(pixels);
+                }
                 None
             } else {
                 let scene = self.animator.scene(input);
-                self.renderer.render_panel(&scene, pixels);
+                if wire_rgb565 {
+                    self.renderer.render_panel_rgb565be(&scene, pixels);
+                } else {
+                    self.renderer.render_panel(&scene, pixels);
+                }
                 Some(scene.pose)
             };
             if let Some(status) = self.control.radio_status.get() {
-                status::render_panel(pixels, status);
+                if wire_rgb565 {
+                    status::render_panel_rgb565be(pixels, status);
+                } else {
+                    status::render_panel(pixels, status);
+                }
             }
             pose
         };
@@ -166,7 +180,11 @@ impl CustomWidget for FoxWidget {
         let pose = raster();
 
         FoxControl::bump(&self.control.rendered);
-        lease.publish();
+        if wire_rgb565 {
+            lease.publish_rgb565be();
+        } else {
+            lease.publish();
+        }
         self.control.rendered_pose.set(pose);
 
         if !self.control.plane_mode() {

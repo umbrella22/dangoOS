@@ -175,49 +175,6 @@ fn replies(effects: &[Effect]) -> Vec<String> {
         .collect()
 }
 
-#[cfg(feature = "ts-engine")]
-#[test]
-fn ts_brain_commands_defer_to_ui_and_preserve_the_persisted_selection() {
-    use crate::companion::brain::store;
-    let mut v = vfs();
-    store::persist(&mut v, Some("old envelope")).unwrap();
-    let mut session = Session::new();
-    for command in ["brain-status", "brain-default", "brain-reload"] {
-        let effects = run(
-            &mut v,
-            &mut session,
-            format!("@mosaico {command}\n").as_bytes(),
-            1,
-        );
-        assert!(effects.iter().any(|e| matches!(e, Effect::Brain(_))));
-        assert_eq!(
-            store::selected(&mut v).unwrap().as_deref(),
-            Some("old envelope")
-        );
-    }
-    let mut stream = b"@mosaico brain-begin\n".to_vec();
-    let data = b"etb1:00";
-    stream.extend_from_slice(
-        format!(
-            "@mosaico file {} {} {:08x}\n",
-            store::UPLOAD_NAME,
-            data.len(),
-            crate::formats::crc32::crc32(data)
-        )
-        .as_bytes(),
-    );
-    stream.extend_from_slice(data);
-    stream.extend_from_slice(b"@mosaico brain-commit\n");
-    let effects = run(&mut v, &mut session, &stream, 1);
-    assert!(effects
-        .iter()
-        .any(|e| matches!(e,Effect::Brain(store::Action::Install(s))if s=="etb1:00")));
-    assert_eq!(
-        store::selected(&mut v).unwrap().as_deref(),
-        Some("old envelope")
-    );
-}
-
 #[test]
 fn pinned_fonts_stage_verify_and_publish_without_removing_rollback_resources() {
     use crate::services::resources::fonts;
@@ -589,79 +546,57 @@ fn photo_paths_kind_and_management_barrier_are_enforced() {
     assert!(r[0].contains("pending recovery"));
 }
 
-#[cfg(feature = "lua-engine")]
 #[test]
-fn brain_transfer_is_scoped_and_commit_is_deferred_before_next_command() {
-    use {crate::companion::brain::store as brain_store, crate::companion::brain::store::Action};
-    for chunk in [1, 64, 512] {
+fn rust_brain_status_is_read_only_and_script_mutations_are_unknown() {
+    for chunk in [1, 7, 512] {
         let mut v = vfs();
-        brain_store::persist(&mut v, Some("old source")).unwrap();
+        // A previous firmware's selection is inert and must not be rewritten.
+        v.create_dir_all("/data/brain").unwrap();
+        v.write_file("/data/brain/active.lua", b"old source")
+            .unwrap();
+        v.write_file("/data/brain/active.etb.hex", b"old TS envelope")
+            .unwrap();
         let mut session = Session::new();
-        let mut stream = b"@mosaico brain-begin\n".to_vec();
-        stream.extend(file_cmd("source.lua", MAIN));
-        let replies = replies(&run(&mut v, &mut session, &stream, chunk));
+        for verb in [
+            "brain-begin",
+            "brain-commit",
+            "brain-reload",
+            "brain-default",
+        ] {
+            let effects = run(
+                &mut v,
+                &mut session,
+                format!("@mosaico {verb}\n").as_bytes(),
+                chunk,
+            );
+            let text = replies(&effects);
+            assert_eq!(text.len(), 1);
+            assert!(text[0].starts_with("@err"), "{verb}: {text:?}");
+            assert!(session.staging.is_none());
+            assert!(v.stat("/data/brain/.incoming").is_err());
+            assert_eq!(
+                v.read_file("/data/brain/active.etb.hex").unwrap(),
+                b"old TS envelope"
+            );
+            assert_eq!(
+                v.read_file("/data/brain/active.lua").unwrap(),
+                b"old source"
+            );
+        }
+        let effects = run(&mut v, &mut session, b"@mosaico brain-status\n", chunk);
         assert_eq!(
-            replies,
-            [
-                "@ok brain-begin",
-                "@ok ready source.lua",
-                "@ok file source.lua"
-            ]
+            replies(&effects),
+            ["@ok brain-status active=rust source=firmware"]
         );
-        let packet = b"@mosaico brain-commit\n@mosaico brain-status\n";
-        let mut effects = Vec::new();
-        let used = session.feed_until_deferred(&mut v, packet, &mut |e| effects.push(e));
-        assert_eq!(&packet[used..], b"@mosaico brain-status\n");
-        assert_eq!(
-            effects,
-            [Effect::Brain(Action::Install(
-                String::from_utf8(MAIN.to_vec()).unwrap()
-            ))]
-        );
-        assert_eq!(
-            brain_store::selected(&mut v).unwrap().as_deref(),
-            Some("old source"),
-            "transport never activates a VM or overwrites active source"
-        );
-        assert!(v.stat(brain_store::STAGED_SOURCE).is_err());
-        assert!(run(&mut v, &mut session, b"@mosaico brain-commit\n", chunk)
-            .iter()
-            .all(|e| matches!(e, Effect::Reply(s) if s.starts_with("@err"))));
+        // Unknown brain commands cannot consume or redirect an app upload.
+        run(&mut v, &mut session, b"@mosaico begin resident\n", chunk);
+        let effects = run(&mut v, &mut session, b"@mosaico brain-commit\n", chunk);
+        assert!(replies(&effects)[0].starts_with("@err"));
+        assert_eq!(session.staging.as_deref(), Some("resident"));
+        assert!(session.kind == UploadKind::App);
+        session.reset(&mut v);
+        assert_eq!(v.open_files(), 0);
     }
-}
-
-#[cfg(feature = "lua-engine")]
-#[test]
-fn bad_or_interrupted_brain_upload_cannot_touch_active_source() {
-    use crate::companion::brain::store as brain_store;
-    let mut v = vfs();
-    brain_store::persist(&mut v, Some("old source")).unwrap();
-    let mut session = Session::new();
-    let effects = run(&mut v, &mut session, b"@mosaico brain-begin\n@mosaico file other.lua 1 0\n@mosaico file source.lua 0 0\n@mosaico file source.lua 65537 0\n@mosaico file source.lua 3 0\nabc@mosaico brain-commit\n", 64);
-    let text = replies(&effects);
-    assert!(text[1..4].iter().all(|e| e.starts_with("@err")));
-    assert!(text[5].contains("crc"));
-    assert!(text[6].starts_with("@err"));
-    run(
-        &mut v,
-        &mut session,
-        b"@mosaico file source.lua 30 0\npartial",
-        64,
-    );
-    assert_eq!(v.open_files(), 1);
-    session.reset(&mut v);
-    assert_eq!(v.open_files(), 0);
-    assert_eq!(
-        brain_store::selected(&mut v).unwrap().as_deref(),
-        Some("old source")
-    );
-    assert!(v.stat(brain_store::STAGING).is_err());
-    // A later app upload has its own staging root and cannot be committed
-    // through the brain command, even when its app id is "resident".
-    run(&mut v, &mut session, b"@mosaico begin resident\n", 64);
-    assert!(
-        replies(&run(&mut v, &mut session, b"@mosaico brain-commit\n", 64))[0].starts_with("@err")
-    );
 }
 
 #[test]

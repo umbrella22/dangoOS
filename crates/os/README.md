@@ -9,7 +9,7 @@ HAL、执行器和设备任务在实际子模块上通过 `target_os = "none"` �
 | 库模块 | 职责 |
 | --- | --- |
 | `boot` | 堆 region、硬件与执行器初始化，服务启动及存储恢复接线 |
-| `companion` | 行为与个性、常驻 brain、角色动画/渲染/皮肤和 Home 控件 |
+| `companion` | Rust 行为与个性、角色动画/渲染/皮肤和 Home 控件 |
 | `shell` | 唯一路由、页面、组件、主题、生命周期协调和 UI 循环 |
 | `apps` | 应用注册与管理、所选前台 VM 和独立 native UI 桥接 |
 | `services` | 音频、相机、无线、输入、显示、反馈、电源、偏好、计时器与更新 |
@@ -27,7 +27,7 @@ Core0 服务线程处理同步文件与资源工作。显示和音频继续使�
 | 任务入口 | 执行位置 | 行为 |
 | --- | --- | --- |
 | `services/display/plane.rs` | Core0 中断，FROM_CPU_INTR1，优先级 2 | 独占 CO5300；480×480 Home 帧在面板原点上传，原尺寸角色与状态图标由同一帧合成；Screen/Snapshot/Pool 租约保护在途像素，行块执行 QSPI DMA |
-| `shell/runtime/mod.rs` | Core1 UI 线程 | 独占 LVGL；传感器与指针按既有顺序处理；50 ms 动画节奏及紧急变更绘制、导航和帧交接 |
+| `shell/runtime/mod.rs` | Core1 UI 线程 | 独占 LVGL；传感器与指针按既有顺序处理；33 ms 目标动画节奏及紧急变更绘制、导航和帧交接 |
 | `apps/runtime.rs` → `apps/lua/task.rs` 或 `apps/ts/device.rs` | Core1 UI 线程 | 执行所选前台 VM；停止状态在 VM 析构后发布，原生桥接清理继续由 UI 任务处理 |
 | `boot::usb_task`、`console` | Core0 服务线程 | USB 栈与 CDC 收发、日志及延迟存储挂载；启动时优先提供控制台 |
 | `services/input/touch.rs`、`sensors.rs` | Core0 主线程 | CST9220、BMI270、BMM150、电量与扩展槽输入，输出有界事件 |
@@ -38,18 +38,19 @@ Core0 服务线程处理同步文件与资源工作。显示和音频继续使�
 
 Home 顶部状态栏与角色共用画布和双槽池。无线服务按现有一秒循环读取当前 station
 RSSI，界面显示 Wi-Fi 图标、信号/状态及蓝牙状态；未知信号显示 `--dbm`，断开清除旧值。
-连接与断开表情在原生回退和内置 Lua brain 中均持续 4 秒，然后恢复常规行为。
+连接与断开表情由 Rust 行为引擎保持 4 秒，然后恢复常规行为。
 
 ## 硬件约束
 
 - CO5300 QSPI AMOLED，480×480，40 MHz，SPI2 + AXI DMA；默认 RGB565，
-  `display-rgb888` 提供原生 RGB888 绘制与局部上传。格式、租约、主机回放和设备对照入口见
+  双核 RGB565 使用 450 KiB PSRAM 的 PARTIAL 绘制缓冲；
+  `display-rgb888` 提供原生 RGB888 绘制与局部上传，保留内部小缓冲。格式、租约、主机回放和设备对照入口见
   [显示管线](DISPLAY_PIPELINE.md)，历史 80 MHz 对照见 [竖线排查](../../docs/troubleshooting/photo-vertical-lines.md)。
 - QSPI 寄存器操作码为 `0x02`，GRAM 写入操作码为 `0x32`；`CASET` / `RASET`
   窗口包含两端，横坐标必须按 4 像素对齐。
 - CST9220 在 I2C0 上使用 7 位地址 `0x5A`，SDA=56、SCL=3、400 kHz；INT 为 GPIO6。
 - VCC_3V3（GPIO60）低有效，必须在初始化屏幕和触摸之前开启。
-- 当前设备采用 A/B 布局，常规 OTA 更新非运行槽。手动 ROM 恢复与分区迁移边界见
+- 当前 `S31ONE03` 使用单主镜像与独立 Recovery；更新只覆盖主镜像。布局和分区迁移边界见
   [开发指南](../../docs/guides/development.md) 和 [分区迁移](../../docs/ota/partition-migration.md)。
 
 ## 依赖
@@ -73,24 +74,29 @@ cargo test -p os --offline
 cargo fw --offline
 # TS 开发固件；Lua 与 TS features 互斥
 cargo fw-ts --offline
-python3 scripts/device/console.py ota <固件.bin>
+python3 scripts/device/console.py brain-status
 ```
 
 默认选择 `lua-engine`。`--no-default-features` 后必须显式选择 `lua-engine` 或
 `ts-engine`；同时选择或均未选择时构建失败，`--all-features` 也会失败。
 TS 通过外部 `embedts-engine` 运行预编译 `.etb` 包，提供异步入口、共享原生 UI、services 存储和系统/硬件桥。
-同时提供 framebuffer、字体、图像处理、独立 worker 和受限常驻 TS brain。
-`brain-push` 接受主机编译的 `.etb`，候选验证和首 tick 成功后才提交持久选择。
+同时提供 framebuffer、字体、图像处理和独立 worker。
+团子行为统一由 Rust `companion::runtime::Runtime` 执行，与前台应用引擎选择无关。
+传感器、触摸与计时器驱动情绪、个性和转向状态；系统动作由 shell 执行。
+行为随固件更新，不加载或持久化 Lua/TS 大脑。`brain-status` 只读返回
+`active=rust source=firmware`；脚本上传、重载和默认选择命令已移除。
+旧固件遗留的行为脚本文件不参与启动，也不会被自动删除。
 完整构建和限制见外部 [embedts-engine](https://github.com/umbrella22/EmbedTypescript/blob/main/engine/README.md)。
 
-OTA 输入必须是已经生成并验证的固件 BIN。下载模式恢复入口为
-`scripts/device/flash.sh --rom-recovery-slot0 <PORT>`；该入口只写 slot 0，并保留
-已有启动选择。常规升级流程见 [USB OTA](../../docs/ota/usb-update.md)。
+更新输入必须是已经生成并验证、布局匹配的主镜像 BIN。`console.py recovery`
+进入独立 Recovery；安装工具核对 `S31ONE03`、写入主镜像并完成整镜像读回，
+重启后的 `boot-status` 必须达到 `Ready`。常规更新保留 bootloader、Recovery 和 NAND 资源。
+更新协议见 [USB 更新](../../docs/ota/usb-update.md)。
 
 ## 可选 EmbedScope 调试
 
 `embedscope` 默认关闭。适配器使用 EmbedScope SDK，复用系统的
-LVGL 9.6 / rs_lvgl 0.7.0。应用的 `TreeSource` 在 UI 线程采集原生对象；
+LVGL 9.6 / rs_lvgl 0.8.0。应用的 `TreeSource` 在 UI 线程采集原生对象；
 `escope-lvgl` 使用默认 feature 集，原生 LVGL 统一由 `rs_lvgl_sys` 提供。
 
 ```sh
@@ -116,7 +122,7 @@ features 会合并，正式构建不要使用 `--all-features`。
 
 ## 原生界面 API
 
-Shell 使用发布的 rs_lvgl_ui 0.7.0：普通容器为 `container()`，进度条为
+Shell 使用发布的 rs_lvgl_ui 0.8.0：普通容器为 `container()`，进度条为
 `progress_bar()`，滚动使用 `ScrollDirection` 和 `scroll_direction`。
 普通节点直接链式设置尺寸、颜色和间距；`style()` 创建可复用补丁，
 `Style::plain()` 仅用于需要明确覆盖原生基础样式的场合。

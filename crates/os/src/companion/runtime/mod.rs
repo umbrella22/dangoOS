@@ -1,16 +1,19 @@
 //! Runtime arbiter: sensor events, personality and the rendered expression.
 //!
-//! This module is the glue H2 was missing. It owns three things that used to be
-//! either absent or spread across tasks:
+//! Rust behavior runs from boot without a script VM or persisted source.
+//! The UI task delivers timestamped inputs to three state machines:
 //!
-//! 1. **The affect engine** — `ui_task` drains [`crate::sensor_task::SENSOR_EVENTS`]
+//! 1. **The affect engine** — the UI task drains sensor events
 //!    into it, so shake/pet/poke/light/PIR/keys/module/magnet/BMM150 and the
 //!    battery gauge actually drive expressions.
 //! 2. **The personality engine** — the pointer stream goes here, not to LVGL
 //!    events, so the tap ladder is decided with timestamps
 //!    from the input task and rendered by the same code on host and device.
-//! 3. **The merged frame** — the arbiter pushes one expression and one pose into
-//!    the [`FoxControl`] per UI loop. Priority is (see [`merge_expression`]):
+//! 3. **The balance engine** — accelerometer and gyro events drive crawling,
+//!    grip, fall and recovery independently of the expression layers.
+//!
+//! The arbiter publishes one expression and one pose to [`FoxControl`].
+//! Priority is (see [`merge_expression`]):
 //!
 //!    ```text
 //!    urgent affect (Error, Panic)  >  personality reaction
@@ -23,7 +26,9 @@
 //!    uses the same order, so what the user sees and feels always agree.
 //!
 //! Haptics from both engines are collected here; the caller forwards them to
-//! [`crate::haptic::play`], which owns the 150 ms rate limit and the hardware.
+//! the haptic service, which applies the 150 ms rate limit and drives hardware.
+//! [`Runtime::take_command`] delivers each pending system action once;
+//! [`Runtime::begin_shutdown`] suppresses actions, haptics and new input.
 //!
 //! # Host testability
 //!
@@ -32,6 +37,9 @@
 //! unit-tested on the host without LVGL.
 
 use alloc::rc::Rc;
+
+#[cfg(all(feature = "display-metrics", target_os = "none"))]
+pub(crate) mod metrics;
 
 use crate::companion::behavior::Expression;
 use {
@@ -69,9 +77,7 @@ pub struct Runtime {
     /// Whether the last pointer sample was a press (to find press edges).
     pointer_down: bool,
     shutdown: bool,
-    brain: Option<crate::companion::brain::Controller>,
-    brain_haptic: Option<HapticPattern>,
-    brain_command: Option<crate::companion::behavior::affect::SystemCommand>,
+    pending_command: Option<crate::companion::behavior::affect::SystemCommand>,
 }
 
 impl Runtime {
@@ -90,9 +96,7 @@ impl Runtime {
             merged: Expression::Idle,
             pointer_down: false,
             shutdown: false,
-            brain: None,
-            brain_haptic: None,
-            brain_command: None,
+            pending_command: None,
         };
         runtime.publish();
         runtime
@@ -104,9 +108,6 @@ impl Runtime {
     /// the drop or queue a tap.
     pub fn ignore_touch_until(&mut self, until_ms: u64) {
         self.personality.ignore_until(until_ms);
-        if let Some(b) = self.brain.as_mut() {
-            b.ignore_touch(until_ms);
-        }
     }
 
     /// The merged expression currently on screen.
@@ -133,9 +134,7 @@ impl Runtime {
     /// haptics. Hardware power is cut only after the plane acknowledges Sleep.
     pub fn begin_shutdown(&mut self) {
         self.shutdown = true;
-        self.brain = None;
-        self.brain_haptic = None;
-        self.brain_command = None;
+        self.pending_command = None;
         self.pending_len = 0;
         self.pending_haptics = [None; 2];
         self.publish();
@@ -146,15 +145,20 @@ impl Runtime {
         if self.shutdown {
             return;
         }
+        #[cfg(all(feature = "display-metrics", target_os = "none"))]
+        let started = crate::platform::runtime::time::now_us();
         self.balance.observe(event);
-        if let Some(b) = self.brain.as_mut() {
-            b.event(event);
-        }
-        self.collect_brain_effects();
+        #[cfg(all(feature = "display-metrics", target_os = "none"))]
+        let native_started = crate::platform::runtime::time::now_us();
         let at = event.at_ms;
         self.affect.on_event(event);
         self.refresh_affect(at);
         self.publish();
+        #[cfg(all(feature = "display-metrics", target_os = "none"))]
+        metrics::sensor(
+            native_started.saturating_sub(started),
+            crate::platform::runtime::time::now_us().saturating_sub(native_started),
+        );
     }
 
     /// Apply one pointer sample from the input task.
@@ -165,12 +169,6 @@ impl Runtime {
         if self.shutdown {
             return false;
         }
-        let brain_accepted = self
-            .brain
-            .as_mut()
-            .filter(|b| b.active())
-            .map(|b| b.pointer(sample));
-        self.collect_brain_effects();
         let at = sample.at_ms;
         let press = sample.pressed && !self.pointer_down;
         self.pointer_down = sample.pressed;
@@ -183,11 +181,11 @@ impl Runtime {
             );
             self.refresh_affect(at);
             self.publish();
-            return brain_accepted.unwrap_or(true);
+            return true;
         }
         if !self.personality.accepts(at) {
             self.publish();
-            return brain_accepted.unwrap_or(false);
+            return false;
         }
         let mut output = self.personality.on_pointer(sample);
         if let Some(pattern) = output.haptic.take() {
@@ -196,7 +194,7 @@ impl Runtime {
         self.persona = output;
         self.refresh_affect(at);
         self.publish();
-        brain_accepted.unwrap_or(true)
+        true
     }
 
     /// The user is busy in a hub app: keep the fox awake (no wake face).
@@ -206,10 +204,6 @@ impl Runtime {
         if self.shutdown {
             return;
         }
-        if let Some(b) = self.brain.as_mut() {
-            b.interaction(now_ms);
-        }
-        self.collect_brain_effects();
         self.pointer_down = false;
         self.affect.on_interaction(now_ms);
         self.refresh_affect(now_ms);
@@ -240,150 +234,16 @@ impl Runtime {
             self.push_haptic(pattern);
         }
 
-        if let Some(b) = self.brain.as_mut() {
-            b.tick(now_ms);
+        if let Some(command) = affect_tick.command {
+            self.pending_command = Some(command);
         }
-        self.collect_brain_effects();
         self.publish();
-        let native = self.drain_haptics();
-        if self.native_urgent() {
-            self.brain_haptic = None;
-            native
-        } else if self.brain_active() {
-            self.brain_haptic.take()
-        } else {
-            self.brain_haptic = None;
-            self.brain_command = None;
-            native
-        }
+        self.drain_haptics()
     }
 
-    pub fn enable_brain(
-        &mut self,
-        source: &str,
-        now: u64,
-        allocator: &'static app_host::RawAllocator,
-        clock: Option<fn() -> u64>,
-    ) -> Result<(), alloc::string::String> {
-        let candidate =
-            match crate::companion::brain::Controller::new(source, now, allocator, clock) {
-                Ok(candidate) => candidate,
-                Err(error) => {
-                    self.brain = Some(crate::companion::brain::Controller::inactive(
-                        source,
-                        allocator,
-                        clock,
-                        error.clone(),
-                    ));
-                    self.publish();
-                    return Err(error);
-                }
-            };
-        self.brain = Some(candidate);
-        self.brain_haptic = None;
-        self.brain_command = None;
-        self.collect_brain_effects();
-        self.publish();
-        Ok(())
-    }
-    pub fn reload_brain(&mut self, source: &str, now: u64) -> Result<(), alloc::string::String> {
-        self.reload_brain_transaction(source, now, || Ok(()))
-    }
-    pub fn reload_brain_transaction(
-        &mut self,
-        source: &str,
-        now: u64,
-        commit: impl FnOnce() -> Result<(), alloc::string::String>,
-    ) -> Result<(), alloc::string::String> {
-        if self.shutdown {
-            return Err("shutdown in progress".into());
-        }
-        self.brain
-            .as_mut()
-            .ok_or_else(|| alloc::string::String::from("brain not configured"))?
-            .replace_with_commit(source, now, commit)?;
-        self.brain_haptic = None;
-        self.brain_command = None;
-        self.collect_brain_effects();
-        self.publish();
-        Ok(())
-    }
-    fn native_urgent(&self) -> bool {
-        matches!(
-            self.affect_expression,
-            Expression::Error | Expression::Panic
-        )
-    }
-    pub async fn reload_brain_transaction_async(
-        &mut self,
-        source: &str,
-        now: u64,
-        commit: impl AsyncFnOnce() -> Result<(), alloc::string::String>,
-    ) -> Result<(), alloc::string::String> {
-        if self.shutdown {
-            return Err("shutdown in progress".into());
-        }
-        self.brain
-            .as_mut()
-            .ok_or_else(|| alloc::string::String::from("brain not configured"))?
-            .replace_with_commit_async(source, now, commit)
-            .await?;
-        self.brain_haptic = None;
-        self.brain_command = None;
-        self.collect_brain_effects();
-        self.publish();
-        Ok(())
-    }
-    pub fn native_expression(&self) -> Expression {
-        if self.shutdown {
-            Expression::Sleep
-        } else {
-            merge_expression(self.persona.expression, self.affect_expression)
-        }
-    }
-    pub fn brain_source(&self) -> Option<&str> {
-        self.brain.as_ref().map(|b| b.source())
-    }
-    pub fn brain_active(&self) -> bool {
-        self.brain.as_ref().is_some_and(|b| b.active())
-    }
-    pub fn brain_error(&self) -> Option<&str> {
-        self.brain.as_ref().and_then(|b| b.error())
-    }
-    pub fn brain_leds(&mut self) -> Option<[[u8; 3]; 6]> {
-        if self.shutdown {
-            None
-        } else {
-            self.brain
-                .as_mut()
-                .and_then(|b| b.output())
-                .and_then(|o| o.leds)
-        }
-    }
-    pub fn take_brain_command(
-        &mut self,
-    ) -> Option<crate::companion::behavior::affect::SystemCommand> {
-        if self.brain_active() {
-            self.brain_command.take()
-        } else {
-            self.brain_command = None;
-            None
-        }
-    }
-    fn collect_brain_effects(&mut self) {
-        if let Some(o) = self.brain.as_mut().and_then(|b| b.output()) {
-            if let Some(h) = o.haptic {
-                if self
-                    .brain_haptic
-                    .is_none_or(|old| h.priority() > old.priority())
-                {
-                    self.brain_haptic = Some(h);
-                }
-            }
-            if let Some(c) = o.command {
-                self.brain_command = Some(c);
-            }
-        }
+    /// Consume a system action once. Terminal shutdown discards all actions.
+    pub fn take_command(&mut self) -> Option<crate::companion::behavior::affect::SystemCommand> {
+        self.pending_command.take()
     }
 
     fn refresh_affect(&mut self, now_ms: u64) {
@@ -404,31 +264,10 @@ impl Runtime {
             self.control
                 .set_balance(crate::companion::behavior::balance::BalanceVisual::REST);
         }
-        let brain = self.brain.as_mut().and_then(|b| b.output());
         let mut balance = self.control.balance();
         balance.rotation_reaction = self.affect_expression == Expression::Confused
             && self.affect_reason == crate::companion::behavior::affect::ReactionReason::ShakeSmall;
         self.control.set_balance(balance);
-        self.control
-            .set_play_pose(if self.shutdown || self.native_urgent() {
-                None
-            } else {
-                brain.and_then(|o| o.play.map(|(p, _)| p))
-            });
-        if !self.shutdown && !self.native_urgent() {
-            if let Some(o) = brain {
-                self.merged = o.expression;
-                self.control.set_expression(o.expression);
-                self.control.set_visual(FoxVisual {
-                    look_x: quantize(o.visual.look_x, 0.5),
-                    pulse: quantize(o.visual.pulse, 0.125),
-                    pet: quantize(o.visual.pet, 0.0625),
-                    lean_x: quantize(o.visual.lean_x, 1.),
-                    ..o.visual
-                });
-                return;
-            }
-        }
         let merged = if self.shutdown {
             Expression::Sleep
         } else {

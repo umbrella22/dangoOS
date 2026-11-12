@@ -2,8 +2,14 @@
 use super::*;
 pub(super) struct Drained {
     pub changed: bool,
+    #[cfg(feature = "display-metrics")]
+    pub events: u32,
+    #[cfg(feature = "display-metrics")]
+    pub work_us: u64,
+    #[cfg(feature = "display-metrics")]
+    pub yield_us: u64,
 }
-pub(super) async fn sensors(app: &mut MosaicoApp, runtime: &mut Runtime, now_ms: u64) -> Drained {
+pub(super) async fn sensors(app: &mut MosaicoApp, runtime: &mut Runtime) -> Drained {
     // ---- sensor events -> affect engine ----
     // Drained before the render so a shake that happened during the last
     // frame is part of this one. The channel is bounded and the producer
@@ -11,23 +17,17 @@ pub(super) async fn sensors(app: &mut MosaicoApp, runtime: &mut Runtime, now_ms:
 
     let mut sensor_count = 0u32;
     let mut sensors_changed = false;
+    #[cfg(feature = "display-metrics")]
+    let (mut work_us, mut yield_us) = (0, 0);
     while let Ok(event) = SENSOR_EVENTS.try_receive() {
+        #[cfg(feature = "display-metrics")]
+        let work_started = now_us();
         sensor_count = sensor_count.saturating_add(1);
         sensors_changed |= app.hub_mut().snapshot.observe(&event);
         // Off Home the fox is paused: the apps own the lights and the
         // motor, and only lasting state (battery, modules) reaches her.
-        match event.kind {
-            crate::companion::behavior::affect::EventKind::KeyDown => {
-                lights::native_reflex(now_ms, 260)
-            }
-            crate::companion::behavior::affect::EventKind::ModuleInserted(_)
-            | crate::companion::behavior::affect::EventKind::ModuleRemoved(_) => {
-                lights::native_reflex(now_ms, 5000)
-            }
-            _ => {}
-        }
-        // The AI key belongs to the system on every route. Do not also feed
-        // these gestures to the script brain, which can emit the same command.
+        // AI short/double gestures execute here on every route. Exclude them
+        // from the behavior runtime so one gesture issues one system action.
         use crate::companion::behavior::affect::{EventKind, EventSource};
         let ai_key = event.source == EventSource::ButtonPower
             && matches!(event.kind, EventKind::ButtonShort | EventKind::ButtonDouble);
@@ -45,8 +45,18 @@ pub(super) async fn sensors(app: &mut MosaicoApp, runtime: &mut Runtime, now_ms:
         }
         // A FIFO batch may deliver 32 IMU events at once. Keep their
         // order, but let input I2C completion and HCI pumping run between
-        // brain callbacks instead of waiting for the whole batch/render.
+        // sensor callbacks instead of waiting for the whole batch/render.
+        #[cfg(feature = "display-metrics")]
+        let yield_started = now_us();
+        #[cfg(feature = "display-metrics")]
+        {
+            work_us += yield_started.saturating_sub(work_started);
+        }
         embassy_futures::yield_now().await;
+        #[cfg(feature = "display-metrics")]
+        {
+            yield_us += now_us().saturating_sub(yield_started);
+        }
         if sensor_count >= SENSOR_DRAIN_MAX {
             break;
         }
@@ -57,6 +67,12 @@ pub(super) async fn sensors(app: &mut MosaicoApp, runtime: &mut Runtime, now_ms:
 
     Drained {
         changed: sensors_changed,
+        #[cfg(feature = "display-metrics")]
+        events: sensor_count,
+        #[cfg(feature = "display-metrics")]
+        work_us,
+        #[cfg(feature = "display-metrics")]
+        yield_us,
     }
 }
 #[allow(clippy::too_many_arguments)]

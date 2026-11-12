@@ -149,18 +149,6 @@ pub(super) async fn apply(effects: Vec<Effect>) {
             Effect::Run(id) => apps::request(false, Some(apps::Action::Run(id))),
             Effect::Stop => apps::request(false, Some(apps::Action::Stop)),
             Effect::SkinsChanged => crate::companion::skins::device::request_reload(),
-            Effect::Brain(action) => {
-                let verb = action.verb();
-                let text = match crate::companion::brain::control::execute(action).await {
-                    Ok(status) => alloc::format!("@ok {verb} {status}"),
-                    Err(e) => alloc::format!(
-                        "@err {verb}: {}",
-                        crate::companion::brain::store::error_line(&e)
-                    ),
-                };
-                reply(text.trim_end()).await;
-            }
-
             Effect::Reboot => {
                 if crate::services::power::button_task::shutdown_requested() {
                     reply("@err reboot shutdown pending").await;

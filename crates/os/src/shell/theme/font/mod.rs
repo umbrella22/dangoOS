@@ -12,6 +12,58 @@ use rs_lvgl_ui::Font;
 
 use crate::formats::bitmap_font::FontData;
 
+#[cfg(all(feature = "display-metrics", target_os = "none"))]
+pub(crate) mod metrics {
+    use core::cell::Cell;
+
+    #[derive(Clone, Copy, Default)]
+    pub struct Stats {
+        pub dsc_us: u64,
+        pub bitmap_us: u64,
+        pub dsc_calls: u32,
+        pub bitmap_calls: u32,
+    }
+    static STATS: critical_section::Mutex<Cell<Stats>> =
+        critical_section::Mutex::new(Cell::new(Stats {
+            dsc_us: 0,
+            bitmap_us: 0,
+            dsc_calls: 0,
+            bitmap_calls: 0,
+        }));
+    pub fn take() -> Stats {
+        critical_section::with(|cs| STATS.borrow(cs).take())
+    }
+    pub struct Scope {
+        bitmap: bool,
+        start: u64,
+    }
+    impl Scope {
+        pub fn new(bitmap: bool) -> Self {
+            Self {
+                bitmap,
+                start: crate::platform::runtime::time::now_us(),
+            }
+        }
+    }
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            let us = crate::platform::runtime::time::now_us().saturating_sub(self.start);
+            critical_section::with(|cs| {
+                let stats = STATS.borrow(cs);
+                let mut value = stats.get();
+                if self.bitmap {
+                    value.bitmap_us += us;
+                    value.bitmap_calls += 1;
+                } else {
+                    value.dsc_us += us;
+                    value.dsc_calls += 1;
+                }
+                stats.set(value);
+            });
+        }
+    }
+}
+
 struct FontSource {
     index: usize,
     recovery: FontData<'static>,
@@ -90,6 +142,8 @@ unsafe extern "C" fn get_glyph_dsc(
     letter: u32,
     _letter_next: u32,
 ) -> bool {
+    #[cfg(all(feature = "display-metrics", target_os = "none"))]
+    let _scope = metrics::Scope::new(false);
     if font.is_null() || out.is_null() {
         return false;
     }
@@ -122,6 +176,8 @@ unsafe extern "C" fn get_glyph_bitmap(
     g_dsc: *mut lvgl_sys::lv_font_glyph_dsc_t,
     draw_buf: *mut lvgl_sys::lv_draw_buf_t,
 ) -> *const c_void {
+    #[cfg(all(feature = "display-metrics", target_os = "none"))]
+    let _scope = metrics::Scope::new(true);
     if g_dsc.is_null() {
         return ptr::null();
     }

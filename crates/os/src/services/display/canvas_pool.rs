@@ -31,8 +31,10 @@
 //! comment.
 
 use alloc::boxed::Box;
-use alloc::vec;
-use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+
+use crate::platform::runtime::memory::PixelMemory;
+use board_s31::pixels::{PixelFormat, PixelSource};
 
 const FREE: u8 = 0;
 const WRITING: u8 = 1;
@@ -46,6 +48,9 @@ struct Slot {
     state: AtomicU8,
     /// Publication sequence number; larger is newer.
     seq: AtomicU32,
+    /// Encoding of the published words; protected by the same READY/READING
+    /// ownership boundary as their pixels. Native words remain the default.
+    big_endian: AtomicBool,
     ptr: *mut u16,
     len: usize,
 }
@@ -66,12 +71,19 @@ impl CanvasPool {
     /// Allocate the pool and its buffers once and leak them.
     pub fn leak(pixels: usize) -> &'static CanvasPool {
         let make = || {
-            let buffer: &'static mut [u16] = Box::leak(vec![0u16; pixels].into_boxed_slice());
+            // Direct PSRAM DMA needs cache-aligned storage. A Vec<u16> only
+            // promises two-byte alignment; PixelMemory guarantees 128 bytes.
+            let buffer = PixelMemory::new(pixels * core::mem::size_of::<u16>(), true);
+            let ptr = buffer.as_ptr().cast::<u16>();
+            let len = buffer.len() / core::mem::size_of::<u16>();
+            // The pool and both buffers live for the whole firmware run.
+            core::mem::forget(buffer);
             Slot {
                 state: AtomicU8::new(FREE),
                 seq: AtomicU32::new(0),
-                ptr: buffer.as_mut_ptr(),
-                len: buffer.len(),
+                big_endian: AtomicBool::new(false),
+                ptr,
+                len,
             }
         };
         Box::leak(Box::new(CanvasPool {
@@ -143,7 +155,8 @@ pub struct WriteLease {
 }
 
 impl WriteLease {
-    /// The canvas pixels. Contents are whatever the slot last held.
+    /// The canvas storage words. Contents are whatever the slot last held.
+    /// Before publication, write the complete frame in the selected encoding.
     pub fn pixels_mut(&mut self) -> &mut [u16] {
         let slot = &self.pool.slots[self.index];
         // SAFETY: this lease is the unique owner of the slot (state WRITING).
@@ -152,9 +165,20 @@ impl WriteLease {
 
     /// Publish the frame as the newest `READY` canvas.
     pub fn publish(self) {
+        self.publish_encoded(false);
+    }
+
+    /// Publish words whose in-memory bytes are RGB565 big-endian, suitable for
+    /// direct panel DMA. Every color store must already use `u16::to_be`.
+    pub fn publish_rgb565be(self) {
+        self.publish_encoded(true);
+    }
+
+    fn publish_encoded(self, big_endian: bool) {
         let slot = &self.pool.slots[self.index];
         let seq = self.pool.next_seq.fetch_add(1, Ordering::Relaxed);
         slot.seq.store(seq, Ordering::Relaxed);
+        slot.big_endian.store(big_endian, Ordering::Relaxed);
         slot.state.store(READY, Ordering::Release);
         core::mem::forget(self);
     }
@@ -176,15 +200,47 @@ pub struct ReadLease {
 }
 
 impl ReadLease {
-    /// The canvas pixels.
+    /// Logical RGB565 colors from a native publication, for LVGL/previews.
     pub fn pixels(&self) -> &[u16] {
+        assert!(!self.pool.slots[self.index]
+            .big_endian
+            .load(Ordering::Relaxed));
+        self.words()
+    }
+
+    fn words(&self) -> &[u16] {
         let slot = &self.pool.slots[self.index];
         // SAFETY: the slot is READING; no write lease can exist for it.
         unsafe { core::slice::from_raw_parts(slot.ptr, slot.len) }
     }
 
+    /// A color-aware source retaining the publication's explicit byte order.
+    /// The returned view cannot outlive this lease, including during DMA.
+    pub fn source(&self, size: (u16, u16)) -> PixelSource<'_> {
+        let words = self.words();
+        if self.pool.slots[self.index]
+            .big_endian
+            .load(Ordering::Relaxed)
+        {
+            // SAFETY: u16 storage has no padding, is initialized by the write
+            // lease, and remains immutable while this read lease exists.
+            let bytes = unsafe {
+                core::slice::from_raw_parts(
+                    words.as_ptr().cast::<u8>(),
+                    core::mem::size_of_val(words),
+                )
+            };
+            PixelSource::bytes(bytes, size, size.0 as usize * 2, PixelFormat::Rgb565Be)
+        } else {
+            PixelSource::rgb565(words, size)
+        }
+    }
+
     /// Raw address for LVGL's canvas descriptor (host preview path).
     pub fn as_ptr(&self) -> *const u16 {
+        assert!(!self.pool.slots[self.index]
+            .big_endian
+            .load(Ordering::Relaxed));
         self.pool.slots[self.index].ptr
     }
 }
@@ -218,6 +274,46 @@ mod tests {
         write.publish();
         let read = pool.take_ready().expect("ready frame");
         assert!(read.pixels().iter().all(|&p| p == 0xABCD));
+    }
+
+    #[test]
+    fn wire_publication_borrows_exact_bytes_and_recycled_native_frame_resets_encoding() {
+        use board_s31::geometry::DirtyRect;
+        let pool = pool();
+        let colors: alloc::vec::Vec<u16> = (0..16).map(|i| i * 4093).collect();
+        let mut write = pool.acquire().unwrap();
+        for (out, &color) in write.pixels_mut().iter_mut().zip(&colors) {
+            *out = color.to_be();
+        }
+        write.publish_rgb565be();
+        let wire = pool.take_ready().unwrap();
+        let source = wire.source((4, 4));
+        let area = DirtyRect {
+            x0: 0,
+            y0: 0,
+            x1: 3,
+            y1: 3,
+        };
+        let direct = source.contiguous(area, PixelFormat::Rgb565Be).unwrap();
+        let expected: alloc::vec::Vec<u8> = colors.iter().flat_map(|p| p.to_be_bytes()).collect();
+        assert_eq!(direct, expected);
+        assert_eq!(direct.as_ptr(), wire.words().as_ptr().cast::<u8>());
+        for (i, &color) in colors.iter().enumerate() {
+            assert_eq!(source.rgb565_at(i % 4, i / 4), color);
+        }
+        // Hold the other slot so the just-released wire slot is reused.
+        let other = pool.acquire().unwrap();
+        drop(wire);
+        let mut write = pool.acquire().unwrap();
+        write.pixels_mut().copy_from_slice(&colors);
+        write.publish();
+        let native = pool.take_ready().unwrap();
+        assert_eq!(native.pixels(), colors);
+        assert!(native
+            .source((4, 4))
+            .contiguous(area, PixelFormat::Rgb565Be)
+            .is_none());
+        drop(other);
     }
 
     #[test]

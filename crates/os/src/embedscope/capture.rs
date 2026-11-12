@@ -49,9 +49,6 @@ impl FinalCapture {
     pub fn clear_outside(&mut self, at: (u16, u16), size: (u16, u16)) {
         self.frame.clear_outside(at, size);
     }
-    pub fn blit(&mut self, pixels: &[u16], pitch: usize, area: DirtyRect, at: (u16, u16)) {
-        self.frame.blit(pixels, pitch, area, at);
-    }
     pub fn blit_source(
         &mut self,
         source: board_s31::pixels::PixelSource<'_>,
@@ -87,9 +84,15 @@ mod tests {
         let _guard = LOCK.lock().unwrap_or_else(|p| p.into_inner());
         clear_queues();
         let mut plane = FinalCapture::new();
-        plane.blit(
-            &[0x1122, 0x3344],
-            2,
+        // The plane now supplies big-endian Home storage. Capture still
+        // exposes the protocol's little-endian logical RGB565 pixels.
+        plane.blit_source(
+            board_s31::pixels::PixelSource::bytes(
+                &[0x11, 0x22, 0x33, 0x44],
+                (2, 1),
+                4,
+                board_s31::pixels::PixelFormat::Rgb565Be,
+            ),
             DirtyRect {
                 x0: 0,
                 y0: 0,
@@ -106,9 +109,8 @@ mod tests {
         assert!(matches!(capture.start(), Err(Status::Busy)));
 
         plane.clear_outside((0, 0), (1, 1));
-        plane.blit(
-            &[0xabcd],
-            1,
+        plane.blit_source(
+            board_s31::pixels::PixelSource::rgb565(&[0xabcd], (1, 1)),
             DirtyRect {
                 x0: 0,
                 y0: 0,

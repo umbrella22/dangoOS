@@ -69,7 +69,6 @@ impl Session {
         match self.kind {
             UploadKind::App => STAGING,
             UploadKind::Skin => crate::companion::skins::STAGING,
-            UploadKind::Brain => crate::companion::brain::store::STAGING,
             UploadKind::Photo => PHOTO_STAGING,
             UploadKind::Fonts => crate::services::resources::fonts::STAGING,
             UploadKind::VoiceConfig => crate::services::voice::config::STAGING,
@@ -127,16 +126,6 @@ impl Session {
         let want = u32::from_str_radix(crc, 16).map_err(|_| format!("bad crc {crc}"))?;
         if self.kind == UploadKind::Photo && (!photo_path_is_safe(rel) || size == 0) {
             return Err("photo upload requires a nonempty JPG/JPEG/PNG/BIN file".into());
-        }
-        if self.kind == UploadKind::Brain
-            && (rel != crate::companion::brain::store::UPLOAD_NAME
-                || size == 0
-                || size as usize > crate::companion::brain::SOURCE_MAX)
-        {
-            return Err(format!(
-                "brain upload requires {} of 1..65536 bytes",
-                crate::companion::brain::store::UPLOAD_NAME
-            ));
         }
         if self.kind == UploadKind::Fonts
             && (rel != "fonts.bin" || size as usize != crate::services::resources::fonts::BYTES)

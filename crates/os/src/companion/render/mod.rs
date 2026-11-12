@@ -47,6 +47,16 @@ pub const VIEW_ORIGIN: (usize, usize) = ((VIEW_W - W) / 2, (VIEW_H - H) / 2 + 16
 /// Transparent palette index in sprite RLE.
 pub const TRANSPARENT: u8 = 255;
 
+/// Store a logical RGB565 color as native words or as big-endian wire bytes.
+/// Filtering and palette lookup always use logical colors before this boundary.
+pub(crate) const fn encode_rgb565<const BIG_ENDIAN: bool>(color: u16) -> u16 {
+    if BIG_ENDIAN {
+        color.to_be()
+    } else {
+        color
+    }
+}
+
 /// One RLE image placed on the canvas.
 #[derive(Clone, Copy, Debug)]
 pub struct Img {

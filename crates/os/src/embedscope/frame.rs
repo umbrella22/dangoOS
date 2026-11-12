@@ -30,7 +30,8 @@ impl FinalFrame {
             }
         }
     }
-    pub fn blit(&mut self, source: &[u16], pitch: usize, area: DirtyRect, at: (u16, u16)) {
+    #[cfg(test)]
+    fn blit(&mut self, source: &[u16], pitch: usize, area: DirtyRect, at: (u16, u16)) {
         if area.is_empty() {
             return;
         }

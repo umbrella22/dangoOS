@@ -163,12 +163,7 @@ impl<'a> PixelSource<'a> {
                 }
                 if stored.bytes_per_pixel() == 2 && format.bytes_per_pixel() == 2 {
                     let start = y * self.stride + area.x0 as usize * 2;
-                    for (dst, src) in target
-                        .chunks_exact_mut(2)
-                        .zip(bytes[start..start + row_bytes].chunks_exact(2))
-                    {
-                        dst.copy_from_slice(&[src[1], src[0]]);
-                    }
+                    packing::swap_rgb565_bytes(&bytes[start..start + row_bytes], target);
                     continue;
                 }
             }

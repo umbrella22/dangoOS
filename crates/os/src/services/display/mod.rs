@@ -10,6 +10,8 @@ pub mod geometry;
 pub mod lvgl_port;
 #[cfg(target_os = "none")]
 pub(crate) mod plane;
+#[cfg(any(all(feature = "display-metrics", target_os = "none"), test))]
+pub(crate) mod refresh_metrics;
 #[cfg(any(test, feature = "display-simulator"))]
 pub mod simulator;
 #[cfg(target_os = "none")]

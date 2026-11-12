@@ -111,11 +111,33 @@ impl Frames {
         } else if !port.is_busy() {
             let skin_feedback_on_frame = self.skin_loading_rendered;
             #[cfg(feature = "display-metrics")]
+            let _ = lvgl_port::take_flush_stats();
+            #[cfg(feature = "display-metrics")]
+            let _ = crate::shell::theme::font::metrics::take();
+            #[cfg(feature = "display-metrics")]
             let render_started = now_us();
             port.poll_pointer();
+            #[cfg(feature = "display-metrics")]
+            let poll_flush = lvgl_port::take_flush_stats();
+            #[cfg(feature = "display-metrics")]
+            let _ = crate::shell::theme::font::metrics::take();
+            #[cfg(feature = "display-metrics")]
+            let handler_started = now_us();
+            #[cfg(feature = "display-metrics")]
+            crate::services::display::refresh_metrics::begin();
             ui.timer_handler();
             #[cfg(feature = "display-metrics")]
-            let render_us = now_us().saturating_sub(render_started);
+            let handler_end = now_us();
+            #[cfg(feature = "display-metrics")]
+            let refresh = crate::services::display::refresh_metrics::finish();
+            #[cfg(feature = "display-metrics")]
+            let render_us = handler_end.saturating_sub(render_started);
+            #[cfg(feature = "display-metrics")]
+            let handler_us = handler_end.saturating_sub(handler_started);
+            #[cfg(feature = "display-metrics")]
+            let flush = lvgl_port::take_flush_stats();
+            #[cfg(feature = "display-metrics")]
+            let font = crate::shell::theme::font::metrics::take();
 
             // Callbacks fired by the timer handler only queue messages.
             match ui.drain(app, DRAIN_MAX) {
@@ -146,6 +168,30 @@ impl Frames {
                 }
             }
             if let Some((screen, damage)) = port.take_frame() {
+                #[cfg(feature = "display-metrics")]
+                let draw_end_us = now_us();
+                #[cfg(feature = "display-metrics")]
+                info!(
+                    "display.draw end={} pointer_us={} handler_us={} flush_us={} flush_calls={} flush_pixels={}",
+                    draw_end_us, handler_started.saturating_sub(render_started), handler_us,
+                    flush.us, flush.calls, flush.pixels
+                );
+                #[cfg(feature = "display-metrics")]
+                info!(
+                    "display.lvgl end={} refr_us={} draw_us={} refr_n={} draw_n={} idle_n={} bad={}",
+                    draw_end_us, refresh.refresh_us, refresh.render_us,
+                    refresh.refresh_calls, refresh.render_calls, refresh.without_render, refresh.invalid
+                );
+                #[cfg(feature = "display-metrics")]
+                info!(
+                    "display.poll end={} flush_us={} flush_calls={} flush_pixels={}",
+                    draw_end_us, poll_flush.us, poll_flush.calls, poll_flush.pixels
+                );
+                #[cfg(feature = "display-metrics")]
+                info!(
+                    "display.font end={} dsc_us={} bitmap_us={} dsc_calls={} bitmap_calls={}",
+                    draw_end_us, font.dsc_us, font.bitmap_us, font.dsc_calls, font.bitmap_calls
+                );
                 #[cfg(feature = "display-metrics")]
                 info!(
                     "display.render kind=screen end={} us={}",
@@ -201,7 +247,7 @@ fn step_slide(
                 return slide;
             }
             // Navigation can mark the view dirty after this loop's regular
-            // drain (diagnostics and brain commands do this). Reconcile before
+            // drain (diagnostics and behavior commands do this). Reconcile before
             // rendering the target, while the snapshot still holds the old
             // pixels. Otherwise that work consumes the next animation step.
             if let Err(error) = ui.drain(app, DRAIN_MAX) {

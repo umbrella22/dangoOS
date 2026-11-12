@@ -79,9 +79,15 @@ async fn transfer(
     }
 }
 
-/// 40 MHz stays within the CO5300 published quad-write timing.
-/// The locked HAL's 160 MHz default SPI source divides exactly by four.
-const SPI_CLOCK_HZ: u32 = 40_000_000;
+/// The default is 160 MHz / 4, within CO5300 published quad-write timing.
+/// The opt-in / 3 experiment exceeds that timing and is not a panel rating.
+const SPI_CLOCK_HZ: u32 = if cfg!(feature = "display-clock-53mhz") {
+    // The HAL rounds down. Request the ceiling of 160 MHz / 3 so the
+    // fractional-Hz difference does not select the next divider (40 MHz).
+    53_333_334
+} else {
+    40_000_000
+};
 const COLMOD: u8 = if cfg!(feature = "display-rgb888") {
     0x77
 } else {
@@ -469,7 +475,28 @@ impl Display<Async> {
                 .duration_since_epoch()
                 .as_micros();
         }
-        let (result, next) = embassy_futures::join::join(
+        let clocked_pack = async {
+            // This future is polled after the transfer future starts its DMA,
+            // while its function-clock guard still owns the active source.
+            #[cfg(feature = "display-metrics")]
+            let clock = {
+                let source = esp_hal::peripherals::HP_SYS_CLKRST::regs()
+                    .gpspi2_ctrl0()
+                    .read();
+                let divider = esp_hal::peripherals::SPI2::regs().clock().read();
+                (
+                    source.clk_src_sel().bits(),
+                    source.hs_clk_div_num().bits(),
+                    divider.clkdiv_pre().bits(),
+                    divider.clkcnt_n().bits(),
+                )
+            };
+            let next = pack_next.await;
+            #[cfg(not(feature = "display-metrics"))]
+            let clock = ();
+            (next, clock)
+        };
+        let (result, (next, clock)) = embassy_futures::join::join(
             transfer(
                 faulted,
                 spi.half_duplex_write_async(
@@ -480,13 +507,29 @@ impl Display<Async> {
                     bytes,
                 ),
             ),
-            pack_next,
+            clocked_pack,
         )
         .await;
         #[cfg(feature = "display-metrics")]
         {
-            stats.transfer_us += transfer_started.elapsed().as_micros();
+            let elapsed = transfer_started.elapsed().as_micros();
+            stats.transfer_us += elapsed;
+            let raw_minimum = bytes.len() as u64 * 2_000_000 / u64::from(SPI_CLOCK_HZ);
+            if elapsed < raw_minimum {
+                log::info!(
+                    "display.clock bytes={} us={} src={} div={} pre={} n={} cpu={}",
+                    bytes.len(),
+                    elapsed,
+                    clock.0,
+                    clock.1,
+                    u32::from(clock.2) + 1,
+                    u32::from(clock.3) + 1,
+                    esp_hal::clock::cpu_clock().as_mhz()
+                );
+            }
         }
+        #[cfg(not(feature = "display-metrics"))]
+        let _ = clock;
         result.map(|()| next)
     }
 
@@ -667,15 +710,31 @@ pub fn try_init(
     }
 
     log::info!(
-        "CO5300 已启动: {}x{} QSPI@{}MHz (RST/SLPOUT/DISPON complete)",
+        "CO5300 已启动: {}x{} QSPI@{}Hz (RST/SLPOUT/DISPON complete)",
         board::LCD_WIDTH,
         board::LCD_HEIGHT,
-        SPI_CLOCK_HZ / 1_000_000,
+        SPI_CLOCK_HZ,
     );
     log::info!(
         "CO5300 input={:?}, staging=PSRAM/{CHUNK_BYTES}B tx={BOOT_TX_BYTES}B",
         PANEL_FORMAT
     );
+    #[cfg(feature = "display-metrics")]
+    {
+        // The driver owns SPI2 and no transfer is active here. Reading CLOCK
+        // has no side effect; these are register values, not measured edges.
+        let clock = esp_hal::peripherals::SPI2::regs().clock().read();
+        log::info!(
+            "display.clock requested={} raw={} pre={} n={} h={} l={} bypass={}",
+            SPI_CLOCK_HZ,
+            clock.bits(),
+            clock.clkdiv_pre().bits(),
+            clock.clkcnt_n().bits(),
+            clock.clkcnt_h().bits(),
+            clock.clkcnt_l().bits(),
+            clock.clk_equ_sysclk().bit_is_set()
+        );
+    }
     Ok(display)
 }
 

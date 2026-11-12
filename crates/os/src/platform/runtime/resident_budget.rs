@@ -1,4 +1,4 @@
-//! Scheduler-backed clock for the resident Lua VM only.
+//! Scheduler-backed clock for bounded foreground script and native UI work.
 //!
 //! Each core accounts only for its own trace notifications. esp-rtos identifies
 //! tasks by pointer; `init` registers the calling pinned executor thread.

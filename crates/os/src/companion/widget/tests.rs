@@ -23,30 +23,38 @@ fn mount<'a>(control: &Rc<FoxControl>, display: &'a Display) -> rs_lvgl_ui::Ui<(
     ui
 }
 
-#[cfg(feature = "lua-engine")]
 #[test]
-fn resident_lua_selects_pose_while_rust_renderer_keeps_animating_and_expires_it() {
+fn native_activity_animates_until_released_and_shutdown_selects_sleep() {
     let _guard = test_support::lock();
     unsafe { rs_lvgl::deinit() };
     rs_lvgl::init();
     let display = Display::register::<_, { 480 * 4 }>(480, 480, |_| {}).unwrap();
     let control = FoxControl::new(Expression::Idle);
     let mut runtime = crate::companion::runtime::Runtime::new(0, Rc::clone(&control));
-    runtime.enable_brain("local first=true;return {on_event=function()end,tick=function()fox.set_expression('Happy');if first then fox.play('Charging',500);first=false end end}",0,&lua_engine::GLOBAL_ALLOCATOR,None).unwrap();
+    runtime.on_sensor(crate::companion::behavior::affect::SensorEvent {
+        at_ms: 0,
+        source: crate::companion::behavior::affect::EventSource::System,
+        kind: crate::companion::behavior::affect::EventKind::Activity(Expression::Listening),
+    });
     let mut ui = mount(&control, &display);
     for now in [50, 100, 150, 200] {
         runtime.tick(now);
         ui.tick(50).unwrap();
     }
-    assert_eq!(control.rendered_pose.get(), Some(FoxPose::Charging));
+    assert_eq!(control.rendered_pose.get(), Some(FoxPose::Listening));
     assert!(
         control.rendered_frames() >= 4,
-        "Rust redraws independent animation frames between Lua decisions"
+        "Renderer advances animation between sensor events"
     );
+    runtime.on_sensor(crate::companion::behavior::affect::SensorEvent {
+        at_ms: 550,
+        source: crate::companion::behavior::affect::EventSource::System,
+        kind: crate::companion::behavior::affect::EventKind::Activity(Expression::Idle),
+    });
     runtime.tick(550);
     ui.tick(50).unwrap();
     ui.tick(60).unwrap();
-    assert_eq!(control.rendered_pose.get(), Some(FoxPose::Happy));
+    assert_eq!(control.rendered_pose.get(), Some(FoxPose::Idle));
     runtime.begin_shutdown();
     ui.tick(5).unwrap();
     ui.tick(60).unwrap();
@@ -79,7 +87,7 @@ fn a_scale_change_waits_for_the_cadence() {
     assert_eq!(
         control.rendered_frames(),
         before,
-        "eased gaze/scale rides the 50 ms cadence, not every loop"
+        "eased gaze/scale rides the normal cadence, not every loop"
     );
     ui.tick(FRAME_INTERVAL_MS).expect("tick");
     assert_eq!(
@@ -389,9 +397,8 @@ fn native_composed_status_draws_above_the_character_and_clears_after_unmount() {
     }
 }
 
-#[cfg(feature = "lua-engine")]
 #[test]
-fn default_brain_touch_ages_after_drains_and_publishes_an_urgent_frame() {
+fn native_touch_ages_after_drains_and_publishes_an_urgent_frame() {
     let _guard = test_support::lock();
     unsafe { rs_lvgl::deinit() };
     rs_lvgl::init();
@@ -399,14 +406,6 @@ fn default_brain_touch_ages_after_drains_and_publishes_an_urgent_frame() {
     let control = FoxControl::new(Expression::Idle);
     control.set_plane_mode(true);
     let mut runtime = crate::companion::runtime::Runtime::new(0, Rc::clone(&control));
-    runtime
-        .enable_brain(
-            crate::companion::brain::DEFAULT_SOURCE,
-            0,
-            &lua_engine::GLOBAL_ALLOCATOR,
-            None,
-        )
-        .unwrap();
     let mut ui = mount(&control, &display);
     runtime.tick(1_000);
     ui.tick(50).unwrap();
@@ -421,7 +420,7 @@ fn default_brain_touch_ages_after_drains_and_publishes_an_urgent_frame() {
         })
     );
 
-    // The pre-drain timestamp leaves the real default brain's pulse at zero.
+    // The pre-drain timestamp leaves the personality pulse at zero.
     runtime.tick(1_000);
     assert_eq!(control.visual().pulse, 0.0);
     ui.tick(5).unwrap();
@@ -429,7 +428,7 @@ fn default_brain_touch_ages_after_drains_and_publishes_an_urgent_frame() {
     assert!(control.take_frame().is_none());
 
     // A fresh timestamp includes time spent draining input. The existing
-    // pulse-rise policy must publish actual pixels before the 50 ms cadence.
+    // pulse-rise policy must publish actual pixels before the normal cadence.
     runtime.tick(1_020);
     assert!(control.visual().pulse > 0.0);
     assert!(control.urgent.get());

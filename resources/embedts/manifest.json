@@ -8,55 +8,6 @@
   "host_abi": 3,
   "artifacts": [
     {
-      "source": "examples/brain/default.ts",
-      "source_sha256": "00cbb379cd77cf9afe824dcd090b8cbda5094a171d03453595f94a6e5b2ba889",
-      "path": "brain/default.etb.hex",
-      "bytes": 48753,
-      "sha256": "918f61ef3cf97b2a490743aa1bba5b9d297a3666ff928887dbc2f5e9d0e897c2"
-    },
-    {
-      "source": "tests/fixtures/dangoos/brain-angry.mjs",
-      "source_sha256": "188aca0d99029c66fd5f73e60e7e1f039d1ebf3590e2f1cf88375cb64e0dc7c6",
-      "path": "fixtures/brain-angry.etb",
-      "bytes": 336,
-      "sha256": "d2da6eeaccec2a017938bfd293035e72f4b58213016e8bfa7b6f098d111909f6"
-    },
-    {
-      "source": "tests/fixtures/dangoos/brain-bad-first.mjs",
-      "source_sha256": "250f591e7bed61ac5f9a352230ce81638f4fe1e05c887be4cc4ee4104c9eb98d",
-      "path": "fixtures/brain-bad-first.etb",
-      "bytes": 246,
-      "sha256": "973faaf3d33b308a5c29618b3e4acdeda57a33ff912116f8b654ecb39c990643"
-    },
-    {
-      "source": "tests/fixtures/dangoos/brain-forbidden.mjs",
-      "source_sha256": "3eca5caf9a78a35df409b79911f066a1559258f75ef678159f626cb603cee00a",
-      "path": "fixtures/brain-forbidden.etb",
-      "bytes": 241,
-      "sha256": "9b1f2b524854815a343b2ad78cafa3afe6a53af12594b3ecaad9b36dab4ac72d"
-    },
-    {
-      "source": "tests/fixtures/dangoos/brain-happy.mjs",
-      "source_sha256": "e369c93c1adaf21475123680a5acb119349467e953e9faed3fcdd7bae1206766",
-      "path": "fixtures/brain-happy.etb",
-      "bytes": 336,
-      "sha256": "7d421f28fd730322505f393c310d2e2c08dd01e5f9d6a5571a491f5e4d809cb6"
-    },
-    {
-      "source": "tests/fixtures/dangoos/brain-later-fault.mjs",
-      "source_sha256": "b70d59f3f3747f2b5f21b81e6455580faf368ec747b37775a9038d04c68265f6",
-      "path": "fixtures/brain-later-fault.etb",
-      "bytes": 343,
-      "sha256": "7f1e0d1c6ecdbc67f4b80e94891ba4bcd1dc11daf8c8bee029ef52c213cdcf7a"
-    },
-    {
-      "source": "tests/fixtures/dangoos/brain-loop.mjs",
-      "source_sha256": "1cbcdf8bb5b547682ce486e6c9a9e603946e131a02d37dfc5c3d2de9cfa64358",
-      "path": "fixtures/brain-loop.etb",
-      "bytes": 174,
-      "sha256": "06375cf6a36ba68a275a94c900732d43d13f5e9822bd8ee107cce9e2eee68a0f"
-    },
-    {
       "source": "tests/fixtures/dangoos/host-request.mjs",
       "source_sha256": "34ce28b474cf180a581e7e3267f89c03e49746cd70328250f83b6fff9da1f287",
       "path": "fixtures/host-request.etb",

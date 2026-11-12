@@ -2606,9 +2606,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f86cf37026ed790b7d5d2b5c98444f1943ed1702afb4d6519de7b668a25276f6"
+checksum = "3f5b1ee97537f11769f9fc258cf3e27fbb5ae3d6a0fe04e08abf3598fdf12fd0"
 dependencies = [
  "bitflags 2.13.2",
  "cstr_core",
@@ -2623,9 +2623,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl_codegen"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a89a9c7bbf07f6ea96c0406df110efcc81d3f5461028f383e9e6c2d8efc2ae1c"
+checksum = "33c82398624dfa8bd8333694702b63384bba6440b410513767827bd8a344615e"
 dependencies = [
  "Inflector",
  "lazy_static",
@@ -2637,9 +2637,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl_sys"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eccc709548609804d1b2d45ce053b4d592d951e096bf496f7571f9f66b69fcb6"
+checksum = "1fb97df692423d7038e033ac73108939756891319936505263f3f92228f3474a"
 dependencies = [
  "bindgen",
  "cc",
@@ -2648,9 +2648,9 @@ dependencies = [
 
 [[package]]
 name = "rs_lvgl_ui"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "752f7f485356a4640caa4742fdb07cf1a47399eea372203265a56bd46ad3b2b5"
+checksum = "103a9c3446360e71539f20cdd7824a46f34c5b1e58433c866a0e516ba84576a3"
 dependencies = [
  "cstr_core",
  "cty",

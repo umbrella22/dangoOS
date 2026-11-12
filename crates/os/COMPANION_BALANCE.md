@@ -4,7 +4,7 @@
 
 ## 运行路径
 
-`services/input/sensors.rs` 发布带物理单位和采样时间的 `Accel` / `Gyro`。`Runtime` 将同一事件交给情绪引擎、常驻 brain 和 `behavior::balance::Balance`。每次 UI 更新，`Balance::tick` 发布 `BalanceVisual` 到 `FoxControl`，控件将其与入场、触摸和呼吸组合为 `FoxInput`。
+`services/input/sensors.rs` 发布带物理单位和采样时间的 `Accel` / `Gyro`。`Runtime` 将同一事件交给Rust 情绪引擎和 `behavior::balance::Balance`。每次 UI 更新，`Balance::tick` 发布 `BalanceVisual` 到 `FoxControl`，控件将其与入场、触摸和呼吸组合为 `FoxInput`。
 
 ```mermaid
 stateDiagram-v2

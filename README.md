@@ -104,8 +104,9 @@ python3 scripts/release/package.py build --out target/release-local \
 
 显示使用 40 MHz 四线 QSPI，默认 RGB565，原生页面按变化区域刷新。`display-rgb888` 提供局部控件保留 24 位颜色的候选构建，`display-low-latency` 单独控制小区域的 TE 等待实验；两者均需按设备对照结果验收。实现、帧间隔、输入延迟口径与验证边界见[显示管线](crates/os/DISPLAY_PIPELINE.md)。
 
-默认固件使用 Lua。`cargo fw-ts` 关闭默认 features 并接入外部 EmbedTS 引擎；每份固件只链接一个脚本引擎，同时选择或均未选择时构建失败。
+团子行为由固件内的 Rust 运行时提供，随固件更新；不再加载 Lua 或 TS 行为脚本。
+默认前台应用引擎使用 Lua。`cargo fw-ts` 关闭默认 features 并接入外部 EmbedTS 引擎；每份固件只链接一个脚本引擎，同时选择或均未选择时构建失败。
 
-TypeScript 构建器、引擎、SDK 和应用源码维护于独立的 [EmbedTypescript](https://github.com/umbrella22/EmbedTypescript) 仓库，按 `builder/`、`engine/`、`sdk/`、`examples/` 组织。本仓库仅保留 Rust 宿主适配及 `resources/embedts/` 预编译输入，固件构建和测试不编译 TS。应用入口使用 **EmbedTS Bytecode（`.etb`）**，brain 持久化使用 `etb1:` 信封。接入与更新流程见 [EmbedTS 接入](crates/os/EMBEDTS.md)。
+TypeScript 构建器、引擎、SDK 和应用源码维护于独立的 [EmbedTypescript](https://github.com/umbrella22/EmbedTypescript) 仓库，按 `builder/`、`engine/`、`sdk/`、`examples/` 组织。本仓库仅保留 Rust 宿主适配及 `resources/embedts/` 预编译输入，固件构建和测试不编译 TS。应用入口使用 **EmbedTS Bytecode（`.etb`）**。接入与更新流程见 [EmbedTS 接入](crates/os/EMBEDTS.md)。
 
 引擎依赖在根 `Cargo.toml` 中固定到 GitHub 的完整 commit SHA，OS 与基准 runner 共用该版本，`Cargo.lock` 记录来源。构建本仓库无需相邻的 EmbedTypescript checkout；首次运行 `cargo fetch --locked` 后可离线检查。CI 直接使用锁定依赖，OS 中不安装 pnpm 或构建 TS 源码。

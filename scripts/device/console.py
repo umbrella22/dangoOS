@@ -8,7 +8,7 @@
     scripts/device/console.py status | reboot [--follow]
     scripts/device/console.py skin-push <skin-dir> [--select] [--follow]
     scripts/device/console.py skin-select <id> | skin-rm <id> | skin-ls
-    scripts/device/console.py brain-push <script.lua> | brain-reload | brain-default | brain-status
+    scripts/device/console.py brain-status
     scripts/device/console.py photo-push <image> [--name subdir/name.jpg] [--run]
     scripts/device/console.py recovery | boot-status
     scripts/device/console.py update-status | update-check | update-install | update-cancel
@@ -58,7 +58,6 @@ PREFIX = "@mosaico "
 SAFE_PART = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,47}$")
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,63}$")
 FILE_MAX = 1024 * 1024
-BRAIN_MAX = 64 * 1024
 CONSOLE_LINE_MAX = 320
 VOICE_TEXT_BYTES = 1024
 
@@ -334,44 +333,6 @@ def push_voice_resource(dev, data, font=False):
         print(dev.command("voice-reload", check=False))
 
 
-def read_brain(path):
-    with open(path, "rb") as f:
-        data = f.read(BRAIN_MAX + 1)
-    if not 0 < len(data) <= BRAIN_MAX:
-        raise SystemExit("brain script must contain 1..65536 bytes")
-    if str(path).endswith(".etb"):
-        data = b"etb1:" + data.hex().encode("ascii")
-        if len(data) > BRAIN_MAX:
-            raise SystemExit("brain bytecode envelope exceeds 64 KiB")
-    try:
-        data.decode("utf-8")
-    except UnicodeDecodeError:
-        raise SystemExit("brain script must be UTF-8") from None
-    return data
-
-
-def push_brain(dev, data):
-    dev.command("hello")
-    dev.command("brain-begin")
-    filename = "source.etb.hex" if data.startswith(b"etb1:") else "source.lua"
-    try:
-        dev.command(f"file {filename} {len(data)} {zlib.crc32(data):08x}")
-        dev.ser.write(data)
-        line = dev.reply(timeout=30.0)
-        if not line.startswith(f"@ok file {filename}"):
-            raise SystemExit(f"brain upload: {line}")
-        # Firmware replies only after candidate init, first tick, durable write,
-        # and the UI-owned VM swap. A syntax/timeout/write error keeps the old VM.
-        line = dev.command("brain-commit", timeout=30.0)
-    except (SystemExit, OSError, serial.SerialException):
-        try:
-            dev.command("abort", check=False, timeout=2.0)
-        except (SystemExit, OSError, serial.SerialException):
-            pass
-        raise
-    print(f"{line}; {len(data)} B crc={zlib.crc32(data):08x}")
-
-
 def read_photo(path, name=None):
     rel = name if name is not None else os.path.basename(path)
     parts = rel.split("/")
@@ -478,8 +439,8 @@ def main():
     wireless = ("wifi-status", "wifi-on", "wifi-scan", "wifi-connect", "wifi-disconnect", "wifi-off", "wifi-saved", "wifi-saved-connect", "wifi-forget", "wifi-auto", "bt-status", "bt-on", "bt-off", "bt-restart")
     updates = ("update-status", "update-check", "update-install", "update-cancel", "update-url")
     updates += ("update-proxy",)
-    ap.add_argument("action", choices=["bundle-push", "fonts-push", "fonts-status", "push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-push", "brain-reload", "brain-default", "brain-status", "photo-push", "recovery", "boot-status", "nand-info", "nand-status", "nand-format", "power-status", "screen-off", "screen-on", *wireless, *camera, *updates, *audio, *voice])
-    ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id, brain script or photo file")
+    ap.add_argument("action", choices=["bundle-push", "fonts-push", "fonts-status", "push", "run", "stop", "reload", "ls", "rm", "rmdata", "status", "reboot", "skin-push", "skin-select", "skin-rm", "skin-ls", "brain-status", "photo-push", "recovery", "boot-status", "nand-info", "nand-status", "nand-format", "power-status", "screen-off", "screen-on", *wireless, *camera, *updates, *audio, *voice])
+    ap.add_argument("target", nargs="?", help="app/skin directory, app/skin id or photo file")
     ap.add_argument("--name", help="photo path relative to Album photos (photo-push only)")
     ap.add_argument("--select", action="store_true", help="select after skin-push")
     ap.add_argument("--run", action="store_true", help="open the app after pushing")
@@ -489,7 +450,7 @@ def main():
     ap.add_argument("--duration-ms", type=int, default=1000, help="audio-record duration in milliseconds")
     args = ap.parse_args()
 
-    needs_target = args.action in ("bundle-push", "fonts-push", "push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "brain-push", "photo-push", "screen-off", "wifi-connect", "wifi-saved-connect", "wifi-forget", "wifi-auto", "update-url", "update-proxy", "audio-play", "audio-record", "audio-volume", "audio-mute", "voice-config-push", "voice-font-push", "voice-ask", "voice-page")
+    needs_target = args.action in ("bundle-push", "fonts-push", "push", "run", "rm", "rmdata", "skin-push", "skin-select", "skin-rm", "photo-push", "screen-off", "wifi-connect", "wifi-saved-connect", "wifi-forget", "wifi-auto", "update-url", "update-proxy", "audio-play", "audio-record", "audio-volume", "audio-mute", "voice-config-push", "voice-font-push", "voice-ask", "voice-page")
     if needs_target != bool(args.target):
         ap.error(f"{args.action} {'needs' if needs_target else 'takes no'} target")
     if args.action == "screen-off" and (not re.fullmatch(r"[0-9]+", args.target) or not 1 <= int(args.target) <= 60):
@@ -521,7 +482,6 @@ def main():
             (resource_bundle.application if args.action == "bundle-push" else resource_bundle.fonts)(args.target)
         except (ValueError, KeyError, TypeError, OSError) as error:
             ap.error(str(error))
-    brain_data = read_brain(args.target) if args.action == "brain-push" else None
     voice_command = args.action
     if args.action == "voice-page" and (not re.fullmatch(r"[0-9]+",args.target) or int(args.target)>0xffffffff):
         ap.error("voice-page requires a NAND byte offset")
@@ -636,9 +596,7 @@ def main():
         finally:
             dev.ser.close()
         return
-    elif args.action == "brain-push":
-        push_brain(dev, brain_data)
-    elif args.action in ("brain-reload", "brain-default", "brain-status"):
+    elif args.action == "brain-status":
         print(dev.command(args.action, timeout=30.0))
     elif args.action == "skin-push":
         try:

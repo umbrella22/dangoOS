@@ -8,6 +8,8 @@ publish = false
 # Runtime panel input format; bootloader handoff remains RGB565.
 display-rgb888 = []
 display-metrics = []
+# Experimental 160 MHz / 3 panel clock, outside CO5300 published timing.
+display-clock-53mhz = []
 
 [dependencies]
 log.workspace = true

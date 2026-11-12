@@ -8,7 +8,7 @@
 //! 4. advance the runtime, which merges the affect and personality layers and
 //!    forwards haptics;
 //! 5. advance custom widgets (`Ui::tick`): the fox widget renders into a
-//!    free canvas-pool slot on its 50 ms cadence (or immediately after a touch);
+//!    free canvas-pool slot on its 33 ms cadence (or immediately after a touch);
 //! 6. hand the newest frame to the panel plane, prioritizing touch responses;
 //! 7. publish a one-second liveness heartbeat for OTA health confirmation.
 //!
@@ -169,20 +169,6 @@ pub async fn ui_task(mut plane: PlaneUi) {
     // first tap look ancient or future-dated.
     let boot_ms = now_us() / 1000;
     let mut runtime = Runtime::new(boot_ms, Rc::clone(&control));
-    {
-        // The bundled brain needs no filesystem. Start before draining any input
-        // so one-shot module edges and early battery/light state are retained while
-        // USB startup mounts storage in another task.
-        if let Err(error) = runtime.enable_brain(
-            crate::companion::brain::DEFAULT_SOURCE,
-            boot_ms,
-            &crate::apps::runtime::PSRAM,
-            Some(crate::platform::runtime::resident_budget::clock_us),
-        ) {
-            warn!("brain: bundled startup failed, native fallback: {error}");
-        }
-    }
-    let mut brain_booted = false;
     let mut lua_lvgl = crate::apps::native_ui::NativeUiService::new(WIDTH as u16, HEIGHT as u16);
     // Touch is held off through the entrance: a finger resting on the glass
     // during boot must not interrupt the drop.
@@ -243,10 +229,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
             app.page(),
             buttons::low_battery_requested() || crate::services::update::boot::device::pauses_ui(),
         );
-        // Native controller/host lifecycle calls can preempt this thread for
-        // longer than a resident Lua callback's wall deadline. Acknowledge only
-        // here, after the preceding callback finished, then retain its VM state
-        // without executing callbacks until the operation releases the pause.
+        // Acknowledge radio lifecycle pauses only between UI iterations;
+        // resume the native behavior and foreground work after the pause.
         if crate::services::radio::device::classic::ui_checkpoint()
             && !buttons::low_battery_requested()
         {
@@ -265,6 +249,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
             .min(u64::from(MAX_TICK_MS)) as u32;
         last_tick = now;
         let now_ms = now_us() / 1000;
+        #[cfg(feature = "display-metrics")]
+        let loop_started_us = now_us();
 
         let standby_blocker =
             if !crate::platform::storage::nor::ready() || !scanned || scan_pending.is_some() {
@@ -318,7 +304,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
             );
             crate::services::settings::device::skin_feedback_painted();
             // Keep persistent sensor state current without running animations or
-            // the resident brain. Input producers retain wake generations.
+            // behavior timers. Input producers retain wake generations.
             drain_standby_sensors(&mut app, &mut runtime);
             Timer::after_millis(20).await;
             continue;
@@ -446,30 +432,18 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
         }
         crate::services::update::boot::device::selftest(
-            brain_booted && !control.loading() && scanned && scan_pending.is_none(),
+            !control.loading() && !control.entrance_active() && scanned && scan_pending.is_none(),
         );
-        // Storage mounts after USB startup; do not mistake this transient
-        // pre-mount state for a damaged persisted brain. Resolve selection once
-        // after the mount attempt completes. No custom source keeps the same
-        // default VM, including every input it consumed before mounting.
-        if !brain_booted && crate::platform::storage::nor::ready() && !control.entrance_active() {
-            crate::companion::brain::control::boot(
-                &mut runtime,
-                now_ms,
-                &crate::apps::runtime::PSRAM,
-                Some(crate::platform::runtime::resident_budget::clock_us),
-            )
-            .await;
-            runtime.ignore_touch_until(boot_ms + MosaicoApp::touch_hold_off_ms());
-            brain_booted = true;
-        }
-
         if let Some((id, choices)) = skins::activate_prepared(&control) {
             settings_sync.skin_activated(&mut app, id, choices);
             ui.mark_dirty();
         }
 
-        let drained = input::sensors(&mut app, &mut runtime, now_ms).await;
+        #[cfg(feature = "display-metrics")]
+        let input_started_us = now_us();
+        #[cfg(feature = "display-metrics")]
+        let _ = crate::companion::runtime::metrics::take();
+        let drained = input::sensors(&mut app, &mut runtime).await;
         let mut sensors_changed = drained.changed;
 
         input::pointer(
@@ -484,6 +458,8 @@ pub async fn ui_task(mut plane: PlaneUi) {
             now_ms,
         )
         .await;
+        #[cfg(feature = "display-metrics")]
+        let input_us = now_us().saturating_sub(input_started_us);
 
         // ---- hub clock, countdown and live pages ----
         let camera = crate::services::camera::task::snapshot();
@@ -636,8 +612,6 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
             runtime.begin_shutdown();
         }
-        crate::companion::brain::control::poll(&mut runtime, now_ms, buttons::shutdown_requested())
-            .await;
         if app.page() != last_page {
             crate::shell::lifecycle::device::apply(
                 last_page,
@@ -669,8 +643,10 @@ pub async fn ui_task(mut plane: PlaneUi) {
         // ---- merged expression and haptics ----
         // The fox keeps living off Home (lights still react); it only buzzes
         // where it can be seen.
-        // Input drains can spend milliseconds in the brain. Age touch responses
+        // Age touch responses after input drains
         // against the clock here, rather than the timestamp before those drains.
+        #[cfg(feature = "display-metrics")]
+        let behavior_started_us = now_us();
         let tick_now_ms = now_us() / 1_000;
         if let Some(pattern) = runtime.tick(tick_now_ms) {
             if settings_sync.value.haptics && app.page() == Page::Home {
@@ -678,9 +654,7 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
         }
         lights::show(runtime.expression());
-        lights::show_native(runtime.native_expression());
-        lights::brain_frame(runtime.brain_leds(), now_ms);
-        if let Some(command) = runtime.take_brain_command() {
+        if let Some(command) = runtime.take_command() {
             match command {
                 crate::companion::behavior::affect::SystemCommand::Hub => {
                     app.go(Page::Launcher);
@@ -697,6 +671,10 @@ pub async fn ui_task(mut plane: PlaneUi) {
             }
         }
 
+        #[cfg(feature = "display-metrics")]
+        let frame_started_us = now_us();
+        #[cfg(feature = "display-metrics")]
+        let rendered_before = control.rendered_frames();
         frames.render(
             &mut ui,
             &mut app,
@@ -710,6 +688,30 @@ pub async fn ui_task(mut plane: PlaneUi) {
             pending_management.is_some(),
             preferences,
         );
+        #[cfg(feature = "display-metrics")]
+        if app.page() == Page::Home && control.rendered_frames() != rendered_before {
+            let loop_end = now_us();
+            let callbacks = crate::companion::runtime::metrics::take();
+            info!(
+                "display.loop end={} total={} input={} prep={} behavior={} raster={} mhz={} events={} sensor_work={} sensor_yield={}",
+                loop_end,
+                loop_end.saturating_sub(loop_started_us),
+                input_us,
+                behavior_started_us
+                    .saturating_sub(loop_started_us)
+                    .saturating_sub(input_us),
+                frame_started_us.saturating_sub(behavior_started_us),
+                now_us().saturating_sub(frame_started_us),
+                esp_hal::clock::cpu_clock().as_mhz(),
+                drained.events,
+                drained.work_us,
+                drained.yield_us
+            );
+            info!(
+                "display.sensor end={} n={} balance={} native={}",
+                loop_end, callbacks.sensors, callbacks.balance_us, callbacks.native_us
+            );
+        }
 
         if last_heartbeat.elapsed() >= HEARTBEAT_PERIOD {
             last_heartbeat = Instant::now();
