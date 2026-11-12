@@ -361,3 +361,24 @@ R3 的 RTC 用量因既有 EmbedScope 记录超过常规基线 52 B，仅作为�
 该脚本合计 1,131 次 Rust 测试执行通过、4 ignored，包含重复配置下的执行次数。
 原始日志为 `final-production-check/check.log`，本轮修改文件 rustfmt 和 diff 检查通过。
 Recovery 仅构建验证，实机安装只替换 main。
+
+## 普通固件回归收尾（2026-11-12）
+
+源码提交 `7910b8ac5c0a2bf10e693ff073f53d01333829da` 的普通 RGB565 和 RGB888
+均已重新构建并通过原资源预算；RGB888 + simulator 库另有 388 通过、2 ignored。
+构建均关闭计量、局部 TE 旁路、EmbedScope 与临时实验控制，保留 40 MHz 和 TE 等待。
+`final-production-check/validation.json` 保存最终检查命令和日志指纹。
+
+默认 RGB565 安装镜像为 5,359,376 B，SHA256：
+`086472b2a0266662b8d75fe3cc4d6b291c3371482b4631cc6a423234ea73c281`。
+Recovery 完整读回确认成功，安装及再次重启后均为 `Ready generation=264`、
+`ready=1, sys=1, data=1, frame=1, vm=1`。三轮两秒灭屏均经过
+`screen-off → restoring → active`，最终 `cycle=3, frame_ready=1`。
+控制台确认 `display-test` 入口不可用，音量 100、音频 off、Wi-Fi idle、BT off。
+`final-default-r3/` 保存构建身份、安装日志、重启前后 Ready 和最终健康凭据。
+该普通固件的团子拖动、启动器/设置往返及返回后画面已人工确认操作正常、无残留或横线。
+
+普通 RGB888 留存于 `final-rgb888-r7/`，镜像为 5,359,408 B，SHA256：
+`4f67f6700ad4c35b2400bedfe0909b19de0ff40b1ec6c96db13254f25461eb7e`。
+该普通镜像仅构建留存；本轮 RGB888 实机残留复验对应 R6 测量镜像，身份与
+人工反馈见 `home-lines-investigation.json`。默认格式及前述未测光学项目的判定未改变。
