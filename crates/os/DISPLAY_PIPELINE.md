@@ -138,12 +138,20 @@ python3 scripts/assets/export_display_replay.py \
 
 | 检查 | 结果 |
 | --- | --- |
-| 默认 RGB565 board / OS 库 | 18 / 386 通过；OS 2 项 ignored |
-| RGB888 + simulator board / OS 库 | 18 / 386 通过；OS 2 项 ignored |
+| 默认 RGB565 board / OS 库 | 20 / 386 通过；OS 2 项 ignored |
+| RGB888 + simulator board / OS 库 | 20 / 388 通过；OS 2 项 ignored |
+| 完整 workspace（含 doctest） | 587 通过、2 ignored、0 失败 |
 | 原生 UI 可靠性集 | 4 通过 |
-| 独立驱动集 | 103 通过 |
+| Python 主机脚本 | 130 通过，含 2 项设备日志分析回归 |
+| 独立驱动集 | 首轮实现阶段 103 通过 |
 | RGB565 / RGB888 回放 | 各 107 帧、107 次完整画面对照通过 |
-| RGB888 examples、RGB565 / RGB888 固件、EmbedScope、TS、recovery | 构建通过 |
+| RGB565 / RGB888 / RGB888 + 局部 TE 旁路 / 默认无诊断固件 | `d02aabd` 四种构建和资源预算通过 |
+| RGB888 examples、EmbedScope、TS、recovery | 前期构建通过 |
+
+完整 workspace、RGB888 OS、board、原生 UI 与 Python 的最新主机测试对应
+`f0136e5`，原始日志及 SHA256 见
+`target/display-device-20261112/host-validation.json`。随后 `d02aabd` 只修改设备端
+转场准备流程，四种固件重新构建并上机复核；它不进入主机回放路径。
 
 本轮修改的 Rust 文件通过 rustfmt，diff 无空白错误。全仓 `cargo fmt --all -- --check`
 仍报告先前提交中 6 个 companion/preview 文件的格式差异，详情保存在
@@ -217,3 +225,78 @@ cargo fw-rgb888 --locked --offline
 40 MHz 下全屏 RGB888 已超过 16.67 ms 的纯传输预算，当前工作不设整屏 60 FPS
 承诺。局部控件的画质、输入等待和提交工作量是本轮设备对照的重点；增加 shadow、
 DIRECT 或合成流水的必要性由这些设备数据决定。
+
+## 设备对照结果（2026-11-12）
+
+最终对照使用同一份 `d02aabd` 源码和设备上的同一套 NAND 资源，分别构建
+`display-metrics`、`display-rgb888,display-metrics`，再单独增加
+`display-low-latency`。所有性能构建关闭 EmbedScope，使用普通 USB 控制台；
+Wi-Fi 为 idle、无 IP，蓝牙关闭，不能据此声称无线吞吐验收通过。
+每种格式记录 8 秒 Home、启动器/设置往返 10 轮、音量滑块往返 10 轮及一轮音频并发 push。
+滑块轨迹为 `(94,165) → (370,165)` 及反向，每程 500 ms，从普通输入队列注入。
+
+以下均为设备日志中的分布，时间单位 ms。输入时间从合成样本入队到首个像素 DMA
+调用前的软件时间戳，**不等于物理手指到线上首字节或光子的延迟**。
+“最早/最新”分别对应本帧合并输入中的两个端点，不能只选其中改善的一项。
+
+| 指标 | RGB565 | RGB888（保留 TE） |
+| --- | ---: | ---: |
+| Home 单次上传总耗时 p50 / p95 | 32.80 / 40.28 | 38.03 / 44.98 |
+| Home 完成间隔 p50 / p95 | 51.01 / 72.65 | 49.65 / 68.31 |
+| push 单次上传总耗时 p50 / p95 | 43.29 / 47.93 | 59.11 / 63.29 |
+| push 完成间隔 p50 / p95 | 50.14 / 51.69 | 66.75 / 67.57 |
+| 滑块每次提交字节 p50 | 40,336 | 60,504 |
+| 滑块最早合并输入延迟 p50 / p95 | 89.17 / 95.18 | 86.41 / 95.22 |
+| 滑块最新合并输入延迟 p50 / p95 | 48.67 / 67.65 | 46.03 / 66.82 |
+| 滑块 BUSY 等待占比 p50 | 15.6% | 16.9% |
+| 音频并发 push 完成间隔 p50 / p95 | 49.78 / 51.62 | 66.73 / 67.41 |
+
+push 分别有 120 / 98 个中间帧、100 / 78 个连续完成间隔；滑块分别有
+241 / 240 个能关联到合并输入的帧。上述 Home、push、slider 和音频并发日志
+均无截断计量行、未配对帧或失败上传。统计保留长帧，没有按 200 ms 等任意时长删除样本。
+
+RGB888 局部 TE 旁路的上传 p50 / p95 为 5.71 / 5.92 ms（保留 TE 为
+13.33 / 20.16 ms）。最早合并输入 p50 从 86.41 降至 73.63 ms，改善 12.79 ms；
+最新输入 p50 从 46.03 降至 42.33 ms，改善 3.70 ms；两者 p95 分别为
+79.07 / 52.72 ms。旁路组有 279 个关联输入的帧。尚无 10 轮物理拖动的光学验收，
+因此它仍是独立候选开关。BUSY 占比降至 9.3%，不满足继续引入 DIRECT / 双 shadow
+的 >30% 触发条件。
+
+阶段性串行基线 `ce09229` 的 Home 上传 p50 为 RGB565 38.56 ms、RGB888
+51.87 ms；push 为 62.00 / 86.40 ms。当前总上传时间较短，但双 staging 后
+pack 与 DMA 重叠并共享 PSRAM，单项 `pack_us` 并未下降；这些数据不能单独归因为
+转换循环的加速。Home 完成间隔仍有长尾，未证明整体帧率稳定提高。
+串行基线的动画时钟/页面准备有缺陷，不能用它的少量中间帧比较转场帧间隔。
+
+用户在 `f0136e5` 的自动并发测试中报告转场明显跳动。日志显示某次偏移由
+28 px 在约 50 ms 内跳到 464 px：诊断/脚本导航在常规 drain 之后标记 dirty，
+下一轮才完成目标页面准备。`d02aabd` 在 snapshot 之后、启动动画时钟之前补齐
+reconcile。重新测得 20 次 RGB565 转场每次均有 6 个中间帧，原先为 3–4 个；
+修复后的完整画面序列与光学无撕裂是不同的验收项。
+
+两种格式均从 `screen-off → restoring → active` 恢复，`frame_ready=1`；
+启动时固件内观察到的 TE 周期均值约 16.69 ms，采样无超时。
+测试后内部空闲堆快照 RGB565 为 96,520 B、RGB888 为 85,000 B，最大连续块
+均为 65,512 B；这不是运行期最低水位或无线负载下余量。
+两个并发测试均在音频进入 playing 后开始导航，结束时仍在播放，underrun / overrun
+计数均为 0；最终配对两组尚无明确听感反馈，不能代替“无可闻断音”验收。
+
+默认继续使用 RGB565、40 MHz 并保留 TE 等待。RGB888 的 push p50 66.75 ms
+和 p95 67.57 ms 均未达到预先写定的 ≤50 / ≤67 ms 门槛；静态低位画质收益
+也尚未获得稳定目视确认。局部控件保留高精度和按 damage 上传的实现继续保留，
+默认格式无需依赖未完成的光学验收。四种候选的固件和资源预算均通过。
+
+最终装回的默认镜像来自 `d02aabd`，仅 `firmware` 与默认 Lua/dual-core features，
+关闭 RGB888、局部 TE 旁路、metrics 和 EmbedScope。镜像为 5,363,008 B，SHA256 为
+`63f040b2dabe7d233ce5837acae6785c14db6980774375cb4f70a5670e7dd770`，
+已通过 Recovery 完整读回、安装后 Ready、再次重启后的 Ready 和连续三轮 2 秒灭屏唤醒。
+最终状态为 `Ready generation=224, ready=1, sys=1, data=1, frame=1, vm=1`，
+`power active, cycle=3, frame_ready=1`。测试 WAV 已删除，音量恢复至测试前的 100，
+音频关闭，页面回到 Home。`final-default-r2/final-health.json` 保存最终身份和状态。
+
+原始记录、逐项分布、构建 feature、ELF/BIN SHA256、Recovery 完整读回和 Ready
+凭据保存在 `target/display-device-20261112/`：`device-comparison.json` 为汇总，
+`decision-results.json` 保存固定阈值与判定，`evidence-ledger.json` 保存来源与安装凭据，
+`manual-observations.json` 单独保存人工反馈。每个 `reconciled-*` 子目录包含原始日志。
+实际 SCLK/脉宽、TE 到可见扫描的相位、10 轮撕裂光学记录、无线吞吐、真实 SPI
+超时/面板断开和音频听感仍未验收；不会从固件时间戳或最终截图推断这些结果。
