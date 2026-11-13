@@ -1,8 +1,8 @@
 //! 480×480 CO5300 QSPI AMOLED 驱动（ESP-Mosaico v1.2）。
 //!
 //! 初始化（厂商序列、清黑屏）走阻塞 SPI，命令短且要等 SLPOUT/DISPON 的毫秒延时；
-//! 之后切到 DMA 异步。连续的面板格式像素直接从 PSRAM 上传；
-//! 窄窗口或 RGB565 来源通过独占 PSRAM staging 编码，单块不超过 DMA 上限。
+//! 之后切到 DMA 异步。像素通过两块独占片内 staging 编码并上传，
+//! 避免旧 PSRAM 供给路径中实测的发送 FIFO 断流；单块不超过 DMA 上限。
 //! 每块独立设置窗口，使用 GRAM `0x32` 与四线数据，失败重试不会依赖连续写游标。
 //!
 //! 蓝本: 官方 BSP `esp-mosaico/esp-mosaico-bsp` onboard/display.c +
@@ -11,7 +11,7 @@
 use crate::{
     board,
     geometry::DirtyRect,
-    pixels::{PixelRows, PixelSource, RowChunks, MAX_DMA_BYTES, PANEL_FORMAT},
+    pixels::{PixelRows, PixelSource, RowChunks, PANEL_FORMAT, STAGING_BYTES},
 };
 use core::{
     alloc::{GlobalAlloc, Layout},
@@ -30,7 +30,9 @@ use esp_hal::{
 };
 
 // ---- 传输参数 ----
-const CHUNK_BYTES: usize = MAX_DMA_BYTES;
+// Two internal buffers keep the SPI FIFO supplied while the renderer accesses
+// PSRAM. Limit the reservation to 32 KiB rather than two maximum DMA windows.
+const CHUNK_BYTES: usize = STAGING_BYTES;
 // Blocking HAL writes always copy into this TX buffer, including cold clear.
 const BOOT_TX_BYTES: usize = 4096;
 const ROW_BYTES: usize = board::LCD_WIDTH as usize * PANEL_FORMAT.bytes_per_pixel();
@@ -39,6 +41,7 @@ const TRANSFER_TIMEOUT: Duration = Duration::from_millis(100);
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TransferStats {
     pub bytes: u32,
+    /// Source bytes bypassing staging; zero in the internal-staging pipeline.
     pub direct_bytes: u32,
     pub windows: u32,
     pub pack_us: u64,
@@ -48,10 +51,11 @@ pub struct TransferStats {
     pub first_submit_us: u64,
 }
 
-/// Async failures preserve uncertainty about the panel until hardware reset.
+/// Transfer failures; a timeout latches the driver until hardware reset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Spi(esp_hal::spi::Error),
+    DmaFifo(u32),
     Timeout,
     Faulted,
 }
@@ -128,7 +132,7 @@ const VENDOR_INIT: &[(u8, &[u8], u32)] = &[
 const RST_LOW_MS: u32 = 10;
 const RST_SETTLE_MS: u32 = 150;
 
-/// Driver-owned PSRAM staging for noncontiguous or converted pixel windows.
+/// Driver-owned internal staging for pixel windows.
 /// The mutable driver borrow covers packing and every DMA completion.
 struct DmaStaging {
     ptr: NonNull<u8>,
@@ -141,9 +145,9 @@ impl DmaStaging {
 
     fn try_new() -> Option<Self> {
         let layout = Self::layout();
-        // SAFETY: PSRAM is initialized before panel creation in OS and Recovery.
+        // SAFETY: the internal heap is initialized before panel creation.
         let ptr = unsafe {
-            esp_alloc::HEAP.alloc_caps(esp_alloc::MemoryCapability::External.into(), layout)
+            esp_alloc::HEAP.alloc_caps(esp_alloc::MemoryCapability::Internal.into(), layout)
         };
         let ptr = NonNull::new(ptr)?;
         // SAFETY: this allocation uniquely owns layout.size() writable bytes.
@@ -171,25 +175,11 @@ enum ChunkSource<'a> {
     Pixels(PixelSource<'a>, DirtyRect),
     Rows(&'a dyn PixelRows, DirtyRect),
 }
-struct Prepared<'a> {
-    direct: Option<&'a [u8]>,
-    length: usize,
-}
-impl<'a> ChunkSource<'a> {
-    fn prepare(self, output: &mut [u8]) -> Prepared<'a> {
+impl ChunkSource<'_> {
+    fn prepare(self, output: &mut [u8]) -> usize {
         match self {
-            Self::Pixels(source, area) => {
-                let direct = source.contiguous(area, PANEL_FORMAT);
-                let length = direct.map_or_else(
-                    || source.pack(area, PANEL_FORMAT, output),
-                    |bytes| bytes.len(),
-                );
-                Prepared { direct, length }
-            }
-            Self::Rows(rows, area) => Prepared {
-                direct: None,
-                length: rows.pack(area.y0, area.y1, PANEL_FORMAT, output),
-            },
+            Self::Pixels(source, area) => source.pack(area, PANEL_FORMAT, output),
+            Self::Rows(rows, area) => rows.pack(area.y0, area.y1, PANEL_FORMAT, output),
         }
     }
 }
@@ -302,7 +292,8 @@ impl Display<Async> {
 
     /// Upload a whole source window. Each bounded row chunk is independently
     /// addressed, so retrying the rectangle cannot restart at a stale RAMWRC cursor.
-    /// Continuous encoded PSRAM slices use HAL InPlace TX and cache writeback.
+    /// Pixel data is staged internally before DMA to avoid the SPI FIFO
+    /// starvation observed with the previous PSRAM source path.
     pub async fn write_pixels_async(
         &mut self,
         dst: DirtyRect,
@@ -364,24 +355,14 @@ impl Display<Async> {
         let (mut current, mut spare) = (&mut left[0], &mut right[0]);
         #[cfg(feature = "display-metrics")]
         let started = embassy_time::Instant::now();
-        let mut prepared = first.prepare(current.as_mut_slice());
+        let mut length = first.prepare(current.as_mut_slice());
         #[cfg(feature = "display-metrics")]
         {
             self.stats.pack_us += started.elapsed().as_micros();
         }
         loop {
             let next = chunks.next();
-            let bytes = prepared
-                .direct
-                .unwrap_or_else(|| &current.as_mut_slice()[..prepared.length]);
-            #[cfg(feature = "display-metrics")]
-            {
-                self.stats.direct_bytes += if prepared.direct.is_some() {
-                    prepared.length as u32
-                } else {
-                    0
-                };
-            }
+            let bytes = &current.as_mut_slice()[..length];
             let pack_next = async {
                 #[cfg(feature = "display-metrics")]
                 let started = embassy_time::Instant::now();
@@ -409,13 +390,13 @@ impl Display<Async> {
             }
             #[cfg(not(feature = "display-metrics"))]
             let _ = pack_us;
-            let Some((next_window, next_prepared)) = next else {
+            let Some((next_window, next_length)) = next else {
                 break;
             };
             // DMA has released current. Only now can it become the next spare.
             core::mem::swap(&mut current, &mut spare);
             window = next_window;
-            prepared = next_prepared;
+            length = next_length;
         }
         Ok(())
     }
@@ -510,6 +491,18 @@ impl Display<Async> {
             clocked_pack,
         )
         .await;
+        let dma_status = esp_hal::peripherals::SPI2::regs().dma_int_raw().read();
+        // The HAL reports transaction completion even when TX starvation has
+        // aborted the SPI transaction. Such a window did not reach GRAM in full.
+        let fifo_error = dma_status.dma_outfifo_empty_err().bit_is_set()
+            || dma_status.mst_tx_afifo_rempty_err().bit_is_set();
+        let result = result.and_then(|()| {
+            if fifo_error {
+                Err(Error::DmaFifo(dma_status.bits()))
+            } else {
+                Ok(())
+            }
+        });
         #[cfg(feature = "display-metrics")]
         {
             let elapsed = transfer_started.elapsed().as_micros();

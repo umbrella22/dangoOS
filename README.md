@@ -52,7 +52,7 @@
 
 支持 **ESP-Mosaico V1.2 / ESP32-S31**，配备 480 × 480 AMOLED 触摸屏、16 MiB NOR 与 128 MiB NAND。左槽相机等功能需要对应扩展模块。
 
-v0.6.0 沿用 v0.5.0 引入的独立 Recovery 与单个 12 MiB 主应用分区，布局为 `S31ONE03`。**v0.4.4 及更早的 A/B 布局需要使用本版 `full.zip` 全量迁移，不能通过旧版无线 OTA 或本版 `main.bin` 迁移。** 使用包前核对 `SHA256SUMS` 和布局。
+v0.6.1 沿用 v0.5.0 引入的独立 Recovery 与单个 12 MiB 主应用分区，布局为 `S31ONE03`。**v0.4.4 及更早的 A/B 布局需要使用本版 `full.zip` 全量迁移，不能通过旧版无线 OTA 或本版 `main.bin` 迁移。** 使用包前核对 `SHA256SUMS` 和布局。
 
 | 安装包       | 用途                                                                                 |
 | ------------ | ------------------------------------------------------------------------------------ |
@@ -104,7 +104,7 @@ python3 scripts/release/package.py build --out target/release-local \
 
 显示使用 40 MHz 四线 QSPI，默认 RGB565，原生页面按变化区域刷新。`display-rgb888` 提供局部控件保留 24 位颜色的候选构建，`display-low-latency` 单独控制小区域的 TE 等待实验；两者均需按设备对照结果验收。实现、帧间隔、输入延迟口径与验证边界见[显示管线](crates/os/DISPLAY_PIPELINE.md)。
 
-v0.6.0 的同配置交替上机对照中，团子页平均上传完成帧率从 12.45 提升至 24.33 FPS；该软件测量不代表稳定 30 FPS。默认使用 450 KiB PSRAM PARTIAL 绘制缓冲，发布固件关闭显示计量与 EmbedScope 诊断。升级变化与验证范围见 [v0.6.0 发布说明](scripts/release/notes/v0.6.0.md)。
+v0.6.1 将显示 DMA 数据改经两块各 16 KiB 的片内暂存，修复 PSRAM 供给路径中发送 FIFO 读空造成的画面错层，并拒绝将错误传输计为成功。修复计量候选连续采样约 22.55 软件完成 FPS，尚未达到稳定 30 FPS；此前 12.45 → 24.33 FPS 的历史对照未检查 FIFO 错误，不能代表完整像素帧。默认仍使用 450 KiB PSRAM PARTIAL 绘制缓冲，发布固件关闭显示计量与 EmbedScope 诊断。升级变化与验证范围见 [v0.6.1 发布说明](scripts/release/notes/v0.6.1.md)。
 
 团子行为由固件内的 Rust 运行时提供，随固件更新；不再加载 Lua 或 TS 行为脚本。
 默认前台应用引擎使用 Lua。`cargo fw-ts` 关闭默认 features 并接入外部 EmbedTS 引擎；每份固件只链接一个脚本引擎，同时选择或均未选择时构建失败。

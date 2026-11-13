@@ -7,6 +7,12 @@ mod packing;
 /// S31 SPI DMA's maximum payload per transfer in the locked esp-hal revision.
 pub const MAX_DMA_BYTES: usize = 32_736;
 
+/// Per-buffer internal reservation; two buffers overlap packing with DMA.
+#[cfg(any(target_os = "none", test))]
+pub(crate) const STAGING_BYTES: usize = 16 * 1024;
+#[cfg(any(target_os = "none", test))]
+const _: () = assert!(STAGING_BYTES <= MAX_DMA_BYTES);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PixelFormat {
     Rgb565Le,
@@ -443,21 +449,26 @@ mod tests {
 
     #[test]
     fn dma_chunks_cover_each_row_once_for_both_formats_and_final_short_chunk() {
-        for format in [PixelFormat::Rgb565Be, PixelFormat::Bgr888] {
+        for (format, limit, count) in [
+            (PixelFormat::Rgb565Be, MAX_DMA_BYTES, 15),
+            (PixelFormat::Bgr888, MAX_DMA_BYTES, 22),
+            (PixelFormat::Rgb565Be, STAGING_BYTES, 30),
+            (PixelFormat::Bgr888, STAGING_BYTES, 48),
+        ] {
             let area = rect(0, 0, 479, 479);
-            let chunks: Vec<_> = RowChunks::new(area, format, MAX_DMA_BYTES).collect();
-            assert_eq!(
-                chunks.len(),
-                if format == PixelFormat::Bgr888 {
-                    22
-                } else {
-                    15
-                }
-            );
+            let chunks: Vec<_> = RowChunks::new(area, format, limit).collect();
+            assert_eq!(chunks.len(), count);
             assert_eq!(chunks.iter().map(|c| c.height()).sum::<usize>(), 480);
             assert!(chunks
                 .iter()
-                .all(|c| c.width() * c.height() * format.bytes_per_pixel() <= MAX_DMA_BYTES));
+                .all(|c| c.width() * c.height() * format.bytes_per_pixel() <= limit));
+            let mut next_row = 0;
+            for chunk in &chunks {
+                assert_eq!(chunk.y0, next_row);
+                assert!(chunk.is_panel_window());
+                next_row = chunk.y1 + 1;
+            }
+            assert_eq!(next_row, 480);
             assert_eq!(chunks.last().unwrap().y1, 479);
         }
     }
