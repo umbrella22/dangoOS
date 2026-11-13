@@ -1,0 +1,40 @@
+[package]
+name = "recovery"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[features]
+firmware = []
+boot-animation = []
+
+[dependencies]
+boot-contract = { path = "../contract" }
+fs = { path = "../../storage" }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+
+[target.'cfg(target_os = "none")'.dependencies]
+board-s31 = { path = "../../platform/s31" }
+esp-hal.workspace = true
+esp-alloc.workspace = true
+esp-storage.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-println.workspace = true
+# No radio scheduler or radio library is linked into the rescue image.
+esp-rtos = { version = "0.4.0", git = "https://github.com/esp-rs/esp-hal", rev = "33f9b0f7c36ac47edbd015808b5399090fc1f9b6", features = ["esp32s31", "embassy"] }
+embassy-executor.workspace = true
+embassy-time.workspace = true
+embassy-usb = { version = "0.6", default-features = false }
+embassy-futures = "0.1"
+embassy-sync = "0.8"
+critical-section.workspace = true
+static_cell = "2.1"
+
+[[bin]]
+name = "recovery-fw"
+path = "src/main.rs"
+required-features = ["firmware"]
+test = false
+bench = false

@@ -113,7 +113,7 @@ fn main() -> Result<()> {
             let bytes = os::services::resources::fonts::bundled();
             let filename = os::services::resources::fonts::FILENAME;
             write_new(&dir.join(filename), bytes)?;
-            let license = include_bytes!("../../../crates/os/src/assets/NotoSansSC-OFL.txt");
+            let license = include_bytes!("../../../firmware/os/src/assets/NotoSansSC-OFL.txt");
             fs::create_dir(dir.join("documentation"))?;
             write_new(&dir.join("documentation/OFL.txt"), license)?;
             let report = serde_json::json!({"schema":1,"kind":"dango-ui-fonts", "id":os::services::resources::fonts::ID,

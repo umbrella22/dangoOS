@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
-    "display_probe", Path(__file__).resolve().parents[2] / "scripts/device/display_probe.py"
+    "display_probe", Path(__file__).resolve().parents[2] / "tools/device/display_probe.py"
 )
 probe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(probe)

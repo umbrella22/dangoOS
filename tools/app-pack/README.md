@@ -8,13 +8,13 @@ TS 应用由外部 EmbedTypescript 构建为 `.etb` 应用树。
 在仓库根目录执行：
 
 ```sh
-cargo run -p app-pack --offline -- check apps
+cargo run -p app-pack --offline -- check apps/builtin
 cargo run -p app-pack --offline -- skins resources/skins
 # size 是设备分区表中的 system 分区字节数；当前布局为 496 个 4 KiB 块
-cargo run -p app-pack --offline -- system apps target/system-release --size 2031616
+cargo run -p app-pack --offline -- system apps/builtin target/system-release --size 2031616
 cargo run -p app-pack --offline -- extract /absolute/system.bin /absolute/new-extraction
 # 可独立传输的单个应用包、完整应用集和字体资源
-cargo run -p app-pack --offline -- bundle apps/games/snake target/snake-bundle
+cargo run -p app-pack --offline -- bundle apps/builtin/games/snake target/snake-bundle
 cargo run -p app-pack --offline -- verify-bundle target/snake-bundle
 cargo run -p app-pack --offline -- bundles apps target/application-bundles
 cargo run -p app-pack --offline -- fonts target/ui-fonts
@@ -58,8 +58,8 @@ SHA-256 覆盖整个 payload；`verify-bundle` 重新验证真实 manifest、入
 输出都是独立目录，可以直接压缩或随发布 ZIP 交付，不包含编译器或旧设备镜像。
 
 ```sh
-python3 scripts/device/console.py bundle-push target/snake-bundle --port RUNTIME_PORT
-python3 scripts/device/console.py fonts-push target/ui-fonts --port RUNTIME_PORT
+python3 tools/device/console.py bundle-push target/snake-bundle --port RUNTIME_PORT
+python3 tools/device/console.py fonts-push target/ui-fonts --port RUNTIME_PORT
 ```
 
 应用上传使用现有 Data 应用暂存/提交协议。字体上传在设备端核对完整 SHA-256 和四份

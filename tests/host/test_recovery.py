@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("recovery_client", ROOT / "scripts/device/recovery.py")
+SPEC = importlib.util.spec_from_file_location("recovery_client", ROOT / "tools/device/recovery.py")
 recovery = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(recovery)
 

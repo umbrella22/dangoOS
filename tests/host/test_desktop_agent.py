@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 from agent import model
 from agent.bridge import Cancelled, run, strict_json, utf8_chunks
 from agent.skills import Store, action

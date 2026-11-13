@@ -8,7 +8,7 @@ import unittest
 from test_release import application
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("resource_budget", ROOT / "scripts/check/resource_budget.py")
+SPEC = importlib.util.spec_from_file_location("resource_budget", ROOT / "tools/check/resource_budget.py")
 API = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(API)
 

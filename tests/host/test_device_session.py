@@ -101,7 +101,7 @@ class SessionTest(unittest.TestCase):
 
     def test_real_push_success(self):
         FakeSerial.replies = [b"@ok\n"] * 9
-        app = ROOT / "examples/apps/hello"
+        app = ROOT / "apps/examples/hello"
         self.assertEqual(self.run_session("--push", str(app)), 0)
         writes = FakeSerial.instances[0].writes
         self.assertEqual(writes[0], b"@mosaico hello\n")
@@ -110,7 +110,7 @@ class SessionTest(unittest.TestCase):
 
     def test_real_push_payload_failure_aborts(self):
         FakeSerial.replies = [b"@ok\n"] * 3 + [b"@err crc\n", b"@ok abort\n"]
-        app = ROOT / "examples/apps/hello"
+        app = ROOT / "apps/examples/hello"
         self.assertEqual(self.run_session("--push", str(app)), 1)
         self.assertEqual(FakeSerial.instances[0].writes[-1], b"@mosaico abort\n")
         self.assertTrue(FakeSerial.instances[0].closed)

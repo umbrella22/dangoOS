@@ -5,7 +5,7 @@ import sys
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "scripts/device/session.py"
+SCRIPT = ROOT / "tools/device/session.py"
 spec = importlib.util.spec_from_file_location("device_session", SCRIPT)
 session = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(session)

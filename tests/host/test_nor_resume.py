@@ -13,7 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def resume_function():
-    source = (ROOT / "crates/os/src/platform/runtime/cores.rs").read_text()
+    source = (ROOT / "firmware/os/src/platform/runtime/cores.rs").read_text()
     start = source.index("fn resume_core(")
     body = source.index("{", start)
     depth, end = 1, body + 1

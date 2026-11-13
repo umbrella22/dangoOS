@@ -10,7 +10,7 @@ from unittest.mock import patch
 import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("skin_install", ROOT / "scripts/release/install.py")
+SPEC = importlib.util.spec_from_file_location("skin_install", ROOT / "tools/release/install.py")
 INSTALL = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(INSTALL)
 

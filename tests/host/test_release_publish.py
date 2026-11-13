@@ -11,8 +11,8 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts/release"))
-SPEC = importlib.util.spec_from_file_location("firmware_publish", ROOT / "scripts/release/publish.py")
+sys.path.insert(0, str(ROOT / "tools/release"))
+SPEC = importlib.util.spec_from_file_location("firmware_publish", ROOT / "tools/release/publish.py")
 API = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(API)
 
@@ -54,7 +54,7 @@ class PublishTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            notes = root / "scripts/release/notes/v0.2.1.md"
+            notes = root / "tools/release/notes/v0.2.1.md"
             notes.parent.mkdir(parents=True)
             notes.write_text("Release notes\n")
             bundle = root / "bundle"

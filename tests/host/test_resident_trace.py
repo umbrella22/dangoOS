@@ -88,9 +88,9 @@ SCENARIO = r'''
 class ResidentTraceTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("rustc"), "Rust compiler required")
     def test_scheduler_trace_does_not_acquire_the_global_channel_lock(self):
-        source = (ROOT / "crates/os/src/platform/runtime/resident_budget.rs").read_text()
+        source = (ROOT / "firmware/os/src/platform/runtime/resident_budget.rs").read_text()
         source = source[:source.index("struct SchedulerTrace;")].replace("//!", "//")
-        scheduling = (ROOT / "crates/os/src/platform/runtime/scheduling.rs").read_text().split("#[cfg(test)]")[0]
+        scheduling = (ROOT / "firmware/os/src/platform/runtime/scheduling.rs").read_text().split("#[cfg(test)]")[0]
         fixture = FIXTURE.replace("SCHEDULING_SOURCE", scheduling)
         with tempfile.TemporaryDirectory(prefix="mosaico-resident-trace-") as tmp:
             tmp = pathlib.Path(tmp)

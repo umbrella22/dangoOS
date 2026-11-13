@@ -13,7 +13,7 @@ import zipfile
 import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("firmware_release", ROOT / "scripts/release/package.py")
+SPEC = importlib.util.spec_from_file_location("firmware_release", ROOT / "tools/release/package.py")
 API = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(API)
 
@@ -57,7 +57,7 @@ class ReleaseTests(unittest.TestCase):
         cls.bootloader = bytes(cls.bootloader)
         cls.recovery = application(marker=False, project="dango-recovery")
         cls.loader_receipt = {"sha256": API.sha(cls.bootloader), "layout": "S31ONE03",
-                              "idf_revision": (ROOT / "bootloader/idf-revision.txt").read_text().strip()}
+                              "idf_revision": (ROOT / "firmware/boot/loader/idf-revision.txt").read_text().strip()}
         cls.app = application()
         cls.system = b"synthetic-system".ljust(API.SYSTEM_BYTES, b"\xff")
         cls.full, cls.components, cls.rows, cls.info = API.assemble(

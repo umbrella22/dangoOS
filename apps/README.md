@@ -5,11 +5,11 @@
 
 | 分类 | 应用 | ID |
 | --- | --- | --- |
-| games | 贪吃蛇 | snake |
-| games | 2048 | 2048 |
-| games | Dino | dino |
-| games | Flappy Bird | flappy |
-| tools | Photo | photo |
+| builtin/games | 贪吃蛇 | snake |
+| builtin/games | 2048 | 2048 |
+| builtin/games | Dino | dino |
+| builtin/games | Flappy Bird | flappy |
+| builtin/tools | Photo | photo |
 
 设备安装路径为 `/system/apps/<id>`，用户数据根为 `/data/appdata/<id>`。USB 下载更新
 位于 `/data/apps/<id>`，同 ID 下载版优先；移除下载版后恢复 system 版本。分类只影响
@@ -21,23 +21,23 @@
 Photo 的上游来源与维护信息记录在自己的 `SOURCE.json` 中。
 
 ```sh
-cargo run -p app-pack --offline -- check apps
-cargo run -p app-pack --offline -- bundle apps/games/snake target/snake-bundle
+cargo run -p app-pack --offline -- check apps/builtin
+cargo run -p app-pack --offline -- bundle apps/builtin/games/snake target/snake-bundle
 cargo run -p app-pack --offline -- verify-bundle target/snake-bundle
-cargo run -p app-pack --offline -- system apps target/system-release --size 2031616
-python3 scripts/device/console.py push apps/games/dino --run --follow
+cargo run -p app-pack --offline -- system apps/builtin target/system-release --size 2031616
+python3 tools/device/console.py push apps/builtin/games/dino --run --follow
 ```
 
-system 镜像从当前应用集全新生成，README、许可证和来源记录作为 `application-docs/`
+system 镜像从 `apps/builtin/` 全新生成，README、许可证和来源记录作为 `application-docs/`
 随镜像交付。纯 Lua 应用修改可以单独打包或下载更新；新增引擎能力需要同时更新固件。
 
 开发与运行约定见 [Lua 应用开发](../docs/guides/lua-apps.md)，镜像格式见
-[app-pack](../tools/app-pack/README.md)。开发示例位于 `examples/apps`，不进入默认应用集。
+[app-pack](../tools/app-pack/README.md)。开发示例位于 `apps/examples`，不进入默认应用集。
 
 独立应用包由 `payload/`、`bundle.json` 和主机许可证资料组成，上传前校验完整文件清单：
 
 ```sh
-python3 scripts/device/console.py bundle-push target/snake-bundle --port RUNTIME_PORT
+python3 tools/device/console.py bundle-push target/snake-bundle --port RUNTIME_PORT
 ```
 
 应用包更新只替换应用文件并保留存档。Rust 原生模块仍静态链接在主应用镜像中；新增宿主 API 需要

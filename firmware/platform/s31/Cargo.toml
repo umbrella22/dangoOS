@@ -1,0 +1,23 @@
+[package]
+name = "board-s31"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[features]
+# Runtime panel input format; bootloader handoff remains RGB565.
+display-rgb888 = []
+display-metrics = []
+# Experimental 160 MHz / 3 panel clock, outside CO5300 published timing.
+display-clock-53mhz = []
+
+[dependencies]
+log.workspace = true
+boot-contract = { path = "../../boot/contract" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+esp-hal.workspace = true
+esp-alloc.workspace = true
+embassy-sync = "0.8"
+embassy-futures = "0.1"
+embassy-time.workspace = true

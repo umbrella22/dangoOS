@@ -195,8 +195,8 @@ def without_module_docs(source):
 class CpuFrequencyTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("rustc"), "Rust compiler required")
     def test_serialized_request_and_unlocked_fast_path_mutation(self):
-        policy = without_module_docs((ROOT / "crates/os/src/platform/runtime/frequency/mod.rs").read_text())
-        backend = without_module_docs((ROOT / "crates/os/src/platform/runtime/frequency/device.rs").read_text())
+        policy = without_module_docs((ROOT / "firmware/os/src/platform/runtime/frequency/mod.rs").read_text())
+        backend = without_module_docs((ROOT / "firmware/os/src/platform/runtime/frequency/device.rs").read_text())
         with tempfile.TemporaryDirectory(prefix="mosaico-cpu-frequency-") as tmp:
             tmp = pathlib.Path(tmp)
             for unlocked_fast_path in (False, True):

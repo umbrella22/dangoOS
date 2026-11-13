@@ -1,7 +1,7 @@
 use super::*;
 
 fn apps() -> Vec<Package> {
-    discover(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps")).unwrap()
+    discover(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/builtin")).unwrap()
 }
 
 #[test]
@@ -123,9 +123,13 @@ fn invalid_packages_duplicate_ids_and_wrong_partition_sizes_are_rejected() {
 fn development_examples_are_valid_but_not_factory_apps() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut ids = BTreeSet::new();
-    for directory in ["examples/apps"] {
+    for directory in ["apps/examples"] {
         for app in host_fs::read_dir(root.join(directory)).unwrap() {
-            let package = Package::read(&app.unwrap().path()).unwrap();
+            let app = app.unwrap();
+            if !app.file_type().unwrap().is_dir() {
+                continue;
+            }
+            let package = Package::read(&app.path()).unwrap();
             assert!(ids.insert(package.id));
         }
     }

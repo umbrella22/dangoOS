@@ -5,7 +5,7 @@ from pathlib import Path
 import struct
 import unittest
 
-SPEC = importlib.util.spec_from_file_location("main_image", Path(__file__).resolve().parents[2] / "scripts/device/main_image.py")
+SPEC = importlib.util.spec_from_file_location("main_image", Path(__file__).resolve().parents[2] / "tools/device/main_image.py")
 image = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(image)
 
 

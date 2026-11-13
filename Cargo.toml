@@ -1,7 +1,7 @@
 [workspace]
 # Device runtime components and the host-side application packaging tool.
 members = [
-    "crates/boot-contract", "crates/board-s31", "crates/recovery", "crates/voice-session", "crates/os", "crates/lua-engine", "crates/app-host", "crates/fs", "tools/app-pack", "tests/benchmarks/script-engines/runner"]
+    "firmware/boot/contract", "firmware/platform/s31", "firmware/boot/recovery", "firmware/voice-session", "firmware/os", "firmware/runtime/lua-engine", "firmware/runtime/app-host", "firmware/storage", "tools/app-pack", "tests/benchmarks/script-engines/runner"]
 resolver = "2"
 exclude = ["vendor/embassy-usb-synopsys-otg", "vendor/esp-wifi-sys-esp32s31", "vendor/esp-radio", "vendor/esp-radio-rtos-driver", "vendor/esp-bluedroid", "vendor/esp-alloc"]
 

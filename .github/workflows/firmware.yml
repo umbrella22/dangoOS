@@ -43,10 +43,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: firmware-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml', 'scripts/release/inputs.json') }}
+          key: firmware-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml', 'tools/release/inputs.json') }}
           restore-keys: firmware-${{ runner.os }}-
       - name: Install pinned Espressif tools
-        run: python3 scripts/release/bootstrap.py --out "$RUNNER_TEMP/dango-tools"
+        run: python3 tools/release/bootstrap.py --out "$RUNNER_TEMP/dango-tools"
       - name: Fetch locked dependencies
         run: cargo fetch --locked
       - name: Build independent Recovery and pinned bootloader
@@ -56,18 +56,18 @@ jobs:
           idf_tools="$RUNNER_TEMP/dango-idf-tools"
           git init "$idf_root"
           git -C "$idf_root" remote add origin https://github.com/espressif/esp-idf.git
-          git -C "$idf_root" fetch --depth 1 origin "$(cat bootloader/idf-revision.txt)"
+          git -C "$idf_root" fetch --depth 1 origin "$(cat firmware/boot/loader/idf-revision.txt)"
           git -C "$idf_root" checkout --detach FETCH_HEAD
           git -C "$idf_root" submodule update --init --recursive --depth 1
           IDF_TOOLS_PATH="$idf_tools" "$idf_root/install.sh" esp32s31
-          python3 scripts/release/build_bootloader.py --idf "$idf_root" --tools "$idf_tools" --build target/bootloader
+          python3 tools/release/build_bootloader.py --idf "$idf_root" --tools "$idf_tools" --build target/bootloader
       - name: Use commit time for firmware metadata
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
       - name: Test workspace and build firmware
         shell: bash
         run: |
           set -o pipefail
-          ./scripts/check.sh 2>&1 | tee "$RUNNER_TEMP/checks.log"
+          ./tools/check.sh 2>&1 | tee "$RUNNER_TEMP/checks.log"
       - name: Build main and full-install packages with NAND resources
         env:
           RELEASE_REF_TYPE: ${{ github.ref_type }}
@@ -75,11 +75,11 @@ jobs:
         run: |
           package_dir="$RUNNER_TEMP/firmware-release"
           if [ "$RELEASE_REF_TYPE" = tag ]; then
-            python3 scripts/release/package.py build --out "$package_dir" --tag "$RELEASE_REF_NAME" --bootloader target/bootloader/bootloader/bootloader.bin
+            python3 tools/release/package.py build --out "$package_dir" --tag "$RELEASE_REF_NAME" --bootloader target/bootloader/bootloader/bootloader.bin
           else
-            python3 scripts/release/package.py build --out "$package_dir" --bootloader target/bootloader/bootloader/bootloader.bin
+            python3 tools/release/package.py build --out "$package_dir" --bootloader target/bootloader/bootloader/bootloader.bin
           fi
-          python3 scripts/release/package.py verify "$package_dir"
+          python3 tools/release/package.py verify "$package_dir"
       - name: Save release artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -120,4 +120,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPOSITORY: ${{ github.repository }}
-        run: python3 scripts/release/publish.py release-assets --repo "$RELEASE_REPOSITORY"
+        run: python3 tools/release/publish.py release-assets --repo "$RELEASE_REPOSITORY"

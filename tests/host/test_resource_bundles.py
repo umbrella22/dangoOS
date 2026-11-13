@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from support import FakeSerial, ROOT, session
-sys.path.insert(0, str(ROOT / "scripts/device"))
+sys.path.insert(0, str(ROOT / "tools/device"))
 import resource_bundle as BUNDLES
 from test_skin_install import INSTALL, fixture, checksum, Device, Console
 from test_release import API as RELEASE
